@@ -1,0 +1,1624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ETL Space</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#171e2e; --panel2:#1d2537; --border:#2a3450;
+    --text:#e6eaf3; --muted:#8b94ab; --accent:#4f8ef7; --accent2:#3db884;
+    --danger:#e05d5d; --radius:10px; font-size:15px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+  header{display:flex;align-items:center;gap:12px;padding:14px 24px;border-bottom:1px solid var(--border);background:var(--panel)}
+  header h1{font-size:1.15rem;font-weight:600}
+  header .dot{width:10px;height:10px;border-radius:50%;background:var(--accent2)}
+  header .sub{color:var(--muted);font-size:.85rem;margin-left:auto}
+  nav{display:flex;gap:4px;padding:10px 24px 0;border-bottom:1px solid var(--border);background:var(--panel)}
+  nav button{background:none;border:none;color:var(--muted);padding:10px 16px;cursor:pointer;font-size:.95rem;border-bottom:2px solid transparent}
+  nav button.active{color:var(--text);border-bottom-color:var(--accent)}
+  main{padding:24px;max-width:1200px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:18px}
+  .card h2{font-size:1rem;margin-bottom:12px;font-weight:600}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  input[type=text],textarea{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:9px 12px;font-size:.92rem;width:100%}
+  textarea{font-family:ui-monospace,Consolas,monospace;min-height:140px;resize:vertical;line-height:1.5}
+  .btn{display:inline-block;background:linear-gradient(135deg,#4f8ef7,#6aa5ff);color:#fff;border:none;border-radius:7px;padding:9px 16px;font-size:.92rem;cursor:pointer;text-decoration:none;box-shadow:0 2px 8px rgba(79,142,247,.3)}
+  .btn.green{background:linear-gradient(135deg,#0ea371,#3dd68c);box-shadow:0 2px 8px rgba(14,163,113,.3)}
+  .btn.ghost{background:transparent;border:1px solid var(--border);color:var(--muted)}
+  .btn.danger{background:transparent;border:1px solid var(--danger);color:var(--danger)}
+  .btn:hover{filter:brightness(1.15)}
+  table{border-collapse:collapse;width:100%;font-size:.87rem}
+  th,td{border-bottom:1px solid var(--border);padding:7px 10px;text-align:left;white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis}
+  th{color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--panel);vertical-align:top;padding-bottom:5px}
+  th .colname{color:var(--text);font-size:.87rem}
+  .typetag{display:inline-block;margin-top:2px;font-size:.63rem;font-weight:600;letter-spacing:.04em;
+    color:#8fb6ef;background:rgba(79,142,247,.13);border:1px solid rgba(79,142,247,.3);border-radius:4px;padding:0 5px}
+  .tablewrap{overflow:auto;height:420px;max-height:none;border:1px solid var(--border);border-radius:6px;resize:both;min-height:120px;min-width:300px}
+  .colchecks{display:flex;flex-wrap:wrap;gap:6px 14px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:10px}
+  .colcheck{font-size:.85rem;color:var(--text);cursor:pointer;display:flex;gap:5px;align-items:center}
+  .pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:.75rem;border:1px solid var(--border);color:var(--muted)}
+  .pill.up{color:var(--accent);border-color:var(--accent)}
+  .pill.tr{color:var(--accent2);border-color:var(--accent2)}
+  .pill.err{color:var(--danger);border-color:var(--danger)}
+  /* ── schema mapping screen ── */
+  .pill.bad{color:var(--danger);border-color:var(--danger);background:rgba(224,93,93,.12)}
+  .pill.ok{color:var(--accent2);border-color:var(--accent2)}
+  .req-dot{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:99px;font-size:.66rem;
+    letter-spacing:.03em;text-transform:uppercase;color:var(--danger);border:1px solid var(--danger)}
+  .role-card.has-missing{border-color:var(--danger)}
+  .cfg-warn{background:rgba(224,93,93,.12);border:1px solid var(--danger);color:#ffd4d4;
+    border-radius:8px;padding:8px 12px;font-size:.85rem;margin-bottom:10px}
+  table.maptable{width:100%;border-collapse:collapse;font-size:.86rem}
+  table.maptable th{position:sticky;top:0;background:var(--panel);text-align:left;
+    padding:8px 10px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:600}
+  table.maptable td{padding:6px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+  table.maptable tr.row-missing td{background:rgba(224,93,93,.07)}
+  table.maptable select{min-width:190px}
+  select.alias-sel.unmapped{border-color:var(--danger)}
+  .tile-pick.tile-warn{border-color:#e0a33d;color:#f0c274}
+  .btn.needs-save{background:var(--accent);color:#fff;animation:needsave 1.6s ease-in-out infinite}
+  @keyframes needsave{0%,100%{box-shadow:0 0 0 0 rgba(79,142,247,.55)}50%{box-shadow:0 0 0 6px rgba(79,142,247,0)}}
+  #flow-dirty{animation:needsave 1.6s ease-in-out infinite}
+  .muted{color:var(--muted);font-size:.85rem}
+  .list-item{display:flex;align-items:center;gap:12px;padding:12px 6px;border-bottom:1px solid var(--border)}
+  .list-item:last-child{border-bottom:none}
+  .list-item .name{font-weight:600;cursor:pointer}
+  .list-item .name:hover{color:var(--accent)}
+  .spacer{flex:1}
+  #toast{position:fixed;bottom:20px;right:20px;background:var(--panel2);border:1px solid var(--border);border-left:4px solid var(--accent2);padding:12px 18px;border-radius:8px;display:none;max-width:420px;font-size:.9rem;z-index:10}
+  #toast.error{border-left-color:var(--danger)}
+  .drop{border:2px dashed var(--border);border-radius:var(--radius);padding:28px;text-align:center;color:var(--muted);cursor:pointer}
+  .drop.hover{border-color:var(--accent);color:var(--text)}
+  .hidden{display:none}
+  /* ---- Magic ETL canvas ---- */
+  #canvas-wrap{position:relative;height:520px;border:1px solid var(--border);border-radius:10px;overflow:auto;resize:vertical;min-height:220px;background:
+    radial-gradient(700px 340px at 15% 0%,rgba(79,142,247,.09),transparent),
+    radial-gradient(700px 340px at 85% 100%,rgba(61,214,140,.07),transparent),
+    radial-gradient(circle,#232c42 1px,transparent 1px) 0 0/22px 22px,var(--panel2)}
+  .tilebar{width:186px;flex:none;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:10px;overflow:auto}
+  .tilebar h4{font-size:.68rem;letter-spacing:.14em;color:var(--muted);margin:12px 4px 6px;text-transform:uppercase;font-weight:600}
+  .tilebar h4:first-child{margin-top:2px}
+  .tilebar button{display:flex;gap:9px;width:100%;align-items:center;background:transparent;border:1px solid transparent;border-radius:8px;padding:7px 8px;color:var(--text);cursor:pointer;font-size:.86rem;text-align:left}
+  .tilebar button:hover{background:var(--panel);border-color:var(--accent);transform:translateX(2px)}
+  .tilebar button:disabled{opacity:.38;cursor:not-allowed}
+  .tilebar button:disabled:hover{background:transparent;border-color:transparent;transform:none}
+  .tb-icon{width:25px;height:25px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:.85rem;flex:none;box-shadow:0 2px 5px rgba(0,0,0,.35)}
+  .tile-badge{position:absolute;top:-9px;right:-9px;background:linear-gradient(135deg,#0ea371,#3dd68c);color:#fff;border-radius:99px;
+    padding:2px 8px;font-size:.66rem;font-weight:700;box-shadow:0 2px 8px rgba(14,163,113,.5);z-index:4}
+  .tile.flash{box-shadow:0 0 0 4px rgba(61,214,140,.55),0 10px 26px rgba(0,0,0,.55)!important;transition:box-shadow .18s}
+  .port.in::after{content:attr(data-lbl);position:absolute;left:17px;top:-1px;font-size:.6rem;font-weight:700;color:#7c89a8}
+  .canvas-empty{position:absolute;left:70px;top:90px;color:#3d4a68;font-size:1.05rem;pointer-events:none}
+  .canvas-empty b{color:#55648a}
+  #canvas{position:relative;width:2200px;height:1400px}
+  #edge-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  #edge-svg path{pointer-events:stroke}
+  .tile{position:absolute;width:170px;background:linear-gradient(180deg,#1c2538,#151c2b);border:1px solid #2e3c5e;border-radius:11px;
+    box-shadow:0 6px 18px rgba(0,0,0,.45);user-select:none;z-index:2;transition:box-shadow .15s ease,border-color .15s ease}
+  .tile:hover{border-color:#41527d;box-shadow:0 10px 26px rgba(0,0,0,.55)}
+  .tile.selected{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,142,247,.35),0 10px 26px rgba(0,0,0,.55)}
+  .tile-head{padding:8px 10px 5px;font-size:.83rem;font-weight:600;cursor:grab;display:flex;gap:8px;align-items:center}
+  .tile-head:active{cursor:grabbing}
+  .tile-icon{width:27px;height:27px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:.95rem;flex:none;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+  .cat-in  .tile-icon{background:linear-gradient(135deg,#2563eb,#38bdf8)}
+  .cat-tr  .tile-icon{background:linear-gradient(135deg,#059669,#34d399)}
+  .cat-out .tile-icon{background:linear-gradient(135deg,#d97706,#fbbf24)}
+  .tile-pick{width:calc(100% - 4px);background:#121826;border:1px solid #2e3c5e;color:var(--text);
+    border-radius:6px;padding:4px 6px;font-size:.72rem;cursor:pointer;margin-top:1px}
+  .tile-pick:hover{border-color:var(--accent)}
+  .tile-pick:focus{outline:none;border-color:var(--accent);background:#0f1420}
+  .tile-body{padding:2px 10px 9px 45px;font-size:.72rem;color:var(--muted);min-height:18px;max-height:44px;overflow:hidden;cursor:pointer}
+  .port{position:absolute;width:15px;height:15px;border-radius:50%;background:#121826;border:2.5px solid #55607d;cursor:crosshair;z-index:3;transition:transform .12s,border-color .12s,background .12s}
+  .port:hover{transform:scale(1.35)}
+  .port.in:hover{border-color:var(--accent2);background:var(--accent2)}
+  .port.out{border-color:#4f8ef7}
+  .port.out:hover{border-color:#6aa5ff;background:#4f8ef7}
+  .port.armed{border-color:var(--accent2);background:var(--accent2);animation:portpulse 1s ease-in-out infinite}
+  @keyframes portpulse{0%,100%{box-shadow:0 0 0 0 rgba(61,184,132,.6)}50%{box-shadow:0 0 0 7px rgba(61,184,132,0)}}
+  .port.in{left:-9px}.port.out{right:-9px}
+  #edge-svg path.edge{filter:drop-shadow(0 0 3px rgba(79,142,247,.45))}
+  #edge-svg path.edge:hover{stroke-width:4.5;filter:drop-shadow(0 0 6px rgba(79,142,247,.9))}
+  .zoombar{display:flex;gap:4px;align-items:center;margin-left:auto}
+  .zoombar button{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;width:30px;height:30px;cursor:pointer;font-size:1rem}
+  .zoombar button:hover{border-color:var(--accent)}
+  #zoom-label{color:var(--muted);font-size:.83rem;min-width:44px;text-align:center}
+  .palette{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .palette button{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 12px;font-size:.85rem;cursor:pointer}
+  .palette button:hover{border-color:var(--accent)}
+  .palette button:disabled{opacity:.4;cursor:not-allowed}
+  .cfg-field{margin-bottom:10px}
+  .cfg-field label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:4px}
+  select{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;font-size:.9rem}
+</style>
+</head>
+<body>
+<header><div class="dot"></div><h1>ETL Space</h1><span class="sub" id="storage-badge">your data, your warehouse</span></header>
+<div id="storage-warning" style="display:none;background:rgba(224,93,93,.14);border-bottom:2px solid var(--danger);color:#f3bcbc;padding:11px 24px;font-size:.9rem;line-height:1.5"></div>
+<nav>
+  <button id="tab-datasets" class="active" onclick="showTab('datasets')">Datasets</button>
+  <button id="tab-sql" onclick="showTab('sql')">SQL Explorer</button>
+  <button id="tab-transforms" onclick="showTab('transforms')">Transforms</button>
+  <button id="tab-flows" onclick="showTab('flows')">Magic ETL</button>
+  <button id="tab-connectors" onclick="showTab('connectors')">Connectors</button>
+  <button id="tab-apps" onclick="showTab('apps')">Apps</button>
+</nav>
+<main>
+
+<!-- DATASETS -->
+<section id="view-datasets">
+  <div class="card">
+    <h2>Upload data</h2>
+    <div class="drop" id="drop">Drop a CSV or Excel file here, or click to choose</div>
+    <input type="file" id="file" class="hidden" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls">
+  </div>
+  <div class="card">
+    <div class="row" style="margin-bottom:10px">
+      <h2 style="margin:0">Datasets</h2>
+      <select id="ds-folder-filter" onchange="loadDatasets()" style="min-width:180px"><option value="">All folders</option></select>
+      <input type="text" id="ds-search" placeholder="🔍 find a dataset…" style="max-width:220px" oninput="loadDatasets()">
+      <span class="spacer"></span>
+      <span class="muted" id="ds-count"></span>
+    </div>
+    <div id="ds-list" class="muted">Loading…</div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn ghost" onclick="toggleTrash()" id="trash-btn">🗑 Deleted items</button>
+      <span class="muted" id="trash-count"></span>
+    </div>
+    <div id="trash-panel" class="hidden" style="margin-top:10px;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--panel2)">
+      <p class="muted" style="margin:0 0 10px;font-size:.85rem">Deleted datasets and flows are kept here so nothing is lost by accident. <b>Restore</b> puts one back; <b>Delete permanently</b> cannot be undone — for a dataset it also drops its table.</p>
+      <div id="trash-list" class="muted">Loading…</div>
+    </div>
+  </div>
+  <div class="card hidden" id="preview-card">
+    <div class="row" style="margin-bottom:10px">
+      <h2 id="preview-title" style="margin:0"></h2><span class="spacer"></span>
+      <input type="text" id="ds-preview-filter" placeholder="🔍 filter rows…" style="max-width:240px" oninput="filterPreview('ds')">
+      <select id="ds-preview-col" onchange="filterPreview('ds')"><option value="">all columns</option></select>
+      <button class="btn ghost" onclick="hidePreview()">Close</button>
+    </div>
+    <div class="tablewrap"><table id="preview-table"></table></div>
+  </div>
+</section>
+
+<!-- SQL EXPLORER -->
+<section id="view-sql" class="hidden">
+  <div class="card">
+    <h2>SQL Explorer</h2>
+    <p class="muted" style="margin-bottom:8px">Query any dataset table (they're named <code>ds_&lt;dataset&gt;</code>). SELECT only; results capped at 500 rows.</p>
+    <textarea id="sql-input" placeholder="SELECT * FROM ds_my_dataset LIMIT 10"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" onclick="runQuery()">Run query</button>
+      <span class="muted" id="sql-status"></span>
+    </div>
+  </div>
+  <div class="card hidden" id="sql-result-card">
+    <h2>Results</h2>
+    <div class="tablewrap"><table id="sql-table"></table></div>
+  </div>
+</section>
+
+<!-- TRANSFORMS -->
+<section id="view-transforms" class="hidden">
+  <div class="card">
+    <h2>New / edit transform</h2>
+    <div class="row" style="margin-bottom:10px">
+      <input type="text" id="tf-name" placeholder="transform name (e.g. monthly_summary)" style="max-width:320px">
+      <input type="text" id="tf-output" placeholder="output dataset name (optional)" style="max-width:320px">
+    </div>
+    <textarea id="tf-sql" placeholder="SELECT region, SUM(amount) AS total&#10;FROM ds_sales&#10;GROUP BY region"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="btn green" onclick="saveTransform()">Save transform</button>
+      <span class="muted">Saving doesn't run it — hit Run on the list below.</span>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Transforms</h2>
+    <div id="tf-list" class="muted">Loading…</div>
+  </div>
+</section>
+
+<!-- MAGIC ETL -->
+<section id="view-flows" class="hidden">
+  <div class="card">
+    <div class="row" style="margin-bottom:12px">
+      <input type="text" id="flow-name" placeholder="flow name" style="max-width:220px">
+      <select id="flow-list" onchange="loadFlow(this.value)"><option value="">— saved flows —</option></select>
+      <button class="btn ghost" onclick="newFlow()">New</button>
+      <button class="btn" onclick="saveFlow()">Save</button>
+      <button class="btn green" onclick="runFlow()">▶ Run flow</button>
+      <button class="btn danger" onclick="deleteFlow()">Delete</button>
+      <span class="pill err" id="flow-dirty" style="display:none">● unsaved changes — Save before running the saved copy</span>
+      <span class="muted" id="flow-status"></span>
+    </div>
+    <div class="row" style="margin-bottom:12px">
+      <label class="colcheck"><input type="checkbox" id="flow-on-update"> ⚡ Auto-run when an input dataset updates</label>
+      <label class="colcheck"><input type="checkbox" id="flow-scheduled" onchange="markFlowDirty()"> ⏰ Include in scheduled runs</label>
+      <span class="muted">(save the flow to apply — scheduled runs fire when <code>/api/flows/run-scheduled</code> is pinged)</span>
+    </div>
+    <div class="row" style="align-items:stretch;gap:12px">
+      <div class="tilebar">
+        <h4>Sources</h4>
+        <button onclick="addTile('input')"><span class="tb-icon" style="background:linear-gradient(135deg,#2563eb,#38bdf8)">📥</span> Input</button>
+        <h4>Transform</h4>
+        <button onclick="addTile('select')"><span class="tb-icon" style="background:linear-gradient(135deg,#059669,#34d399)">🔠</span> Select Columns</button>
+        <button onclick="addTile('filter')"><span class="tb-icon" style="background:linear-gradient(135deg,#059669,#34d399)">🔍</span> Filter</button>
+        <button onclick="addTile('rename')"><span class="tb-icon" style="background:linear-gradient(135deg,#059669,#34d399)">✏️</span> Rename</button>
+        <button onclick="addTile('calc')"><span class="tb-icon" style="background:linear-gradient(135deg,#059669,#34d399)">🧮</span> Formula</button>
+        <button onclick="addTile('settype')"><span class="tb-icon" style="background:linear-gradient(135deg,#059669,#34d399)">🔢</span> Set Type</button>
+        <button onclick="addTile('groupby')"><span class="tb-icon" style="background:linear-gradient(135deg,#059669,#34d399)">Σ</span> Group By</button>
+        <button onclick="addTile('join')"><span class="tb-icon" style="background:linear-gradient(135deg,#059669,#34d399)">⋈</span> Join</button>
+        <button onclick="addTile('append')"><span class="tb-icon" style="background:linear-gradient(135deg,#059669,#34d399)">⧺</span> Append</button>
+        <button onclick="addTile('dedupe')"><span class="tb-icon" style="background:linear-gradient(135deg,#059669,#34d399)">♻</span> Dedupe</button>
+        <button onclick="addTile('photos')"><span class="tb-icon" style="background:linear-gradient(135deg,#059669,#34d399)">🖼</span> Photos</button>
+        <h4>Destination</h4>
+        <button onclick="addTile('output')"><span class="tb-icon" style="background:linear-gradient(135deg,#d97706,#fbbf24)">📤</span> Output</button>
+        <h4>Coming soon</h4>
+        <button disabled><span class="tb-icon" style="background:#2a3450">🔒</span> Pivot</button>
+        <button disabled><span class="tb-icon" style="background:#2a3450">🔒</span> Unpivot</button>
+        <button disabled><span class="tb-icon" style="background:#2a3450">🔒</span> Value Mapper</button>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div class="row" style="margin-bottom:8px">
+          <p class="muted" style="margin:0;font-size:.82rem">Drag tiles by their header. Click an <b>output dot</b>, then an <b>input dot</b> to connect (Esc cancels). Click a wire to remove it. Click a tile to configure it below.</p>
+          <div class="zoombar">
+            <button onclick="setZoom(ZOOM-0.15)" title="Zoom out">−</button>
+            <span id="zoom-label">100%</span>
+            <button onclick="setZoom(ZOOM+0.15)" title="Zoom in">+</button>
+            <button onclick="zoomFit()" title="Fit to flow" style="width:auto;padding:0 10px;font-size:.8rem">Fit</button>
+          </div>
+        </div>
+        <div id="canvas-wrap"><div id="canvas" onclick="canvasClick(event)" oncontextmenu="if(armedPort){event.preventDefault();cancelConnect();}">
+          <svg id="edge-svg"></svg>
+        </div></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Saved flows</h2>
+    <div id="flow-schedule-note" style="margin-bottom:10px;font-size:.85rem"></div>
+    <div id="flow-saved-list" class="muted">No saved flows yet — build one above, name it, and click Save.</div>
+  </div>
+  <div class="card hidden" id="cfg-card">
+    <div class="row" style="margin-bottom:8px"><h2 id="cfg-title" style="margin:0"></h2><span class="spacer"></span>
+      <button class="btn green" onclick="previewTile()">👁 Preview here</button>
+      <button class="btn danger" onclick="removeTile()">Remove tile</button></div>
+    <div id="cfg-error" style="display:none;background:rgba(224,93,93,.12);border:1px solid var(--danger);border-left:4px solid var(--danger);color:#f1b1b1;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:.88rem;line-height:1.5"></div>
+    <div id="cfg-fields"></div>
+    <button class="btn" onclick="applyCfg()">Apply</button>
+  </div>
+  <div class="card hidden" id="flow-preview-card">
+    <div class="row" style="margin-bottom:10px">
+      <h2 id="flow-preview-title" style="margin:0">Preview</h2><span class="spacer"></span>
+      <input type="text" id="flow-preview-filter" placeholder="🔍 filter rows…" style="max-width:240px" oninput="filterPreview('flow')">
+      <select id="flow-preview-col" onchange="filterPreview('flow')"><option value="">all columns</option></select>
+      <select id="flow-preview-rows" onchange="previewTile()"><option value="50">50 rows</option><option value="200">200 rows</option><option value="500">500 rows</option></select>
+    </div>
+    <div class="tablewrap"><table id="flow-preview-table"></table></div>
+    <p class="muted" style="margin-top:6px">Tip: drag the bottom-right corner of the table (or the canvas above) to resize it.</p>
+  </div>
+</section>
+
+<!-- CONNECTORS -->
+<section id="view-connectors" class="hidden">
+  <div class="card">
+    <h2>Inbound connectors</h2>
+    <p class="muted" style="margin-bottom:12px">Configure these with environment variables (in Render: your service → Environment). Each "Run now" checks for new files and loads them as datasets.</p>
+    <div class="list-item">
+      <span class="name">📧 Email (IMAP)</span>
+      <span class="pill" id="conn-email">…</span>
+      <span class="muted">Loads CSV/Excel attachments from unread emails</span>
+      <span class="spacer"></span>
+      <button class="btn ghost" onclick="testEmail()">🔍 Test connection</button>
+      <button class="btn green" onclick="runIngest('email')">Check email now</button>
+    </div>
+    <div class="list-item">
+      <span class="name">📂 SFTP pull</span>
+      <span class="pill" id="conn-sftp">…</span>
+      <span class="muted">Pulls new files from a remote SFTP folder</span>
+      <span class="spacer"></span>
+      <button class="btn green" onclick="runIngest('sftp')">Pull SFTP now</button>
+    </div>
+    <div class="list-item">
+      <span class="name">🔑 API push</span>
+      <span class="pill" id="conn-api">…</span>
+      <span class="muted">Scripts/vendors can POST files with an API token</span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row" style="margin-bottom:6px">
+      <h2 style="margin:0">📧 Email a file straight into a dataset</h2>
+      <span class="spacer"></span>
+      <span id="conn-auto-note"></span>
+    </div>
+    <p class="muted" style="margin-bottom:12px">Pick a dataset and you get an address for it. Anything emailed there — by you, or by a vendor who never touches your account — lands in that dataset and re-runs any flow that reads it. CSV, TSV and Excel, including inside a .zip or .gz.</p>
+    <div class="row" style="gap:10px;flex-wrap:wrap">
+      <select id="mail-ds" onchange="showMailAddress()" style="min-width:240px"></select>
+      <input type="text" id="mail-addr" readonly style="min-width:320px;flex:1" placeholder="pick a dataset…">
+      <button class="btn" onclick="copyMailAddress()">Copy address</button>
+    </div>
+    <div class="muted" id="mail-note" style="margin-top:10px;font-size:.85rem"></div>
+  </div>
+
+  <div class="card hidden" id="conn-test-card">
+    <div class="row" style="margin-bottom:8px">
+      <h2 style="margin:0">Connection test</h2><span class="spacer"></span>
+      <button class="btn ghost" onclick="$('conn-test-card').classList.add('hidden')">Close</button>
+    </div>
+    <div id="conn-test-body" class="muted"></div>
+  </div>
+
+  <div class="card">
+    <h2>Push data via API</h2>
+    <p class="muted" style="margin-bottom:8px">From any script or system (works with your password, or set an API_TOKEN env var for a dedicated key):</p>
+    <pre id="api-example" style="background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:12px;overflow:auto;font-size:.85rem"></pre>
+  </div>
+  <div class="card">
+    <h2>Recent connector activity</h2>
+    <div id="ingest-log" class="muted">Nothing ingested yet.</div>
+  </div>
+</section>
+
+<!-- APPS -->
+<section id="view-apps" class="hidden">
+  <div class="card">
+    <div class="row">
+      <h2 style="margin:0">Hosted apps</h2><span class="spacer"></span>
+      <span class="muted">Catalog apps run as their own services and connect here — see catalog-app/README.md</span>
+    </div>
+    <p class="muted" style="margin-top:8px">Apps connect to this ETL Space over the connector API and read the datasets you assign. Each app can point at different datasets, so one ETL Space can power many catalogs.</p>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:6px">
+      <h2 style="margin:0">Catalogs</h2>
+      <span class="spacer"></span>
+      <button class="btn ghost" onclick="newProfile()">+ New catalog</button>
+      <button class="btn ghost" onclick="duplicateProfile()">Duplicate</button>
+      <button class="btn ghost" onclick="renameProfile()">Rename</button>
+      <button class="btn danger" onclick="deleteProfile()">Delete</button>
+    </div>
+    <p class="muted" style="margin-bottom:12px">Each catalog is a complete configuration — its own datasets, its own column matching, its own wording. One deployed app serves all of them: open it with <code>?catalog=&lt;name&gt;</code> on the end of the URL, or pick from the dropdown inside the app. You never need a second Render service to add a catalog.</p>
+    <div class="row" style="gap:10px;flex-wrap:wrap">
+      <label class="muted" style="font-size:.85rem">Editing</label>
+      <select id="profile-pick" onchange="switchProfile(this.value)" style="min-width:240px"></select>
+      <span id="profile-badge"></span>
+      <span class="spacer"></span>
+      <label class="muted" style="font-size:.85rem">Word for a store</label>
+      <input type="text" id="profile-loclabel" style="max-width:130px" placeholder="Location" onchange="markAppsDirty()">
+      <label class="muted" style="font-size:.85rem">District filter</label>
+      <input type="text" id="profile-distfilter" style="max-width:130px" placeholder="(all districts)" onchange="markAppsDirty()">
+      <label class="muted" style="font-size:.85rem">Orders go to</label>
+      <input type="text" id="profile-orders" style="max-width:170px" placeholder="OrderFormClaud" onchange="markAppsDirty()">
+    </div>
+    <div class="muted" id="profile-url" style="margin-top:10px;font-size:.85rem"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:6px">
+      <h2 style="margin:0">Schema mapping — match your columns to the app</h2>
+      <span class="spacer"></span>
+      <button class="btn ghost" onclick="detectAll()">✨ Auto-detect all</button>
+      <button class="btn" onclick="saveAppsConfig()">Save mapping</button>
+    </div>
+    <p class="muted" style="margin-bottom:12px">Pick the dataset that feeds each part of the app, then choose which of your columns supplies each field. Fields marked <span class="req-dot">required</span> must be filled in or the app will not work. Nothing changes for the app until you press Save.</p>
+    <div id="apps-roles">Loading…</div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn" onclick="saveAppsConfig()">Save mapping</button>
+      <span class="muted" id="apps-status"></span>
+    </div>
+  </div>
+
+  <div class="card hidden" id="apps-preview-card">
+    <div class="row" style="margin-bottom:10px">
+      <h2 id="apps-preview-title" style="margin:0">Preview</h2><span class="spacer"></span>
+      <button class="btn ghost" onclick="$('apps-preview-card').classList.add('hidden')">Close</button>
+    </div>
+    <div class="tablewrap"><table id="apps-preview-table"></table></div>
+  </div>
+
+  <div class="card">
+    <h2>Orders saved by the app</h2>
+    <div id="apps-collections" class="muted">None yet — submit an order in the app and it lands here.</div>
+  </div>
+</section>
+
+</main>
+<div id="toast"></div>
+<script>
+const $=id=>document.getElementById(id);
+let _toastTimer=null;
+function toast(msg,err){const t=$('toast');t.textContent=msg;t.className=err?'error':'';t.style.display='block';
+  clearTimeout(_toastTimer);_toastTimer=setTimeout(()=>t.style.display='none',err?10000:4000);
+  const ce=$('cfg-error');
+  if(ce){if(err&&!$('cfg-card').classList.contains('hidden')){ce.textContent=msg;ce.style.display='block';}else if(!err){ce.style.display='none';}}
+}
+function showTab(name){
+  for(const v of ['datasets','sql','transforms','flows','connectors','apps']){
+    $('view-'+v).classList.toggle('hidden',v!==name);
+    $('tab-'+v).classList.toggle('active',v===name);
+  }
+  if(name==='datasets')loadDatasets();
+  if(name==='transforms')loadTransforms();
+  if(name==='connectors')loadConnectors();
+  if(name==='flows')initFlows();
+  if(name==='apps')loadAppsConfig();
+}
+async function api(path,opts){
+  const r=await fetch(path,opts);
+  const isJson=(r.headers.get('content-type')||'').includes('json');
+  const body=isJson?await r.json():await r.text();
+  if(!r.ok)throw new Error(body.detail||body||r.statusText);
+  return body;
+}
+const TYPE_ICON={text:'A',integer:'#',decimal:'#.#',date:'📅','true/false':'✓/✗'};
+function renderTable(el,cols,rows,types){
+  el.innerHTML='<thead><tr>'+cols.map((c,i)=>{
+    const t=types&&types[i];
+    const badge=t?`<span class="typetag" title="${esc(t)}">${TYPE_ICON[t]||'A'} ${esc(t)}</span>`:'';
+    return `<th><div class="colname">${esc(c)}</div>${badge}</th>`;
+  }).join('')+'</tr></thead>'+
+    '<tbody>'+rows.map(r=>'<tr>'+r.map(v=>`<td>${v===null?'<span class="muted">null</span>':esc(v)}</td>`).join('')+'</tr>').join('')+'</tbody>';
+}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ---- datasets ----
+async function loadDatasets(){
+  try{
+    const ds=await api('/api/datasets');
+    window._allDatasets=ds;
+    // work out which flows re-run by themselves off each dataset
+    try{
+      const fl=await api('/api/flows'); const map={};
+      fl.forEach(f=>{
+        if(!((f.graph||{}).settings||{}).on_update)return;
+        ((f.graph||{}).nodes||[]).filter(n=>n.type==='input').forEach(n=>{
+          const d=(n.config||{}).dataset; if(!d)return;
+          (map[d]=map[d]||[]).push(f.label||f.name);
+        });
+      });
+      window._flowWatchers=map;
+    }catch(e){window._flowWatchers=window._flowWatchers||{};}
+    const folders=[...new Set(ds.map(d=>d.folder).filter(Boolean))].sort();
+    const fsel=$('ds-folder-filter'),cur=fsel.value;
+    fsel.innerHTML='<option value="">All folders</option>'+folders.map(f=>`<option ${f===cur?'selected':''}>${esc(f)}</option>`).join('')+
+      (ds.some(d=>!d.folder)?`<option value="__none__" ${cur==='__none__'?'selected':''}>(no folder)</option>`:'');
+    const q=($('ds-search').value||'').trim().toLowerCase();
+    let list=ds.filter(d=>{
+      if(cur==='__none__'&&d.folder)return false;
+      if(cur&&cur!=='__none__'&&d.folder!==cur)return false;
+      return !q||d.name.toLowerCase().includes(q);
+    });
+    $('ds-count').textContent=`${list.length} of ${ds.length}`;
+    if(!ds.length){$('ds-list').innerHTML='<span class="muted">No datasets yet — upload a file above.</span>';return;}
+    if(!list.length){$('ds-list').innerHTML='<span class="muted">Nothing matches that filter.</span>';return;}
+    // group by folder
+    const groups={};
+    list.forEach(d=>{(groups[d.folder||'']=groups[d.folder||'']||[]).push(d);});
+    const names=Object.keys(groups).sort((a,b)=>(a===''?1:b===''?-1:a.localeCompare(b)));
+    $('ds-list').innerHTML=names.map(f=>{
+      const rows=groups[f].map(d=>`
+      <div class="list-item">
+        <span class="name" onclick="preview('${d.name}')">${esc(d.name)}</span>
+        <span class="pill ${d.source==='upload'?'up':'tr'}">${d.source}</span>
+        <span class="muted">${d.row_count.toLocaleString()} rows</span>
+        ${modePill(d.update_mode)}${watcherPill(d.name)}
+        <span class="muted" title="${esc(d.updated_by||'')}">updated ${esc(when(d.updated_at))}${d.updated_by?' · '+esc(d.updated_by):''}</span>
+        <span class="spacer"></span>
+        <button class="btn ghost" onclick="preview('${d.name}')" title="Look at the rows and column types">👁 Preview</button>
+        <button class="btn ghost" onclick="moveDataset('${d.name}','${esc(d.folder||'')}')" title="Move to a folder">📁 Folder</button>
+        <button class="btn ghost" onclick="renameDataset('${d.name}')">Rename</button>
+        <a class="btn ghost" style="text-decoration:none" href="/api/datasets/${d.name}/export">Export CSV</a>
+        <button class="btn danger" onclick="delDataset('${d.name}')">Delete</button>
+      </div>`).join('');
+      const label=f?`📁 ${esc(f)}`:'📄 Unfiled';
+      return `<div style="margin-bottom:14px"><div class="muted" style="font-size:.75rem;letter-spacing:.12em;text-transform:uppercase;margin:6px 2px">${label} · ${groups[f].length}</div>${rows}</div>`;
+    }).join('');
+  }catch(e){toast(e.message,true);}
+}
+// Timestamps come back as UTC; show them in your own timezone with a
+// "how long ago" hint, since "is this data fresh?" is the real question.
+function when(ts){
+  if(!ts)return 'never';
+  const d=new Date(String(ts).replace(' ','T')+(/[zZ]|[+-]\d\d:?\d\d$/.test(String(ts))?'':'Z'));
+  if(isNaN(d))return String(ts).slice(0,16);
+  const mins=Math.round((Date.now()-d.getTime())/60000);
+  const ago=mins<1?'just now':mins<60?`${mins} min ago`
+    :mins<1440?`${Math.round(mins/60)} hr ago`:`${Math.round(mins/1440)} d ago`;
+  return `${d.toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})} (${ago})`;
+}
+// Which saved flows re-run by themselves when this dataset is uploaded again.
+function watcherPill(dsName){
+  const fl=window._flowWatchers||{};
+  const who=fl[dsName]||[];
+  if(!who.length)return '';
+  return `<span class="pill up" title="Setting: uploading this dataset again automatically re-runs ${esc(who.join(', '))}">⚡ upload re-runs ${who.length} flow${who.length===1?'':'s'}</span>`;
+}
+// How this dataset was LAST WRITTEN — a fact about the past, not a setting.
+// A dataset you upload yourself always reads "by hand"; it only says automatic
+// once a flow writes it off a trigger, or on schedule once the timer does.
+function modePill(mode){
+  if(mode==='auto')return '<span class="pill up" title="Last written automatically — a flow ran because one of its inputs changed">⚡ written automatically</span>';
+  if(mode==='scheduled')return '<span class="pill up" title="Last written by the scheduled timer">⏰ written on schedule</span>';
+  return '<span class="pill" title="Last written by hand — you uploaded it, or ran the flow yourself. This is a record of what happened, not a setting.">✋ written by hand</span>';
+}
+async function moveDataset(name,current){
+  const folders=[...new Set((window._allDatasets||[]).map(d=>d.folder).filter(Boolean))];
+  const hint=folders.length?`\n\nExisting folders: ${folders.join(', ')}`:'';
+  const folder=prompt(`Folder for "${name}" (blank = unfiled):${hint}`,current||'');
+  if(folder===null)return;
+  try{
+    await api(`/api/datasets/${name}/folder`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder})});
+    toast(folder?`Moved "${name}" to 📁 ${folder}`:`Removed "${name}" from its folder`);
+    loadDatasets();
+  }catch(e){toast(e.message,true);}
+}
+async function renameDataset(name){
+  const nn=prompt(`Rename "${name}" to:`,name);
+  if(!nn||nn===name)return;
+  try{
+    const r=await api(`/api/datasets/${name}/rename`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nn})});
+    const f=r.flows_updated||[];
+    toast(f.length
+      ? `Renamed to "${r.name}" — also repointed ${f.length} flow${f.length===1?'':'s'} (${f.join(', ')}) so ${f.length===1?'it keeps':'they keep'} writing here`
+      : `Renamed to "${r.name}"`);
+    loadDatasets();refreshFlowList();
+  }catch(e){toast(e.message,true);}
+}
+const PREV={};  // holds current preview data per card for client-side filtering
+function setPreview(kind,cols,rows,tableId,colSelId,types){
+  PREV[kind]={cols,rows,types};
+  const sel=$(colSelId);
+  const cur=sel.value;
+  sel.innerHTML='<option value="">all columns</option>'+cols.map(c=>`<option ${c===cur?'selected':''}>${esc(c)}</option>`).join('');
+  filterPreview(kind);
+}
+function filterPreview(kind){
+  const p=PREV[kind];if(!p)return;
+  const isFlow=kind==='flow';
+  const q=$(isFlow?'flow-preview-filter':'ds-preview-filter').value.trim().toLowerCase();
+  const col=$(isFlow?'flow-preview-col':'ds-preview-col').value;
+  const ci=col?p.cols.indexOf(col):-1;
+  let rows=p.rows;
+  if(q)rows=rows.filter(r=>ci>=0
+    ? String(r[ci]??'').toLowerCase().includes(q)
+    : r.some(v=>String(v??'').toLowerCase().includes(q)));
+  renderTable($(isFlow?'flow-preview-table':'preview-table'),p.cols,rows,p.types);
+  const cnt=$(isFlow?'flow-preview-title':'preview-title');
+  if(q)cnt.dataset.filtered=`${rows.length} match${rows.length===1?'':'es'}`;
+}
+async function preview(name){
+  try{
+    const p=await api(`/api/datasets/${name}/preview?limit=500`);
+    $('preview-title').textContent=`${name} — first ${p.rows.length} of ${p.total_rows.toLocaleString()} rows`;
+    $('ds-preview-filter').value='';
+    setPreview('ds',p.columns,p.rows,'preview-table','ds-preview-col',p.types);
+    $('preview-card').classList.remove('hidden');
+    $('preview-card').scrollIntoView({behavior:'smooth'});
+  }catch(e){toast(e.message,true);}
+}
+function hidePreview(){$('preview-card').classList.add('hidden');}
+async function delDataset(name){
+  const used=(window._flowWatchers||{})[name]||[];
+  const warn=used.length?`\n\nHeads up: ${used.join(', ')} reads this dataset and will fail until you restore it or repoint the flow.`:'';
+  if(!confirm(`Move "${name}" to Deleted items?${warn}\n\nYou can restore it from the 🗑 Deleted items button below.`))return;
+  try{await api(`/api/datasets/${name}`,{method:'DELETE'});
+    toast(`"${name}" moved to Deleted items — restore it any time`);
+    loadDatasets();refreshFlowList();loadTrash();}
+  catch(e){toast(e.message,true);}
+}
+
+// ---- Deleted items (the bin) ----
+function toggleTrash(){
+  const p=$('trash-panel');
+  p.classList.toggle('hidden');
+  $('trash-btn').textContent=p.classList.contains('hidden')?'🗑 Deleted items':'🗑 Hide deleted items';
+  if(!p.classList.contains('hidden'))loadTrash();
+}
+async function loadTrash(){
+  try{
+    const t=await api('/api/trash');
+    const n=(t.datasets||[]).length+(t.flows||[]).length;
+    $('trash-count').textContent=n?`${n} item${n===1?'':'s'} recoverable`:'';
+    const el=$('trash-list'); if(!el)return;
+    if(!n){el.innerHTML='<span class="muted">Nothing deleted — anything you remove lands here first.</span>';return;}
+    const dsRows=(t.datasets||[]).map(d=>`<div class="list-item">
+        <span class="pill">dataset</span>
+        <span class="name">${esc(d.name)}</span>
+        <span class="muted">${Number(d.rows||0).toLocaleString()} rows · deleted ${esc(when(d.deleted_at))}</span>
+        <span class="spacer"></span>
+        <button class="btn ghost" onclick="restoreItem('datasets','${esc(d.name)}')">↩ Restore</button>
+        <button class="btn danger" onclick="purgeItem('datasets','${esc(d.name)}')">Delete permanently</button>
+      </div>`).join('');
+    const flRows=(t.flows||[]).map(f=>`<div class="list-item">
+        <span class="pill tr">flow</span>
+        <span class="name">${esc(f.label||f.name)}</span>
+        <span class="muted">deleted ${esc(when(f.deleted_at))}</span>
+        <span class="spacer"></span>
+        <button class="btn ghost" onclick="restoreItem('flows','${esc(f.name)}')">↩ Restore</button>
+        <button class="btn danger" onclick="purgeItem('flows','${esc(f.name)}')">Delete permanently</button>
+      </div>`).join('');
+    el.innerHTML=dsRows+flRows;
+  }catch(e){$('trash-list').innerHTML='<span class="muted">Could not load deleted items.</span>';}
+}
+async function restoreItem(kind,name){
+  try{await api(`/api/trash/${kind}/${encodeURIComponent(name)}/restore`,{method:'POST'});
+    toast(`Restored "${name}"`);
+    loadTrash();loadDatasets();refreshFlowList();
+  }catch(e){toast(e.message,true);}
+}
+async function purgeItem(kind,name){
+  const extra=kind==='datasets'?' Its table will be dropped and the data is gone for good.':'';
+  if(!confirm(`Permanently delete "${name}"?${extra}\n\nThis cannot be undone.`))return;
+  try{await api(`/api/trash/${kind}/${encodeURIComponent(name)}`,{method:'DELETE'});
+    toast(`Permanently deleted "${name}"`);
+    loadTrash();loadDatasets();refreshFlowList();
+  }catch(e){toast(e.message,true);}
+}
+// upload
+const drop=$('drop'),fileInput=$('file');
+drop.onclick=()=>fileInput.click();
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('hover');};
+drop.ondragleave=()=>drop.classList.remove('hover');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('hover');if(e.dataTransfer.files.length)upload(e.dataTransfer.files[0]);};
+fileInput.onchange=()=>{if(fileInput.files.length)upload(fileInput.files[0]);};
+async function upload(f){
+  drop.textContent=`Uploading ${f.name}…`;
+  const fd=new FormData();fd.append('file',f);
+  try{
+    const r=await api('/api/datasets/upload',{method:'POST',body:fd});
+    toast(`Loaded ${r.rows.toLocaleString()} rows into "${r.name}"`);
+    loadDatasets();
+  }catch(e){toast(e.message,true);}
+  drop.textContent='Drop a CSV or Excel file here, or click to choose';
+  fileInput.value='';
+}
+
+// ---- sql ----
+async function runQuery(){
+  $('sql-status').textContent='Running…';
+  try{
+    const r=await api('/api/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql:$('sql-input').value})});
+    $('sql-status').textContent=`${r.rows.length} rows · ${r.ms} ms`;
+    renderTable($('sql-table'),r.columns,r.rows,r.types);
+    $('sql-result-card').classList.remove('hidden');
+  }catch(e){$('sql-status').textContent='';toast(e.message,true);}
+}
+
+// ---- transforms ----
+async function loadTransforms(){
+  try{
+    const ts=await api('/api/transforms');
+    if(!ts.length){$('tf-list').innerHTML='<span class="muted">No transforms yet.</span>';return;}
+    $('tf-list').innerHTML=ts.map(t=>{
+      const lr=t.last_run;
+      const pill=lr?`<span class="pill ${lr.status==='success'?'tr':'err'}">${lr.status}${lr.row_count!=null?' · '+lr.row_count+' rows':''}</span>`:'<span class="pill">never run</span>';
+      return `<div class="list-item">
+        <span class="name" onclick="editTransform('${t.name}')">${esc(t.name)}</span>
+        <span class="muted">→ ${esc(t.output_dataset)}</span>${pill}
+        <span class="spacer"></span>
+        <button class="btn green" onclick="runTransform('${t.name}')">Run</button>
+        <button class="btn danger" onclick="delTransform('${t.name}')">Delete</button>
+      </div>`;
+    }).join('');
+    window._tfs=Object.fromEntries(ts.map(t=>[t.name,t]));
+  }catch(e){toast(e.message,true);}
+}
+function editTransform(name){
+  const t=window._tfs[name];if(!t)return;
+  $('tf-name').value=t.name;$('tf-output').value=t.output_dataset;$('tf-sql').value=t.sql;
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+async function saveTransform(){
+  try{
+    const r=await api('/api/transforms',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:$('tf-name').value,sql:$('tf-sql').value,output_dataset:$('tf-output').value})});
+    toast(`Saved transform "${r.name}"`);loadTransforms();
+  }catch(e){toast(e.message,true);}
+}
+async function runTransform(name){
+  toast(`Running ${name}…`);
+  try{
+    const r=await api(`/api/transforms/${name}/run`,{method:'POST'});
+    toast(`✓ ${name}: ${r.rows.toLocaleString()} rows → "${r.output_dataset}"`);
+    loadTransforms();
+  }catch(e){toast(e.message,true);loadTransforms();}
+}
+async function delTransform(name){
+  if(!confirm(`Delete transform "${name}"?`))return;
+  try{await api(`/api/transforms/${name}`,{method:'DELETE'});toast(`Deleted ${name}`);loadTransforms();}
+  catch(e){toast(e.message,true);}
+}
+
+// ---- connectors ----
+// Per-dataset drop-box addresses.
+async function fillMailDatasets(){
+  const sel=$('mail-ds'); if(!sel)return;
+  const ds=(window._allDatasets||[]).map(d=>d.name);
+  const names=ds.length?ds:((await api('/api/datasets')).map(d=>d.name));
+  sel.innerHTML='<option value="">— pick a dataset —</option>'+
+    names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('')+
+    '<option value="__new__">— or type a new name below —</option>';
+}
+async function showMailAddress(){
+  const sel=$('mail-ds'), out=$('mail-addr'), note=$('mail-note');
+  let ds=sel.value;
+  if(ds==='__new__'){ ds=(prompt('Name the dataset these emails should create:','')||'').trim();
+    if(!ds){sel.value='';out.value='';return;} }
+  if(!ds){out.value='';note.textContent='';return;}
+  try{
+    const r=await api(`/api/ingest/email/address?dataset=${encodeURIComponent(ds)}`);
+    out.value=r.inbound_address||r.mailbox_address||'';
+    const idBit=r.dataset_id?` The address is keyed to this dataset's ID <code>${esc(r.dataset_id)}</code>, not its name, so nobody can guess it. `+
+      `<button class="btn ghost" style="padding:2px 10px;font-size:.78rem" onclick="rotateKey('${esc(r.dataset)}')">Rotate ID</button> if it ever leaks — the old address stops working at once.`:'';
+    if(r.inbound_address){
+      note.innerHTML=`Mail sent to <b>${esc(r.inbound_address)}</b> loads the dataset <b>${esc(r.dataset)}</b>. No credentials needed by the sender.`+idBit;
+    }else if(r.mailbox_address){
+      note.innerHTML=`Mail sent to <b>${esc(r.mailbox_address)}</b> loads the dataset <b>${esc(r.dataset)}</b> the next time the connector checks.`+idBit+
+        ` For addresses on your own domain instead, set <code>INBOUND_EMAIL_DOMAIN</code> and point an inbound-email provider at <code>/api/ingest/email/inbound</code>.`;
+    }else if(r.dataset && !r.exists){
+      out.value=''; note.innerHTML=`<b>${esc(r.dataset)}</b> doesn't exist yet, so it has no ID. Upload it once (or send a file to an existing dataset's address) and an ID is issued automatically.`;
+    }else{
+      out.value='';
+      note.innerHTML='Set <code>EMAIL_USER</code> (and the other EMAIL_* variables) so an address can be generated.';
+    }
+  }catch(e){note.textContent=e.message;}
+}
+async function rotateKey(ds){
+  if(!confirm(`Issue a new ID for "${ds}"?\n\nThe current email address stops working immediately, and anyone you gave it to will need the new one.`))return;
+  try{await api(`/api/datasets/${encodeURIComponent(ds)}/key/rotate`,{method:'POST'});
+    toast(`New ID issued for "${ds}"`); showMailAddress();
+  }catch(e){toast(e.message,true);}
+}
+function copyMailAddress(){
+  const v=$('mail-addr').value; if(!v){toast('Pick a dataset first',true);return;}
+  navigator.clipboard.writeText(v).then(()=>toast('Address copied'),()=>toast(v));
+}
+async function testEmail(){
+  const card=$('conn-test-card'), body=$('conn-test-body');
+  card.classList.remove('hidden'); body.textContent='Connecting…';
+  card.scrollIntoView({behavior:'smooth'});
+  try{
+    const r=await api('/api/ingest/email/test',{method:'POST'});
+    const rows=(r.found||[]).map(m=>`<div class="list-item">
+        <span class="name">${esc(m.subject||'(no subject)')}</span>
+        <span class="muted">from ${esc(m.from)} · ${esc(m.date)}</span>
+        ${m.sender_allowed?'':'<span class="pill err">sender blocked</span>'}
+        ${m.already_ingested?'<span class="pill">already loaded</span>':''}
+        <span class="spacer"></span>
+        <span class="muted">${(m.attachments||[]).length?esc(m.attachments.join(', '))+' → '+esc(Object.values(m.would_load_as||{}).join(', ')):'no tabular attachment'}</span>
+      </div>`).join('');
+    body.innerHTML=`<div class="row" style="margin-bottom:10px">
+        <span class="pill ok">✓ connected</span>
+        <span class="muted">${esc(r.user)} on ${esc(r.host)}:${r.port} · folder ${esc(r.folder)} · ${r.messages_in_folder} messages, ${r.messages_matching} matching "${esc(r.search)}"</span>
+      </div>`+(rows||'<span class="muted">Nothing matching right now. Send yourself a test email with a CSV attached, then press Test again.</span>');
+  }catch(e){
+    body.innerHTML=`<span class="pill bad">✕ failed</span> <span class="muted">${esc(e.message)}</span>`;
+  }
+}
+async function loadConnectors(){
+  $('api-example').textContent=
+`curl -u anyuser:YOUR_APP_PASSWORD \\
+  -F "file=@daily_sales.csv" \\
+  ${window.location.origin}/api/datasets/upload
+
+# or with a dedicated API token (set API_TOKEN env var):
+curl -H "X-Api-Key: YOUR_API_TOKEN" \\
+  -F "file=@daily_sales.csv" \\
+  ${window.location.origin}/api/datasets/upload`;
+  try{
+    const s=await api('/api/ingest/status');
+    fillMailDatasets();
+    const note=$('conn-auto-note');
+    if(note)note.innerHTML=s.check_every_minutes
+      ? `<span class="pill up">⏱ checks every ${s.check_every_minutes} min</span> <span class="muted">${s.last_auto_check?'last checked '+esc(when(s.last_auto_check)):'not checked yet'}</span>`
+      : '<span class="pill">⏱ automatic checking off</span> <span class="muted">Set INGEST_MINUTES (e.g. 15) to have connectors check by themselves.</span>';
+    setPill('conn-email',s.email_configured);
+    setPill('conn-sftp',s.sftp_configured);
+    setPill('conn-api',s.api_token_set,'token set','using password');
+    if(!s.recent.length){$('ingest-log').textContent='Nothing ingested yet.';return;}
+    $('ingest-log').innerHTML='<div class="tablewrap"><table><thead><tr><th>When (UTC)</th><th>Source</th><th>Dataset</th><th>Rows</th><th>Status</th><th>Note</th></tr></thead><tbody>'+
+      s.recent.map(r=>`<tr><td>${esc(r.created_at)}</td><td>${esc(r.source)}</td><td>${r.dataset?esc(r.dataset):'—'}</td><td>${r.row_count??'—'}</td><td>${esc(r.status)}</td><td>${r.message?esc(r.message):''}</td></tr>`).join('')+
+      '</tbody></table></div>';
+  }catch(e){toast(e.message,true);}
+}
+function setPill(id,ok,onText,offText){
+  const p=$(id);
+  p.textContent=ok?(onText||'configured'):(offText||'not configured');
+  p.className='pill '+(ok?'tr':'');
+}
+async function runIngest(kind){
+  toast(kind==='email'?'Checking mailbox…':'Pulling from SFTP…');
+  try{
+    const r=await api(`/api/ingest/${kind}/run`,{method:'POST'});
+    const n=r.ingested.length;
+    toast(n?`✓ Loaded ${n} file${n>1?'s':''}: ${r.ingested.map(x=>x.name).join(', ')}`:'No new files found.'+(r.errors.length?` ${r.errors.length} error(s).`:''));
+    loadConnectors();
+  }catch(e){toast(e.message,true);}
+}
+
+// ============ Magic ETL flow editor ============
+const TILE_META={
+  input:  {label:'Input',icon:'📥',cat:'cat-in', inputs:0,out:true},
+  select: {label:'Select Columns',icon:'🔠',cat:'cat-tr',inputs:1,out:true},
+  filter: {label:'Filter',icon:'🔍',cat:'cat-tr',inputs:1,out:true},
+  rename: {label:'Rename',icon:'✏️',cat:'cat-tr',inputs:1,out:true},
+  calc:   {label:'Formula',icon:'🧮',cat:'cat-tr',inputs:1,out:true},
+  settype:{label:'Set Type',icon:'🔢',cat:'cat-tr',inputs:1,out:true},
+  groupby:{label:'Group By',icon:'Σ',cat:'cat-tr',inputs:1,out:true},
+  join:   {label:'Join',icon:'⋈',cat:'cat-tr',inputs:2,out:true},
+  append: {label:'Append',icon:'⧺',cat:'cat-tr',inputs:2,out:true},
+  dedupe: {label:'Dedupe',icon:'♻',cat:'cat-tr',inputs:1,out:true},
+  photos: {label:'Photos',icon:'🖼',cat:'cat-tr',inputs:1,out:true},
+  output: {label:'Output',icon:'📤',cat:'cat-out',inputs:1,out:false},
+};
+const CFG_FIELDS={
+  input:  [{k:'dataset',label:'Dataset',type:'dataset'}],
+  select: [{k:'columns',label:'Columns to keep',type:'cols'}],
+  filter: [{k:'column',label:'Column',type:'col'},{k:'op',label:'Condition',type:'select',opts:['==','!=','>','>=','<','<=','contains','not empty']},{k:'value',label:'Value',ph:'100'}],
+  rename: [{k:'mapping',label:'Renames',type:'renames'}],
+  calc:   [{k:'name',label:'New column name',ph:'revenue'},{k:'expr',label:'Expression — math (amount * quantity), col.fillna(0), or SQL-style: case when X is null then 0 else X end',type:'expr',ph:'case when display_order is null then 99999 else display_order end'}],
+  settype:[{k:'mapping',label:'Column types',type:'typemap'}],
+  groupby:[{k:'group_columns',label:'Group by columns',type:'cols'},{k:'aggregations',label:'Aggregations',type:'aggs'}],
+  join:   [{k:'left_on',label:'Left key column (top input)',type:'col',input:0},{k:'right_on',label:'Right key column (bottom input) — blank = same name',type:'col',input:1,blank:true},{k:'how',label:'Join type',type:'select',opts:['inner','left','right','outer']}],
+  append: [],
+  dedupe: [{k:'columns',label:'Columns to match on (none checked = whole row)',type:'cols'}],
+  photos: [{k:'column',label:'Column holding the original photo link',type:'col'},
+           {k:'out_column',label:'New column for the result — blank makes <column>_jpg. The original column is never changed, so you can point the app at whichever you prefer.',ph:'item_display_image_1_jpg'},
+           {k:'mode',label:'What to do — “clean” fixes the links only; “cache” downloads each photo, converts it to a real JPEG and serves it from here (survives the vendor blocking hotlinks, and is the only reliable fix for .jfif and .webp)',type:'select',opts:['clean','cache']},
+           {k:'max_px',label:'Longest side in pixels, when caching',ph:'1200'},
+           {k:'quality',label:'JPEG quality 40-95, when caching',ph:'82'},
+           {k:'to_jpg',label:'Also rename .jfif-style links to .jpg (only works if the vendor also hosts a .jpg — leave off and use cache instead)',type:'select',opts:['','yes']}],
+  output: [{k:'dataset',label:'Output dataset name',ph:'my_result'}],
+};
+const AGG_OPTS=['sum','mean','min','max','count','nunique'];
+let FLOW={nodes:[],edges:[]}, selId=null, armedPort=null, nextId=1, dsNames=[], flowsInit=false;
+
+async function initFlows(){
+  try{dsNames=(await api('/api/datasets')).map(d=>d.name);}catch(e){}
+  window._dsRefresh=window._dsRefresh||setInterval(async()=>{
+    try{const n=(await api('/api/datasets')).map(d=>d.name);
+      if(n.join('|')!==dsNames.join('|')){dsNames=n;renderFlow();}
+    }catch(e){}
+  },30000);
+  flowsInit=true;refreshFlowList();   // always refresh so the saved list is current
+  renderFlow();
+}
+async function refreshFlowList(){
+  try{
+    showSchedule();
+    const fl=await api('/api/flows');
+    $('flow-list').innerHTML='<option value="">— saved flows —</option>'+fl.map(f=>`<option value="${esc(f.name)}">${esc(f.label||f.name)}</option>`).join('');
+    window._flows=Object.fromEntries(fl.map(f=>[f.name,f.graph]));
+    window._flowLabels=Object.fromEntries(fl.map(f=>[f.name,f.label||f.name]));
+    const el=$('flow-saved-list');
+    if(!el)return;
+    if(!fl.length){el.innerHTML='<span class="muted">No saved flows yet — build one above, name it, and click Save.</span>';return;}
+    el.innerHTML=fl.map(f=>{
+      const g=f.graph||{},s=g.settings||{},n=(g.nodes||[]).length;
+      const outs=(g.nodes||[]).filter(x=>x.type==='output').map(x=>(x.config||{}).dataset).filter(Boolean);
+      const ins=(g.nodes||[]).filter(x=>x.type==='input').map(x=>(x.config||{}).dataset).filter(Boolean);
+      const pills=[
+        `<span class="pill">${n} tile${n===1?'':'s'}</span>`,
+        outs.length?`<span class="pill tr">→ ${esc(outs.join(', '))}</span>`:'',
+        s.on_update?`<span class="pill up" title="Runs by itself whenever ${ins.length?esc(ins.join(' or ')):'an input dataset'} is uploaded again">⚡ auto-run when ${ins.length?esc(ins.join(' or ')):'an input'} updates</span>`:'',
+        s.scheduled?'<span class="pill up">⏰ scheduled</span>':'',
+      ].join(' ');
+      // The pills above are SETTINGS (what will happen). This is HISTORY (what did
+      // happen) — labelled so the two are never mistaken for each other.
+      const ran=f.last_run_at
+        ? `<span class="muted" title="${esc(f.last_run_message||'')}">last run ${
+             f.last_run_status==='error'?'<b style="color:var(--danger)">✕ failed</b>'
+             :(f.last_run_mode==='auto'?'⚡ automatically':f.last_run_mode==='scheduled'?'⏰ on schedule':'✋ by hand')
+           } ${esc(when(f.last_run_at))}${
+             f.last_run_status!=='error'&&f.last_run_rows!=null?` · ${Number(f.last_run_rows).toLocaleString()} rows`:''}</span>`
+        : '<span class="muted">never run</span>';
+      return `<div class="list-item">
+        <span class="name" onclick="openFlow('${esc(f.name)}')">${esc(f.label||f.name)}</span>
+        ${pills}
+        ${ran}
+        <span class="muted">saved ${esc(when(f.updated_at))}</span>
+        <span class="spacer"></span>
+        <button class="btn ghost" onclick="openFlow('${esc(f.name)}')">Open</button>
+        <button class="btn green" onclick="runSavedFlow('${esc(f.name)}')">▶ Run</button>
+        <button class="btn danger" onclick="deleteNamedFlow('${esc(f.name)}')">Delete</button>
+      </div>`;
+    }).join('');
+  }catch(e){}
+}
+// The name you type is kept exactly as typed (the label). `name` here is the
+// short slug used in URLs — never shown to you.
+function flowLabel(name){return (window._flowLabels||{})[name]||name;}
+function flowSlug(label){                       // must match slugify() on the server
+  let s=String(label||'').trim().toLowerCase().replace(/[^a-z0-9_]+/g,'_').replace(/_+/g,'_').replace(/^_|_$/g,'');
+  if(!s)s='dataset';
+  if(/^[0-9]/.test(s))s='d_'+s;
+  return s.slice(0,60);
+}
+function openFlow(name){
+  $('flow-list').value=name;loadFlow(name);
+  document.getElementById('canvas-wrap').scrollIntoView({behavior:'smooth',block:'center'});
+  toast(`Opened flow "${flowLabel(name)}"`);
+}
+async function runSavedFlow(name){
+  // Saving clears the canvas, so an edited-but-unsaved flow is easy to miss.
+  if(flowDirty && flowSlug($('flow-name').value.trim())===name){
+    if(!confirm(`The canvas has unsaved changes to "${flowLabel(name)}".\n\n`+
+                `Running here uses the SAVED copy, so your edits will NOT be included.\n\n`+
+                `OK = run the saved copy anyway.   Cancel = go back and press Save first.`))return;
+  }
+  toast(`Running ${flowLabel(name)}…`);
+  try{
+    const r=await api(`/api/flows/${name}/run-saved`,{method:'POST'});
+    toast('✓ '+r.outputs.map(o=>`${o.rows.toLocaleString()} rows → "${o.dataset}"`).join(' · '));
+  }catch(e){toast(e.message,true);}
+  refreshFlowList();loadDatasets();   // keep "last ran" and the Datasets page current
+}
+async function deleteNamedFlow(name){
+  const lbl=flowLabel(name);
+  if(!confirm(`Move the flow "${lbl}" to Deleted items?\n\nYou can restore it from the Datasets tab.`))return;
+  try{await api(`/api/flows/${name}`,{method:'DELETE'});
+    toast(`"${lbl}" moved to Deleted items — restore it from the Datasets tab`);
+    if($('flow-name').value.trim()===lbl)newFlow();
+    refreshFlowList();loadDatasets();loadTrash();
+  }catch(e){toast(e.message,true);}
+}
+function newFlow(){FLOW={nodes:[],edges:[],settings:{}};selId=null;nextId=1;$('flow-name').value='';$('flow-on-update').checked=false;$('flow-scheduled').checked=false;$('cfg-card').classList.add('hidden');clearFlowDirty();renderFlow();}
+function loadFlow(name){
+  if(!name||!window._flows[name])return;
+  FLOW=JSON.parse(JSON.stringify(window._flows[name]));
+  FLOW.settings=FLOW.settings||{};
+  nextId=Math.max(0,...FLOW.nodes.map(n=>parseInt(n.id.slice(1))||0))+1;
+  $('flow-name').value=flowLabel(name);
+  $('flow-on-update').checked=!!FLOW.settings.on_update;
+  $('flow-scheduled').checked=!!FLOW.settings.scheduled;
+  selId=null;$('cfg-card').classList.add('hidden');clearFlowDirty();renderFlow();
+}
+// ---- unsaved-changes tracking -------------------------------------------
+// Saving clears the canvas, so it is easy to edit a flow, press Run on the
+// saved list, and quietly run the OLD version. This makes that visible.
+let flowDirty=false;
+function markFlowDirty(){
+  if(flowDirty)return;
+  flowDirty=true;
+  const b=$('flow-dirty'); if(b)b.style.display='';
+  const s=document.querySelector('#view-flows button.btn[onclick="saveFlow()"]');
+  if(s)s.classList.add('needs-save');
+}
+function clearFlowDirty(){
+  flowDirty=false;
+  const b=$('flow-dirty'); if(b)b.style.display='none';
+  const s=document.querySelector('#view-flows button.btn[onclick="saveFlow()"]');
+  if(s)s.classList.remove('needs-save');
+}
+// The dataset an unnamed Output tile will actually write to.
+function defaultOutputName(){
+  const typed=($('flow-name')?$('flow-name').value:'').trim();
+  return typed?flowSlug(typed):'flow_output';
+}
+// Fill in any Output tile left blank, so a flow called "Master Catalog" writes
+// to master_catalog instead of silently landing in flow_output.
+function nameBlankOutputs(){
+  const fallback=defaultOutputName(); const named=[];
+  (FLOW.nodes||[]).forEach(n=>{
+    if(n.type!=='output')return;
+    n.config=n.config||{};
+    if(!String(n.config.dataset||'').trim()){ n.config.dataset=fallback; named.push(fallback); }
+  });
+  if(named.length){renderFlow();}
+  return named;
+}
+function addTile(type){
+  const n={id:'n'+(nextId++),type,x:40+(FLOW.nodes.length%5)*185,y:40+Math.floor(FLOW.nodes.length/5)*120,config:{}};
+  FLOW.nodes.push(n);markFlowDirty();renderFlow();selectTile(n.id);
+}
+function cfgSummary(n){
+  const c=n.config||{};
+  switch(n.type){
+    case 'input':return c.dataset||'pick a dataset…';
+    case 'output':return c.dataset?('→ '+c.dataset):('→ '+defaultOutputName()+' (unnamed)');
+    case 'filter':return c.column?`${c.column} ${c.op||'=='} ${c.value??''}`:'set condition…';
+    case 'calc':return c.name?`${c.name} = ${c.expr||''}`:'set formula…';
+    case 'groupby':return c.group_columns?`by ${c.group_columns}`:'set groups…';
+    case 'join':return c.left_on?`on ${c.left_on} (${c.how||'inner'})`:'set keys…';
+    case 'select':return c.columns||'choose columns…';
+    case 'rename':return c.mapping||'set renames…';
+    case 'settype':return c.mapping||'choose columns & types…';
+    case 'dedupe':return c.columns?('on '+c.columns):'whole rows';
+    case 'photos':return c.column?`${c.column} → ${c.out_column||(c.column+'_jpg')} · ${c.mode==='cache'?'convert & host':'clean links'}`:'pick the photo column…';
+    default:return '';
+  }
+}
+function tileBodyHtml(n){
+  const c=n.config||{};
+  if(n.type==='input'){
+    const opts='<option value="">— pick a dataset —</option>'+dsNames.map(d=>
+      `<option value="${esc(d)}" ${d===c.dataset?'selected':''}>${esc(d)}</option>`).join('');
+    return `<select class="tile-pick" onchange="setTileDataset('${n.id}',this.value)" onmousedown="event.stopPropagation()" onclick="event.stopPropagation()">${opts}</select>`;
+  }
+  if(n.type==='output'){
+    // An unnamed Output writes to whatever defaultOutputName() works out, so
+    // say which dataset that is rather than letting it land somewhere unexpected.
+    const fallback=defaultOutputName();
+    return `<input class="tile-pick${c.dataset?'':' tile-warn'}" type="text"
+      placeholder="→ ${esc(fallback)}" title="${c.dataset?'':'Unnamed — this will write to “'+esc(fallback)+'”'}"
+      value="${esc(c.dataset||'')}"
+      onchange="setTileOutput('${n.id}',this.value)" onmousedown="event.stopPropagation()" onclick="event.stopPropagation()">`;
+  }
+  return esc(cfgSummary(n));
+}
+function setTileDataset(id,val){
+  const n=FLOW.nodes.find(x=>x.id===id); if(!n)return;
+  n.config=n.config||{}; n.config.dataset=val;
+  markFlowDirty();
+  toast(val?`Input set to "${val}"`:'Input cleared');
+  // defer: let the change event finish before the canvas re-renders
+  setTimeout(()=>{
+    renderFlow();
+    if(selId===id)selectTile(id);
+    if(!$('flow-preview-card').classList.contains('hidden'))previewTile();
+  },0);
+}
+function setTileOutput(id,val){
+  const n=FLOW.nodes.find(x=>x.id===id); if(!n)return;
+  n.config=n.config||{}; n.config.dataset=val.trim();
+  markFlowDirty();
+  setTimeout(()=>{if(selId===id)selectTile(id);},0);
+}
+function renderFlow(){
+  const cv=$('canvas');
+  cv.querySelectorAll('.tile,.canvas-empty').forEach(t=>t.remove());
+  if(!FLOW.nodes.length){
+    const hint=document.createElement('div');
+    hint.className='canvas-empty';
+    hint.innerHTML='Your canvas is empty.<br><b>← Add an Input tile</b> from the sidebar to get started.';
+    cv.appendChild(hint);
+  }
+  const lastRun=window._lastRun||{};
+  for(const n of FLOW.nodes){
+    const m=TILE_META[n.type];if(!m)continue;
+    const el=document.createElement('div');
+    el.className=`tile ${m.cat}`+(n.id===selId?' selected':'');
+    el.style.left=n.x+'px';el.style.top=n.y+'px';el.dataset.id=n.id;
+    let badge='';
+    if(n.type==='output'){
+      const ds=(n.config||{}).dataset;
+      if(ds&&lastRun[ds]!=null)badge=`<span class="tile-badge">✓ ${Number(lastRun[ds]).toLocaleString()}</span>`;
+    }
+    el.innerHTML=`${badge}<div class="tile-head"><span class="tile-icon">${m.icon}</span><span>${m.label}</span></div><div class="tile-body">${tileBodyHtml(n)}</div>`;
+    if(m.inputs>=1){const p=mkPort('in',n.id,0);p.style.top=(m.inputs===2?'22%':'40%');if(m.inputs===2)p.dataset.lbl='L';el.appendChild(p);}
+    if(m.inputs===2){const p=mkPort('in',n.id,1);p.style.top='65%';p.dataset.lbl='R';el.appendChild(p);}
+    if(m.out){const p=mkPort('out',n.id,0);p.style.top='40%';el.appendChild(p);}
+    el.querySelector('.tile-head').addEventListener('mousedown',e=>dragStart(e,n));
+    el.querySelector('.tile-body').addEventListener('click',()=>selectTile(n.id));
+    el.querySelector('.tile-head').addEventListener('click',()=>selectTile(n.id));
+    cv.appendChild(el);
+  }
+  drawEdges();
+}
+function mkPort(kind,nid,port){
+  const p=document.createElement('div');
+  p.className='port '+kind;p.dataset.node=nid;p.dataset.port=port;
+  if(armedPort&&kind==='out'&&armedPort.node===nid)p.classList.add('armed');
+  p.addEventListener('click',e=>{e.stopPropagation();portClick(kind,nid,port);});
+  return p;
+}
+function portClick(kind,nid,port){
+  if(kind==='out'){armedPort={node:nid};window._mouse=null;renderFlow();return;}
+  if(kind==='in'&&armedPort){
+    if(armedPort.node===nid){toast('Cannot connect a tile to itself',true);return;}
+    FLOW.edges=FLOW.edges.filter(e=>!(e.to===nid&&(e.port||0)===port));
+    FLOW.edges.push({from:armedPort.node,to:nid,port});
+    armedPort=null;window._mouse=null;renderFlow();
+  }
+}
+function portPos(nid,kind,port){
+  const n=FLOW.nodes.find(x=>x.id===nid);if(!n)return{x:0,y:0};
+  const m=TILE_META[n.type];const h=64;
+  if(kind==='out')return{x:n.x+158,y:n.y+h*0.45+7};
+  if(m.inputs===2)return{x:n.x,y:n.y+(port===0?h*0.28:h*0.72)+7};
+  return{x:n.x,y:n.y+h*0.45+7};
+}
+const EDGE_DEFS=`<defs>
+  <linearGradient id="eg" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#4f8ef7"/><stop offset="1" stop-color="#3dd68c"/>
+  </linearGradient>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#3dd68c"/>
+  </marker>
+</defs>`;
+function edgePath(a,b){const dx=Math.max(46,(b.x-a.x)/2);return `M${a.x},${a.y} C${a.x+dx},${a.y} ${b.x-dx},${b.y} ${b.x},${b.y}`;}
+function drawEdges(){
+  const svg=$('edge-svg');
+  let html=EDGE_DEFS+FLOW.edges.map((e,i)=>{
+    const a=portPos(e.from,'out',0),b=portPos(e.to,'in',e.port||0);
+    const d=edgePath(a,b);
+    return `<path class="edge" d="${d}" stroke="url(#eg)" stroke-width="2.8" fill="none" style="cursor:pointer" marker-end="url(#arrow)" onclick="removeEdge(${i})"><title>click to remove</title></path>`+
+      `<circle r="3.4" fill="#9ed0ff" opacity="0.95"><animateMotion dur="1.6s" repeatCount="indefinite" path="${d}"/></circle>`+
+      `<circle r="2.4" fill="#7fe7b6" opacity="0.85"><animateMotion dur="1.6s" begin="-0.8s" repeatCount="indefinite" path="${d}"/></circle>`;
+  }).join('');
+  if(armedPort&&!FLOW.nodes.some(n=>n.id===armedPort.node)){armedPort=null;window._mouse=null;}  // source tile was deleted
+  if(armedPort&&window._mouse){
+    const a=portPos(armedPort.node,'out',0);
+    html+=`<path d="${edgePath(a,window._mouse)}" stroke="#3dd68c" stroke-width="2.5" stroke-dasharray="7 5" fill="none" opacity="0.85"/>`;
+  }
+  svg.innerHTML=html;
+}
+// live rubber-band while connecting + zoom
+let ZOOM=1;
+function setZoom(z){ZOOM=Math.min(1.6,Math.max(0.4,z));$('canvas').style.transform=`scale(${ZOOM})`;$('canvas').style.transformOrigin='0 0';$('zoom-label').textContent=Math.round(ZOOM*100)+'%';}
+function zoomFit(){
+  if(!FLOW.nodes.length){setZoom(1);return;}
+  const maxX=Math.max(...FLOW.nodes.map(n=>n.x))+220,maxY=Math.max(...FLOW.nodes.map(n=>n.y))+140;
+  const wrap=document.getElementById('canvas-wrap');
+  setZoom(Math.min(1.3,wrap.clientWidth/maxX,wrap.clientHeight/maxY));
+  wrap.scrollTo(0,0);
+}
+document.addEventListener('mousemove',e=>{
+  if(!armedPort)return;
+  const r=$('canvas').getBoundingClientRect();
+  window._mouse={x:(e.clientX-r.left)/ZOOM,y:(e.clientY-r.top)/ZOOM};
+  drawEdges();
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')cancelConnect();});
+function canvasClick(e){if(e.target.id==='canvas'||e.target.id==='edge-svg')cancelConnect();}
+function removeEdge(i){FLOW.edges.splice(i,1);renderFlow();}
+let dragN=null,dragOff={x:0,y:0};
+function dragStart(e,n){
+  dragN=n;const r=$('canvas').getBoundingClientRect();
+  dragOff={x:(e.clientX-r.left)/ZOOM-n.x,y:(e.clientY-r.top)/ZOOM-n.y};
+  document.addEventListener('mousemove',dragMove);
+  document.addEventListener('mouseup',dragEnd);
+  e.preventDefault();
+}
+function dragMove(e){
+  if(!dragN)return;
+  const r=$('canvas').getBoundingClientRect();
+  dragN.x=Math.max(0,(e.clientX-r.left)/ZOOM-dragOff.x);
+  dragN.y=Math.max(0,(e.clientY-r.top)/ZOOM-dragOff.y);
+  const el=$('canvas').querySelector(`.tile[data-id="${dragN.id}"]`);
+  if(el){el.style.left=dragN.x+'px';el.style.top=dragN.y+'px';}
+  drawEdges();
+}
+function dragEnd(){dragN=null;document.removeEventListener('mousemove',dragMove);document.removeEventListener('mouseup',dragEnd);}
+async function selectTile(id){
+  selId=id;renderFlow();
+  const n=FLOW.nodes.find(x=>x.id===id);if(!n)return;
+  const m=TILE_META[n.type];
+  $('cfg-title').textContent=`${m.icon} ${m.label} settings`;
+  const fields=CFG_FIELDS[n.type]||[];
+  // fetch the columns arriving at this tile (if it has inputs connected)
+  let inCols=[];
+  const hasInput=FLOW.edges.some(e=>e.to===id);
+  const needsCols=fields.some(f=>['col','cols','aggs','renames','expr','typemap'].includes(f.type));
+  if(hasInput&&needsCols){
+    $('cfg-fields').innerHTML='<p class="muted">Reading columns…</p>';
+    $('cfg-card').classList.remove('hidden');
+    try{
+      const r=await api('/api/flows/input_columns',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({graph:FLOW,node:id})});
+      inCols=r.inputs||[];
+    }catch(e){inCols=[];}
+  }
+  if(selId!==id)return; // user clicked elsewhere while we were fetching
+  const colsFor=i=>inCols[i||0]||[];
+  const html=fields.map(f=>{
+    const v=(n.config||{})[f.k]??'';
+    if(f.type==='select')return `<div class="cfg-field"><label>${f.label}</label><select id="cfg-${f.k}">${f.opts.map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select></div>`;
+    if(f.type==='dataset')return `<div class="cfg-field"><label>${f.label}</label><select id="cfg-${f.k}"><option value="">— choose —</option>${dsNames.map(d=>`<option ${d===v?'selected':''}>${d}</option>`).join('')}</select></div>`;
+    if(f.type==='col'){
+      const cols=colsFor(f.input);
+      if(cols.length)return `<div class="cfg-field"><label>${f.label}</label><select id="cfg-${f.k}">${f.blank?'<option value="">— same as left —</option>':'<option value="">— choose —</option>'}${cols.map(c=>`<option ${c===v?'selected':''}>${c}</option>`).join('')}</select></div>`;
+      return `<div class="cfg-field"><label>${f.label} <span class="muted">(connect an input to get a dropdown)</span></label><input type="text" id="cfg-${f.k}" value="${esc(v)}" placeholder="${f.ph||''}"></div>`;
+    }
+    if(f.type==='cols'){
+      const cols=colsFor(0), chosen=String(v).split(',').map(s=>s.trim()).filter(Boolean);
+      if(cols.length)return `<div class="cfg-field"><label>${f.label}</label><div class="colchecks" data-k="${f.k}">${cols.map(c=>`<label class="colcheck"><input type="checkbox" value="${esc(c)}" ${chosen.includes(c)?'checked':''}> ${esc(c)}</label>`).join('')}</div></div>`;
+      return `<div class="cfg-field"><label>${f.label} <span class="muted">(connect an input to get checkboxes)</span></label><input type="text" id="cfg-${f.k}" value="${esc(v)}" placeholder="${f.ph||'col1, col2'}"></div>`;
+    }
+    if(f.type==='aggs'){
+      const cols=colsFor(0);
+      if(!cols.length)return `<div class="cfg-field"><label>${f.label} <span class="muted">(connect an input first)</span></label><input type="text" id="cfg-${f.k}" value="${esc(v)}" placeholder="amount:sum, order_id:count"></div>`;
+      const rows=String(v).split(',').map(s=>s.trim()).filter(s=>s.includes(':')).map(s=>{const[c,a]=s.split(':');return{c:c.trim(),a:a.trim()};});
+      if(!rows.length)rows.push({c:'',a:'sum'});
+      window._aggCols=cols;
+      return `<div class="cfg-field"><label>${f.label}</label><div id="agg-rows" data-k="${f.k}">${rows.map(r=>aggRowHtml(cols,r.c,r.a)).join('')}</div><button type="button" class="btn ghost" onclick="addAggRow()">+ Add aggregation</button></div>`;
+    }
+    if(f.type==='typemap'){
+      const cols=colsFor(0);
+      if(!cols.length)return `<div class="cfg-field"><label>${f.label} <span class="muted">(connect an input first)</span></label><input type="text" id="cfg-${f.k}" value="${esc(v)}" placeholder="price:decimal, sku:text"></div>`;
+      const rows=String(v).split(',').map(s=>s.trim()).filter(s=>s.includes(':')).map(s=>{const[c,t]=s.split(':');return{c:c.trim(),t:t.trim()};});
+      if(!rows.length)rows.push({c:'',t:'text'});
+      window._typeCols=cols;
+      return `<div class="cfg-field"><label>${f.label}</label><div id="type-rows" data-k="${f.k}">${rows.map(r=>typeRowHtml(cols,r.c,r.t)).join('')}</div><button type="button" class="btn ghost" onclick="addTypeRow()">+ Add column</button></div>`;
+    }
+    if(f.type==='renames'){
+      const cols=colsFor(0);
+      if(!cols.length)return `<div class="cfg-field"><label>${f.label} <span class="muted">(connect an input first)</span></label><input type="text" id="cfg-${f.k}" value="${esc(v)}" placeholder="old:new, old2:new2"></div>`;
+      const rows=String(v).split(',').map(s=>s.trim()).filter(s=>s.includes(':')).map(s=>{const[o,nn]=s.split(':');return{o:o.trim(),n:nn.trim()};});
+      if(!rows.length)rows.push({o:'',n:''});
+      window._renCols=cols;
+      return `<div class="cfg-field"><label>${f.label}</label><div id="ren-rows" data-k="${f.k}">${rows.map(r=>renRowHtml(cols,r.o,r.n)).join('')}</div><button type="button" class="btn ghost" onclick="addRenRow()">+ Add rename</button></div>`;
+    }
+    if(f.type==='expr'){
+      const cols=colsFor(0);
+      const chips=cols.length?`<div style="margin-top:6px">${cols.map(c=>`<span class="pill" style="cursor:pointer;margin:2px" onclick="insertExpr('${esc(c)}')">${esc(c)}</span>`).join(' ')}</div>`:'';
+      return `<div class="cfg-field"><label>${f.label}</label><input type="text" id="cfg-${f.k}" value="${esc(v)}" placeholder="${f.ph||''}">${chips}</div>`;
+    }
+    return `<div class="cfg-field"><label>${f.label}</label><input type="text" id="cfg-${f.k}" value="${esc(v)}" placeholder="${f.ph||''}"></div>`;
+  }).join('')||'<p class="muted">No settings — this tile just needs its connections.</p>';
+  $('cfg-fields').innerHTML=html;
+  $('cfg-card').classList.remove('hidden');
+}
+function aggRowHtml(cols,c,a){
+  return `<div class="row agg-row" style="margin-bottom:6px"><select class="agg-col"><option value="">— column —</option>${cols.map(x=>`<option ${x===c?'selected':''}>${x}</option>`).join('')}</select><select class="agg-fn">${AGG_OPTS.map(x=>`<option ${x===a?'selected':''}>${x}</option>`).join('')}</select><button type="button" class="btn danger" onclick="this.parentElement.remove()">✕</button></div>`;
+}
+function addAggRow(){$('agg-rows').insertAdjacentHTML('beforeend',aggRowHtml(window._aggCols||[],'','sum'));}
+const TYPE_OPTS=['text','integer','decimal','date'];
+function typeRowHtml(cols,c,t){
+  return `<div class="row type-row" style="margin-bottom:6px"><select class="type-col"><option value="">— column —</option>${cols.map(x=>`<option ${x===c?'selected':''}>${x}</option>`).join('')}</select><span class="muted">→</span><select class="type-t">${TYPE_OPTS.map(x=>`<option ${x===t?'selected':''}>${x}</option>`).join('')}</select><button type="button" class="btn danger" onclick="this.parentElement.remove()">✕</button></div>`;
+}
+function addTypeRow(){$('type-rows').insertAdjacentHTML('beforeend',typeRowHtml(window._typeCols||[],'','text'));}
+function renRowHtml(cols,o,n){
+  return `<div class="row ren-row" style="margin-bottom:6px"><select class="ren-old"><option value="">— column —</option>${cols.map(x=>`<option ${x===o?'selected':''}>${x}</option>`).join('')}</select><span class="muted">→</span><input type="text" class="ren-new" value="${esc(n)}" placeholder="new name" style="max-width:200px"><button type="button" class="btn danger" onclick="this.parentElement.remove()">✕</button></div>`;
+}
+function addRenRow(){$('ren-rows').insertAdjacentHTML('beforeend',renRowHtml(window._renCols||[],'',''));}
+function insertExpr(col){const el=$('cfg-expr');if(el){el.value=(el.value+' '+col).trim();el.focus();}}
+function collectCfg(n){
+  n.config=n.config||{};
+  for(const f of (CFG_FIELDS[n.type]||[])){
+    const plain=$('cfg-'+f.k);
+    if(plain){n.config[f.k]=plain.value;continue;}
+    const checks=document.querySelector(`.colchecks[data-k="${f.k}"]`);
+    if(checks){n.config[f.k]=[...checks.querySelectorAll('input:checked')].map(c=>c.value).join(', ');continue;}
+    if(f.type==='aggs'&&$('agg-rows')){
+      n.config[f.k]=[...document.querySelectorAll('#agg-rows .agg-row')].map(r=>{
+        const c=r.querySelector('.agg-col').value,a=r.querySelector('.agg-fn').value;
+        return c?`${c}:${a}`:null;}).filter(Boolean).join(', ');continue;
+    }
+    if(f.type==='renames'&&$('ren-rows')){
+      n.config[f.k]=[...document.querySelectorAll('#ren-rows .ren-row')].map(r=>{
+        const o=r.querySelector('.ren-old').value,nn=r.querySelector('.ren-new').value.trim();
+        return (o&&nn)?`${o}:${nn}`:null;}).filter(Boolean).join(', ');continue;
+    }
+    if(f.type==='typemap'&&$('type-rows')){
+      n.config[f.k]=[...document.querySelectorAll('#type-rows .type-row')].map(r=>{
+        const c=r.querySelector('.type-col').value,t=r.querySelector('.type-t').value;
+        return c?`${c}:${t}`:null;}).filter(Boolean).join(', ');continue;
+    }
+  }
+}
+function applyCfg(){
+  const n=FLOW.nodes.find(x=>x.id===selId);if(!n)return;
+  collectCfg(n);
+  markFlowDirty();
+  clearCfgError();
+  renderFlow();
+  // if a preview is already open, re-run it right away so results always match the settings
+  if(!$('flow-preview-card').classList.contains('hidden')){previewTile();}
+  else toast('Tile settings applied');
+}
+function removeTile(){
+  FLOW.nodes=FLOW.nodes.filter(n=>n.id!==selId);
+  FLOW.edges=FLOW.edges.filter(e=>e.from!==selId&&e.to!==selId);
+  armedPort=null;window._mouse=null;  // cut any in-progress connection
+  selId=null;markFlowDirty();$('cfg-card').classList.add('hidden');renderFlow();
+}
+function cancelConnect(){if(armedPort){armedPort=null;window._mouse=null;renderFlow();}}
+async function saveFlow(){
+  const name=$('flow-name').value.trim();
+  if(!name){toast('Give the flow a name first',true);return;}
+  applyCfgSilent();                       // don't lose the panel you're editing
+  const autoNamed=nameBlankOutputs();     // an unnamed Output would land in flow_output
+  FLOW.settings={on_update:$('flow-on-update').checked,scheduled:$('flow-scheduled').checked};
+  try{
+    await api('/api/flows',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,graph:FLOW})});
+    await refreshFlowList();
+    newFlow();                                   // clear the canvas — the flow is filed away below
+    $('flow-preview-card').classList.add('hidden');
+    clearFlowDirty();
+    toast(autoNamed.length
+      ? `Saved "${name}" — its Output had no name, so it writes to the dataset "${autoNamed[0]}"`
+      : `Saved "${name}" — find it under Saved flows below (click Open to edit it again)`);
+    const list=$('flow-saved-list');
+    if(list)list.scrollIntoView({behavior:'smooth',block:'center'});
+  }catch(e){toast(e.message,true);}
+}
+async function runFlow(){
+  applyCfgSilent();
+  const autoNamed=nameBlankOutputs();
+  if(autoNamed.length)toast(`Output had no name — writing to "${autoNamed[0]}"`);
+  $('flow-status').textContent='Running…';
+  try{
+    const r=await api('/api/flows/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({graph:FLOW})});
+    $('flow-status').textContent='';
+    window._lastRun=Object.fromEntries(r.outputs.map(o=>[o.dataset,o.rows]));
+    // light the tiles up in sequence, then show the result badges
+    FLOW.nodes.forEach((n,i)=>setTimeout(()=>{
+      const el=document.querySelector(`.tile[data-id="${n.id}"]`);
+      if(el){el.classList.add('flash');setTimeout(()=>el.classList.remove('flash'),450);}
+    },i*140));
+    setTimeout(()=>renderFlow(),FLOW.nodes.length*140+350);
+    toast('✓ '+r.outputs.map(o=>`${o.rows.toLocaleString()} rows → "${o.dataset}"`).join(' · ')+
+      (r.triggered?` · auto-ran ${r.triggered.length} downstream flow(s)`:'')+photoNote(r));
+    refreshFlowList();loadDatasets();
+  }catch(e){$('flow-status').textContent='';toast(e.message,true);}
+}
+// Summarise what the Photos tile did, so a long download isn't a silent step.
+function photoNote(r){
+  const ps=r.photos||[]; if(!ps.length)return '';
+  return ' · '+ps.map(p=>{
+    const c=p.cache, sc=p.scan||{};
+    if(!c)return `photos → "${p.column||'new column'}": ${sc.html_values?sc.html_values+' HTML values cleaned, ':''}${Object.entries(sc.extensions||{}).map(([k,v])=>k+' '+v).join(', ')}`;
+    return `photos → "${p.column||'new column'}": ${c.downloaded} converted${c.already_had?', '+c.already_had+' already stored':''}${c.failed?', '+c.failed+' failed':''}`;
+  }).join(' · ');
+}
+function clearCfgError(){const ce=$('cfg-error');if(ce){ce.style.display='none';ce.textContent='';}}
+async function previewTile(){
+  applyCfgSilent();
+  if(!selId)return;
+  clearCfgError();                     // always start clean so stale errors can't linger
+  const btn=document.querySelector('#cfg-card button.green');
+  const label=btn?btn.textContent:'';
+  if(btn){btn.textContent='⏳ Running…';btn.disabled=true;}
+  const nrows=parseInt($('flow-preview-rows').value)||50;
+  try{
+    const r=await api('/api/flows/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({graph:FLOW,preview_node:selId,preview_rows:nrows})});
+    const p=r.preview;
+    clearCfgError();
+    const t=new Date().toLocaleTimeString();
+    $('flow-preview-title').textContent=`Preview — first ${p.rows.length} of ${p.total_rows.toLocaleString()} rows at this tile · run at ${t}`;
+    $('flow-preview-filter').value='';
+    setPreview('flow',p.columns,p.rows,'flow-preview-table','flow-preview-col',p.types);
+    $('flow-preview-card').classList.remove('hidden');
+    $('flow-preview-card').scrollIntoView({behavior:'smooth'});
+  }catch(e){toast(e.message,true);}
+  finally{if(btn){btn.textContent=label||'👁 Preview here';btn.disabled=false;}}
+}
+function applyCfgSilent(){
+  const n=FLOW.nodes.find(x=>x.id===selId);if(!n)return;
+  collectCfg(n);
+  markFlowDirty();
+}
+async function deleteFlow(){
+  const name=$('flow-name').value.trim();
+  if(!name){newFlow();return;}
+  if(!confirm(`Move the flow "${name}" to Deleted items?\n\nYou can restore it from the Datasets tab.`))return;
+  try{await api(`/api/flows/${flowSlug(name)}`,{method:'DELETE'});
+    toast(`"${name}" moved to Deleted items`);newFlow();refreshFlowList();loadDatasets();loadTrash();}
+  catch(e){toast(e.message,true);}
+}
+
+// ============ Apps / dataset window ============
+const ROLE_INFO={
+  catalog:{icon:'📦',title:'Catalog',desc:'Products shown in the catalog and order form'},
+  vendors:{icon:'🏭',title:'Vendors',desc:'Vendors, order emails and freight minimums'},
+  users:{icon:'📍',title:'Locations / Users',desc:'Districts, locations and managers'},
+  freight:{icon:'🚚',title:'Freight per item',desc:'Freight cost for one item at one location — minimums live on Vendors'},
+};
+let APPCFG=null;
+let PROFILE=null;            // which catalog the mapping screen is editing
+let PROFILES=[];
+
+function markAppsDirty(){$('apps-status').textContent='Unsaved changes — press Save mapping.';}
+
+async function loadProfiles(){
+  const r=await api('/api/apps/profiles');
+  PROFILES=r.profiles||[];
+  if(!PROFILE||!PROFILES.some(p=>p.key===PROFILE))PROFILE=r.default||(PROFILES[0]&&PROFILES[0].key);
+  const sel=$('profile-pick');
+  sel.innerHTML=PROFILES.map(p=>`<option value="${esc(p.key)}" ${p.key===PROFILE?'selected':''}>${esc(p.label)}${p.key===r.default?'  (default)':''}</option>`).join('');
+  const cur=PROFILES.find(p=>p.key===PROFILE)||{};
+  $('profile-badge').innerHTML=cur.ready
+    ? '<span class="pill ok">✓ ready</span>'
+    : '<span class="pill bad">needs a catalog dataset</span>';
+  const st=cur.settings||{};
+  $('profile-loclabel').value=st.locationLabel||'';
+  $('profile-distfilter').value=st.districtFilter||'';
+  $('profile-orders').value=st.ordersCollection||'';
+  $('profile-url').innerHTML=`Open this catalog in the app with <code>?catalog=${esc(PROFILE)}</code> — e.g. <code>https://your-app.onrender.com/?catalog=${esc(PROFILE)}</code>`;
+}
+async function switchProfile(key){PROFILE=key;await loadAppsConfig();}
+async function newProfile(){
+  const name=prompt('Name this catalog (e.g. "Pentex", "Ashley", "Test"):','');
+  if(!name)return;
+  try{const r=await api('/api/apps/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'new',name})});
+    PROFILE=r.key;await loadAppsConfig();toast(`Created "${name}" — now pick its datasets below and Save`);
+  }catch(e){toast(e.message,true);}
+}
+async function duplicateProfile(){
+  const src=PROFILES.find(p=>p.key===PROFILE);
+  const name=prompt(`Copy "${src?src.label:PROFILE}" to a new catalog called:`,'');
+  if(!name)return;
+  try{const r=await api('/api/apps/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'duplicate',name,from:PROFILE})});
+    PROFILE=r.key;await loadAppsConfig();toast(`Copied to "${name}" — change its datasets below and Save`);
+  }catch(e){toast(e.message,true);}
+}
+async function renameProfile(){
+  const src=PROFILES.find(p=>p.key===PROFILE);
+  const name=prompt('Rename this catalog to:',src?src.label:PROFILE);
+  if(!name)return;
+  try{const r=await api('/api/apps/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'rename',name,from:PROFILE})});
+    PROFILE=r.key;await loadAppsConfig();toast(`Renamed to "${name}" — note the ?catalog= link changed`);
+  }catch(e){toast(e.message,true);}
+}
+async function deleteProfile(){
+  const src=PROFILES.find(p=>p.key===PROFILE);
+  if(!confirm(`Delete the catalog "${src?src.label:PROFILE}"?\n\nThis only removes the configuration — none of your datasets are touched.`))return;
+  try{await api('/api/apps/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',name:PROFILE})});
+    PROFILE=null;await loadAppsConfig();toast('Catalog deleted');
+  }catch(e){toast(e.message,true);}
+}
+
+function aliasRow(role,w,r){
+  const cols=r.columns||[], cur=(r.aliases||{})[w]||'';
+  const required=(r.required||[]).includes(w);
+  const help=(r.help||{})[w]||'';
+  const sample=((r.samples||{})[cur]||[]).join(' · ');
+  const sel=cols.length
+    ? `<select data-role="${role}" data-want="${esc(w)}" class="alias-sel${required&&!cur?' unmapped':''}" onchange="markDirty()">
+         <option value="">— none —</option>
+         ${cols.map(c=>`<option ${c===cur?'selected':''}>${esc(c)}</option>`).join('')}
+       </select>`
+    : `<span class="muted">pick a dataset first</span>`;
+  return `<tr class="${required&&!cur?'row-missing':''}">
+    <td style="white-space:nowrap"><b>${esc(w)}</b>${required?' <span class="req-dot">required</span>':''}</td>
+    <td class="muted" style="font-size:.82rem">${esc(help)}</td>
+    <td>${sel}</td>
+    <td class="muted" style="font-size:.78rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(sample)}">${esc(sample)}</td>
+  </tr>`;
+}
+
+async function loadAppsConfig(){
+  try{
+    await loadProfiles();
+    APPCFG=await api(`/api/apps/config?profile=${encodeURIComponent(PROFILE||'')}`);
+    $('apps-roles').innerHTML=Object.keys(ROLE_INFO).map(role=>{
+      const r=APPCFG.roles[role]||{},info=ROLE_INFO[role];
+      const opts='<option value="">— not assigned —</option>'+APPCFG.datasets.map(d=>`<option ${d===r.dataset?'selected':''}>${esc(d)}</option>`).join('');
+      const miss=r.missing_required||[];
+      const mapped=Object.keys(r.aliases||{}).length, total=(r.wanted||[]).length;
+      const badge=!r.dataset
+        ? '<span class="pill">not assigned</span>'
+        : miss.length
+          ? `<span class="pill bad">${miss.length} required field${miss.length===1?'':'s'} unmapped</span>`
+          : `<span class="pill ok">✓ ready</span>`;
+      const rows=(r.wanted||[]).map(w=>aliasRow(role,w,r)).join('');
+      return `<div class="card role-card${miss.length?' has-missing':''}" style="background:var(--panel2);margin-bottom:12px">
+        <div class="row" style="margin-bottom:8px">
+          <span style="font-size:1.3rem">${info.icon}</span>
+          <b>${info.title}</b>${badge}
+          <span class="spacer"></span>
+          <select data-rolepick="${role}" style="min-width:200px" onchange="markDirty()">${opts}</select>
+          <button class="btn ghost" onclick="detectRole('${role}')" title="Guess every column again from this dataset">✨ Auto-detect</button>
+          <button class="btn ghost" onclick="previewRole('${role}')">Preview</button>
+        </div>
+        <div class="muted" style="font-size:.85rem;margin:-2px 0 10px">${esc(info.desc)}</div>
+        ${miss.length?`<div class="cfg-warn">Unmapped: ${miss.map(esc).join(', ')} — the app needs ${miss.length===1?'this one':'these'}.</div>`:''}
+        <details ${(!r.dataset||miss.length)?'open':''}>
+          <summary style="cursor:pointer;font-size:.88rem">Column matching — ${mapped} of ${total} fields mapped</summary>
+          <div class="tablewrap" style="margin-top:8px">
+            <table class="maptable">
+              <thead><tr><th>App field</th><th>What it is</th><th>Your column</th><th>Sample values</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </details>
+      </div>`;
+    }).join('');
+    $('apps-status').textContent='';
+    $('apps-collections').innerHTML=(APPCFG.collections||[]).length
+      ? APPCFG.collections.map(c=>`<div class="list-item"><span class="name">${esc(c)}</span><span class="spacer"></span><a class="btn ghost" style="text-decoration:none" href="/api/app/collections/${encodeURIComponent(c)}/documents/" target="_blank">View JSON</a></div>`).join('')
+      : '<span class="muted">None yet — submit an order in the app and it lands here.</span>';
+  }catch(e){toast(e.message,true);}
+}
+function markDirty(){$('apps-status').textContent='Unsaved changes — press Save mapping.';}
+
+// What the built-in timer is doing. Without this, ticking "scheduled" gives no
+// feedback at all and you can't tell a working schedule from a dead one.
+async function showSchedule(){
+  const el=$('flow-schedule-note'); if(!el)return;
+  try{
+    const s=await api('/api/flows/schedule');
+    if(!s.every_minutes){el.innerHTML='<span class="pill err">⏰ timer off</span> <span class="muted">SCHEDULE_MINUTES is 0 — scheduled flows will not run.</span>';return;}
+    const every=s.every_minutes>=60?`${Math.round(s.every_minutes/60)} hr`:`${s.every_minutes} min`;
+    const who=s.scheduled_flows||[];
+    el.innerHTML=`<span class="pill up">⏰ every ${esc(every)}</span> `+
+      (who.length
+        ? `<span class="muted">runs ${who.map(esc).join(', ')}${s.last_run_at?' · last checked '+esc(when(s.last_run_at)):' · not checked yet'}</span>`
+        : '<span class="muted">no flows are marked ⏰ scheduled, so the timer has nothing to run</span>');
+  }catch(e){el.innerHTML='<span class="muted">Schedule status unavailable — this ETL Space predates the built-in timer.</span>';}
+}
+
+// Re-guess every column for one role from the dataset currently picked in its
+// dropdown. Fills the selects but does not save, so you can review first.
+async function detectRole(role,quiet){
+  const pick=document.querySelector(`[data-rolepick="${role}"]`);
+  const ds=pick?pick.value:'';
+  if(!ds){if(!quiet)toast(`Pick a dataset for ${ROLE_INFO[role].title} first`,true);return 0;}
+  try{
+    const r=await api(`/api/apps/detect/${role}?dataset=${encodeURIComponent(ds)}&profile=${encodeURIComponent(PROFILE||'')}`);
+    let n=0;
+    document.querySelectorAll(`.alias-sel[data-role="${role}"]`).forEach(s=>{
+      const guess=r.aliases[s.dataset.want]||'';
+      if(s.value!==guess){s.value=guess;n++;}
+      s.classList.toggle('unmapped',(r.missing_required||[]).includes(s.dataset.want));
+    });
+    markDirty();
+    if(!quiet){
+      const miss=(r.missing_required||[]);
+      toast(miss.length
+        ? `${ROLE_INFO[role].title}: matched ${Object.keys(r.aliases).length} columns — still no match for ${miss.join(', ')}`
+        : `${ROLE_INFO[role].title}: matched ${Object.keys(r.aliases).length} columns. Review, then Save mapping.`,
+        miss.length>0);
+    }
+    return n;
+  }catch(e){if(!quiet)toast(e.message,true);return 0;}
+}
+async function detectAll(){
+  let n=0;
+  for(const role of Object.keys(ROLE_INFO)){
+    const pick=document.querySelector(`[data-rolepick="${role}"]`);
+    if(pick&&pick.value)n+=await detectRole(role,true);
+  }
+  markDirty();
+  toast(n?`Re-detected columns — ${n} field${n===1?'':'s'} changed. Review them, then Save mapping.`
+         :'Re-detected columns — nothing changed.');
+}
+async function saveAppsConfig(){
+  const roles={},aliases={};
+  document.querySelectorAll('[data-rolepick]').forEach(s=>{roles[s.dataset.rolepick]=s.value;});
+  document.querySelectorAll('.alias-sel').forEach(s=>{
+    aliases[s.dataset.role]=aliases[s.dataset.role]||{};
+    aliases[s.dataset.role][s.dataset.want]=s.value;   // "" means deliberately none
+  });
+  const settings={locationLabel:$('profile-loclabel').value.trim(),
+                  districtFilter:$('profile-distfilter').value.trim(),
+                  ordersCollection:$('profile-orders').value.trim()};
+  $('apps-status').textContent='Saving…';
+  try{
+    await api(`/api/apps/profiles/${encodeURIComponent(PROFILE)}/config`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({roles,aliases,settings})});
+    await loadAppsConfig();
+    const miss=Object.entries(APPCFG.roles).filter(([k,v])=>v.dataset&&(v.missing_required||[]).length);
+    toast(miss.length
+      ? `Saved — but ${miss.map(([k])=>ROLE_INFO[k].title).join(', ')} still ${miss.length===1?'has':'have'} required fields unmapped`
+      : 'Mapping saved — your app is now reading these columns',
+      miss.length>0);
+  }catch(e){$('apps-status').textContent='';toast(e.message,true);}
+}
+async function previewRole(role){
+  try{
+    const p=await api(`/api/apps/preview/${role}?profile=${encodeURIComponent(PROFILE||'')}`);
+    $('apps-preview-title').textContent=`${ROLE_INFO[role].title} — as the app sees it`;
+    renderTable($('apps-preview-table'),p.columns,p.rows);
+    $('apps-preview-card').classList.remove('hidden');
+    $('apps-preview-card').scrollIntoView({behavior:'smooth'});
+  }catch(e){toast(e.message,true);}
+}
+
+// ---- storage health: warn loudly when data will not survive a restart ----
+async function checkStorage(){
+  try{
+    const s=await api('/api/status');
+    const badge=$('storage-badge');
+    if(s.storage==='permanent'){
+      badge.textContent=`saved permanently · ${s.datasets} dataset${s.datasets===1?'':'s'} · ${s.flows} flow${s.flows===1?'':'s'}`;
+      badge.style.color='var(--accent2)';
+      $('storage-warning').style.display='none';
+    }else{
+      badge.textContent='\u26a0 temporary storage';
+      badge.style.color='#f3bcbc';
+      const w=$('storage-warning');
+      w.innerHTML='<b>\u26a0 Your work is not being saved permanently.</b> '+esc(s.warning)+
+        ' Until then, export anything you need with the Export CSV button.';
+      w.style.display='block';
+    }
+  }catch(e){}
+}
+checkStorage();
+setInterval(checkStorage,60000);
+
+loadDatasets();
+</script>
+</body>
+</html>

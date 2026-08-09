@@ -43,6 +43,11 @@ LOCATION_LABEL = os.environ.get("LOCATION_LABEL", "Location")
 # Leave unset to show every district in the users dataset. Example: ^9[0-9]{3}$
 DISTRICT_FILTER = os.environ.get("DISTRICT_FILTER", "")
 
+# Which catalog this deployment opens by default. Catalogs are configured in
+# ETL Space (Apps -> Catalogs), so adding one never means touching Render:
+# open this same app with ?catalog=<name> and it serves that catalog instead.
+CATALOG_PROFILE = os.environ.get("CATALOG_PROFILE", "")
+
 # which dataset in ETL Space feeds each part of this app
 DATASETS = {
     "catalog": os.environ.get("DS_CATALOG", ""),
@@ -113,10 +118,39 @@ async def etl_send(method: str, path: str, payload=None):
 # ---------------- config the app UI can read ----------------
 
 @app.get("/api/app/config")
-async def app_config():
-    return {"etl": ETL_BASE, "datasets": DATASETS, "orders": ORDERS_COLLECTION,
+async def app_config(catalog: str = ""):
+    """What this page is serving.
+
+    A catalog defined in ETL Space wins over the DS_* environment variables, so
+    one deployment can serve any number of catalogs. The env vars stay as the
+    fallback for a plain single-catalog setup.
+    """
+    wanted = (catalog or CATALOG_PROFILE or "").strip()
+    base = {"etl": ETL_BASE, "datasets": dict(DATASETS), "orders": ORDERS_COLLECTION,
             "locationLabel": LOCATION_LABEL, "districtFilter": DISTRICT_FILTER,
-            "configured": bool(ETL_BASE and DATASETS["catalog"])}
+            "catalog": "", "catalogLabel": "", "available": [],
+            "source": "env", "configured": bool(ETL_BASE and DATASETS["catalog"])}
+    if not ETL_BASE:
+        return base
+    try:
+        prof = await etl_get("/api/app/profile", {"name": wanted})
+    except HTTPException:
+        return base                      # older ETL Space, or no catalogs yet
+    except Exception:
+        return base
+    st = prof.get("settings") or {}
+    base.update({
+        "datasets": {k: v for k, v in (prof.get("datasets") or {}).items() if v},
+        "catalog": prof.get("key") or "",
+        "catalogLabel": prof.get("label") or prof.get("key") or "",
+        "available": prof.get("available") or [],
+        "locationLabel": st.get("locationLabel") or LOCATION_LABEL,
+        "districtFilter": st.get("districtFilter") or DISTRICT_FILTER,
+        "orders": st.get("ordersCollection") or ORDERS_COLLECTION,
+        "source": "profile",
+    })
+    base["configured"] = bool(base["datasets"].get("catalog"))
+    return base
 
 
 @app.get("/healthz")
@@ -141,29 +175,49 @@ def _dataset_for(role_or_id: str) -> str:
 @app.post("/api/app/query/{ident}")
 async def query(ident: str, request: Request):
     body = await request.json()
+    prof = (request.query_params.get("profile") or body.get("profile")
+            or CATALOG_PROFILE or "").strip()
+    if prof:
+        return await etl_send("POST", f"/api/app/query/{ident}?profile={prof}",
+                              {"sql": body.get("sql", "")})
     ds = _dataset_for(ident)
     if not ds:
         raise HTTPException(400, "This app has no dataset configured for that request. "
-                                 "Set DS_CATALOG / DS_USERS / DS_VENDORS.")
+                                 "Set DS_CATALOG / DS_USERS / DS_VENDORS, or define a "
+                                 "catalog in ETL Space under Apps.")
     return await etl_send("POST", f"/api/app/query/{ds}", {"sql": body.get("sql", ""),
                                                            "dataset": ds})
 
 
 @app.get("/api/app/rows/{ident}")
 async def rows(ident: str, request: Request):
+    params = dict(request.query_params)
+    prof = (params.pop("profile", "") or CATALOG_PROFILE or "").strip()
+    if prof:
+        # let ETL Space resolve the dataset from the catalog's own mapping
+        params["profile"] = prof
+        params.pop("dataset", None)
+        return await etl_get(f"/api/app/rows/{ident}", params)
     ds = _dataset_for(ident)
     if not ds:
         raise HTTPException(400, "No dataset configured for that request.")
-    params = dict(request.query_params)
     params["dataset"] = ds
     return await etl_get(f"/api/app/rows/{ds}", params)
 
 
 @app.get("/api/app/freshness")
-async def freshness():
+async def freshness(catalog: str = "", profile: str = ""):
     """When each dataset behind this app was last written, straight from ETL
     Space — so "is this screen stale?" has an answer you can read."""
-    wanted = ",".join(sorted({v for v in DATASETS.values() if v}))
+    prof = (profile or catalog or CATALOG_PROFILE or "").strip()
+    sets = DATASETS
+    if prof:
+        try:
+            p = await etl_get("/api/app/profile", {"name": prof})
+            sets = {k: v for k, v in (p.get("datasets") or {}).items() if v}
+        except Exception:
+            sets = DATASETS
+    wanted = ",".join(sorted({v for v in sets.values() if v}))
     if not wanted:
         return {"datasets": {}, "roles": {}}
     try:
@@ -173,7 +227,7 @@ async def freshness():
         return {"datasets": {}, "roles": {}, "unavailable": str(e.detail)[:200]}
     by_ds = data.get("datasets") or {}
     return {"datasets": by_ds,
-            "roles": {role: by_ds.get(name) for role, name in DATASETS.items() if name}}
+            "roles": {role: by_ds.get(name) for role, name in sets.items() if name}}
 
 
 @app.get("/api/app/collections/{coll}/documents/")

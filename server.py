@@ -37,6 +37,12 @@ ETL_PASSWORD = os.environ.get("ETL_PASSWORD", "")
 ETL_TOKEN = os.environ.get("ETL_API_TOKEN", "")
 ORDERS_COLLECTION = os.environ.get("ORDERS_COLLECTION", "OrderFormClaud")
 
+# What this business calls a store. Shown on every label in the UI.
+LOCATION_LABEL = os.environ.get("LOCATION_LABEL", "Location")
+# Optional regular expression limiting which districts appear in the dropdown.
+# Leave unset to show every district in the users dataset. Example: ^9[0-9]{3}$
+DISTRICT_FILTER = os.environ.get("DISTRICT_FILTER", "")
+
 # which dataset in ETL Space feeds each part of this app
 DATASETS = {
     "catalog": os.environ.get("DS_CATALOG", ""),
@@ -109,6 +115,7 @@ async def etl_send(method: str, path: str, payload=None):
 @app.get("/api/app/config")
 async def app_config():
     return {"etl": ETL_BASE, "datasets": DATASETS, "orders": ORDERS_COLLECTION,
+            "locationLabel": LOCATION_LABEL, "districtFilter": DISTRICT_FILTER,
             "configured": bool(ETL_BASE and DATASETS["catalog"])}
 
 
@@ -150,6 +157,23 @@ async def rows(ident: str, request: Request):
     params = dict(request.query_params)
     params["dataset"] = ds
     return await etl_get(f"/api/app/rows/{ds}", params)
+
+
+@app.get("/api/app/freshness")
+async def freshness():
+    """When each dataset behind this app was last written, straight from ETL
+    Space — so "is this screen stale?" has an answer you can read."""
+    wanted = ",".join(sorted({v for v in DATASETS.values() if v}))
+    if not wanted:
+        return {"datasets": {}, "roles": {}}
+    try:
+        data = await etl_get("/api/app/freshness", {"datasets_wanted": wanted})
+    except HTTPException as e:
+        # older ETL Space that predates this endpoint — say so rather than fail
+        return {"datasets": {}, "roles": {}, "unavailable": str(e.detail)[:200]}
+    by_ds = data.get("datasets") or {}
+    return {"datasets": by_ds,
+            "roles": {role: by_ds.get(name) for role, name in DATASETS.items() if name}}
 
 
 @app.get("/api/app/collections/{coll}/documents/")

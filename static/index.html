@@ -1618,7 +1618,7 @@ function renderCart() {
   function isSale(p){ var rc=num(p.RegularCost), pc=num(p.PromoCost); return (rc>0 && pc>0 && pc<rc); }
   window.__catPrice=price; window.__catIsSale=isSale;
   window.__showView=function(view){ try{ var cat=document.getElementById('catalogView'); var modal=document.getElementById('orderFormModal'); var secs=document.querySelectorAll('.form-section'); function hide(el){ if(el) el.style.setProperty('display','none','important'); } function show(el){ if(el) el.style.setProperty('display','block','important'); } if(view==='catalog'){ hide(modal); show(cat); } else if(view==='order'){ hide(cat); show(modal); for(var i=0;i<secs.length;i++){ if(secs[i].id==='pendingOrdersPanel') hide(secs[i]); else show(secs[i]); } } else if(view==='pending'){ hide(cat); show(modal); for(var j=0;j<secs.length;j++){ if(secs[j].id==='pendingOrdersPanel') show(secs[j]); else hide(secs[j]); } try{ window.loadPendingOrders&&window.loadPendingOrders(); }catch(e){} } var tb=document.querySelectorAll('#__mtabs button'); for(var k=0;k<tb.length;k++){ var on=(tb[k].getAttribute('data-v')===view); tb[k].style.background=on?'#fff':'transparent'; tb[k].style.color=on?'#0C447C':'#fff'; } }catch(e){} };
-  setTimeout(function(){ try{ var plat=((new URLSearchParams(location.search)).get('platform')||'').toLowerCase(); var isMobile=/ios|android|iphone|ipad/.test(plat)||/iphone|ipad|android|mobile/i.test(navigator.userAgent||''); if(!isMobile) return; if(document.getElementById('__mtabs')) return; try{ var _ms=document.createElement('style'); _ms.id='__mstyle'; _ms.textContent='html,body{overflow-x:hidden !important;max-width:100% !important;} body{display:block !important;} body>*{max-width:100% !important;box-sizing:border-box !important;} #orderFormModal,#orderFormModalBox,#catalogView{position:static !important;left:auto !important;right:auto !important;transform:none !important;margin-left:0 !important;margin-right:0 !important;width:auto !important;max-width:100% !important;box-sizing:border-box !important;} .form-row{flex-direction:column !important;} .form-group{flex:1 1 100% !important;width:100% !important;min-width:0 !important;max-width:100% !important;} .form-section{overflow-x:auto !important;max-width:100% !important;box-sizing:border-box !important;padding:8px !important;} input,select,textarea{max-width:100% !important;box-sizing:border-box !important;font-size:14px !important;} .form-group label{font-size:11px !important;} h2{font-size:1rem !important;} table{display:block !important;overflow-x:auto !important;max-width:100% !important;}'; document.head.appendChild(_ms); }catch(e){} var bar=document.createElement('div'); bar.id='__mtabs'; bar.style.cssText='display:flex;flex-direction:row;align-items:stretch;width:100%;position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0C447C;box-shadow:0 2px 6px rgba(0,0,0,0.3);box-sizing:border-box;'; [['catalog','Catalog'],['order','Order Form'],['pending','Pending']].forEach(function(t){ var b=document.createElement('button'); b.setAttribute('data-v',t[0]); b.textContent=t[1]; b.style.cssText='flex:1 1 0;min-width:0;white-space:nowrap;border:none;background:transparent;color:#fff;padding:14px 2px;font-size:0.8rem;font-weight:700;cursor:pointer;'; b.onclick=function(){ window.__showView(t[0]); }; bar.appendChild(b); }); document.body.insertBefore(bar, document.body.firstChild); try{ document.body.style.setProperty('padding-top','50px','important'); }catch(e){} window.__showView('catalog'); }catch(e){} },1800);
+  setTimeout(function(){ try{ var plat=((new URLSearchParams(location.search)).get('platform')||'').toLowerCase(); var isMobile=/ios|android|iphone|ipad/.test(plat)||/iphone|ipad|android|mobile/i.test(navigator.userAgent||''); if(!isMobile) return; if(document.getElementById('__mtabs')) return; try{ var _ms=document.createElement('style'); _ms.id='__mstyle'; _ms.textContent='html,body{overflow-x:hidden !important;max-width:100% !important;} body{display:block !important;} body>*{max-width:100% !important;box-sizing:border-box !important;} #orderFormModal,#orderFormModalBox,#catalogView{position:static !important;left:auto !important;right:auto !important;transform:none !important;margin-left:0 !important;margin-right:0 !important;width:auto !important;max-width:100% !important;box-sizing:border-box !important;} .form-row{flex-direction:column !important;} .form-group{flex:1 1 100% !important;width:100% !important;min-width:0 !important;max-width:100% !important;} .form-section{overflow-x:auto !important;max-width:100% !important;box-sizing:border-box !important;padding:8px !important;} input,select,textarea{max-width:100% !important;box-sizing:border-box !important;font-size:14px !important;} .form-group label{font-size:11px !important;} h2{font-size:1rem !important;} table{display:block !important;overflow-x:auto !important;max-width:100% !important;}'; document.head.appendChild(_ms); }catch(e){} var bar=document.createElement('div'); bar.id='__mtabs'; bar.style.cssText='display:flex;flex-direction:row;align-items:stretch;width:100%;position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#16213f;box-shadow:0 2px 6px rgba(0,0,0,0.3);box-sizing:border-box;'; [['catalog','Catalog'],['order','Order Form'],['pending','Pending']].forEach(function(t){ var b=document.createElement('button'); b.setAttribute('data-v',t[0]); b.textContent=t[1]; b.style.cssText='flex:1 1 0;min-width:0;white-space:nowrap;border:none;background:transparent;color:#fff;padding:14px 2px;font-size:0.8rem;font-weight:700;cursor:pointer;'; b.onclick=function(){ window.__showView(t[0]); }; bar.appendChild(b); }); document.body.insertBefore(bar, document.body.firstChild); try{ document.body.style.setProperty('padding-top','50px','important'); }catch(e){} window.__showView('catalog'); }catch(e){} },1800);
   var allProducts = [];
   var catList=[], catShown=0, CAT_BATCH=40;
   function dedupeCat(arr){ try{ if(!arr||!arr.length) return []; var seen={}, out=[]; for(var i=0;i<arr.length;i++){ var p=arr[i]; var k=(p.Vendor||'')+'|'+(p.ItemName||'')+'|'+(p.ModelNum||''); if(!seen[k]){ seen[k]=1; out.push(p); } } return out; }catch(e){ return arr.slice(0,5000); } }
@@ -1762,7 +1762,7 @@ var poll=setInterval(function(){ if(window.__catalog && window.__catalog.getProd
 
 
 
-<script>/*__pinBar*/(function(){function go(){var tb=document.querySelector('.cat-toolbar'),view=document.getElementById('catalogView');if(!tb||!view){return setTimeout(go,300);}var sp=document.createElement('div');sp.setAttribute('data-pinspacer','1');tb.parentNode.insertBefore(sp,tb);function sync(){if(view.offsetWidth===0)return;var pr=sp.getBoundingClientRect();tb.style.position='fixed';tb.style.top='0px';tb.style.left=pr.left+'px';tb.style.width=pr.width+'px';tb.style.zIndex='500';tb.style.boxSizing='border-box';tb.style.background='#fff';tb.style.boxShadow='0 2px 6px rgba(0,0,0,0.10)';sp.style.height=tb.offsetHeight+'px';}sync();window.addEventListener('resize',sync);try{if(window.ResizeObserver){var ro=new ResizeObserver(sync);ro.observe(view);ro.observe(tb);}}catch(e){}setInterval(sync,1500);}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){go(0);});else go(0);})();
+<script>/*__pinBar*/(function(){function go(){var tb=document.querySelector('.cat-toolbar'),view=document.getElementById('catalogView');if(!tb||!view){return setTimeout(go,300);}var sp=document.createElement('div');sp.setAttribute('data-pinspacer','1');tb.parentNode.insertBefore(sp,tb);function sync(){if(view.offsetWidth===0)return;var pr=sp.getBoundingClientRect();tb.style.position='fixed';tb.style.top='0px';tb.style.left=pr.left+'px';tb.style.width=pr.width+'px';tb.style.zIndex='500';tb.style.boxSizing='border-box';tb.style.background='#fff';tb.style.boxShadow='0 2px 6px rgba(0,0,0,0.10)';sp.style.height=tb.offsetHeight+'px';}sync();window.addEventListener('resize',sync);try{if(window.ResizeObserver){var ro=new ResizeObserver(sync);ro.observe(view);ro.observe(tb);}}catch(e){}setInterval(sync,1500);}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',go);else go();})();
 (function(){
   var Q=String.fromCharCode(63), A=String.fromCharCode(38);
   function _n(s){ return String(s==null?'':s).replace(/\s+/g,' ').trim().toUpperCase(); }
@@ -2230,6 +2230,12 @@ body.qc-open #orderFormModal .btn-submit{width:auto !important;white-space:nowra
   if(window.__whoAmI)return; window.__whoAmI=1;
   var ROLES={store:'Store',district:'District Manager',purchasing:'Purchasing Director',
              owner:'Catalog Owner',admin:'Administrator'};
+  function fill(me){
+    var d=document.getElementById('whoAmI'); if(!d)return;
+    var sc=(me&&me.scope)||{};
+    d.querySelector('.email').setAttribute('data-email',(sc.email||'').replace(/["<>&]/g,''));
+    d.querySelector('.role').textContent=ROLES[sc.role]||sc.role||'';
+  }
   function build(me){
     if(document.getElementById('whoAmI'))return;
     var d=document.createElement('div'); d.id='whoAmI';
@@ -2247,18 +2253,18 @@ body.qc-open #orderFormModal .btn-submit{width:auto !important;white-space:nowra
   }
   // The session cookie can lag a redirect by a moment, so try a few times
   // rather than deciding on the first answer.
-  function go(tries){
-    tries = tries || 0;
+  function go(){
+    // Show the button first. Signing out is this app's own job — it must not
+    // wait on, or be prevented by, the data service answering a question.
+    if(location.pathname.indexOf('/login') === 0)return;
+    build(null);
     fetch('/api/auth/me',{credentials:'same-origin'})
       .then(function(r){return r.ok?r.json():null;})
-      .then(function(me){
-        if(me){build(me);return;}
-        if(tries < 4)setTimeout(function(){go(tries+1);}, 600);
-      })
-      .catch(function(){ if(tries < 4)setTimeout(function(){go(tries+1);}, 600); });
+      .then(function(me){ if(me)fill(me); })
+      .catch(function(){});
   }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){go(0);});
-  else go(0);
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',go);
+  else go();
 })();</script>
 
 <!-- ── Reload data + freshness stamp ──────────────────────────────────────

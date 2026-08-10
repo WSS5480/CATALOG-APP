@@ -561,6 +561,22 @@ ADMIN_LAUNCHER = b"""
   system-ui,-apple-system,Arial,sans-serif;text-decoration:none;box-shadow:0 3px 14px rgba(12,32,68,.3)}
 #cat-admin-link:hover{background:#0a3560}
 @media print{#cat-admin-link{display:none !important}}
+
+/* On a tablet the sign-out button sits in the top bar where a thumb reaches it
+   by accident. Pinned bottom-left it is still one tap, but on the opposite
+   corner from Admin and away from everything else. Desktop is left alone. */
+@media (pointer: coarse), (max-width: 1024px){
+  .cat-signout-pinned{
+    position: fixed !important;
+    left: max(14px, env(safe-area-inset-left)) !important;
+    bottom: max(14px, env(safe-area-inset-bottom)) !important;
+    top: auto !important; right: auto !important;
+    margin: 0 !important;
+    z-index: 2147482000 !important;
+    box-shadow: 0 3px 14px rgba(12,32,68,.35) !important;
+  }
+}
+@media print{.cat-signout-pinned{display:none !important}}
 </style>
 <a id="cat-admin-link" href="/admin">&#9881; Admin</a>
 <script>
@@ -578,6 +594,32 @@ ADMIN_LAUNCHER = b"""
         if (el) el.style.display = 'inline-block';
       }
     }).catch(function(){});
+
+  // Find the sign-out control by its words rather than by an id, so this keeps
+  // working whatever the catalog page is rebuilt to look like. The header is
+  // drawn after sign-in resolves, so this watches for it rather than assuming
+  // it is there on load.
+  function pinSignOut(){
+    var all = document.querySelectorAll('button, a, [role="button"]');
+    for (var i = 0; i < all.length; i++){
+      var t = (all[i].textContent || '').replace(/\\s+/g, ' ').trim();
+      if (/^sign\\s?out$/i.test(t)){
+        all[i].classList.add('cat-signout-pinned');
+        return true;
+      }
+    }
+    return false;
+  }
+  if (!pinSignOut()){
+    var tries = 0;
+    var timer = setInterval(function(){
+      if (pinSignOut() || ++tries > 40) clearInterval(timer);   // give up after ~10s
+    }, 250);
+  }
+  if (window.MutationObserver){
+    new MutationObserver(function(){ pinSignOut(); })
+      .observe(document.documentElement, {childList: true, subtree: true});
+  }
 })();
 </script>
 """

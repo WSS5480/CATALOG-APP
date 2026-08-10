@@ -27,7 +27,7 @@ import secrets
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -94,21 +94,63 @@ def _require_config():
         raise HTTPException(500, "ETL_BASE_URL is not set — point this app at your ETL Space.")
 
 
-async def etl_get(path: str, params: dict | None = None):
+SESSION_COOKIE = "catalog_session"
+# Pages a signed-out visitor may still reach. Everything else redirects to
+# the sign-in screen, so a bookmarked deep link asks who you are first.
+PUBLIC_PATHS = ("/login", "/login.html", "/api/auth/", "/healthz", "/favicon.ico",
+                "/app.css", "/static/")
+REQUIRE_SIGNIN = os.environ.get("REQUIRE_SIGNIN", "1").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _session_headers(request=None):
+    """Pass the signed-in person's session through to ETL Space.
+
+    The browser never talks to ETL directly. This app holds the cookie, and
+    forwards the token so ETL can decide for itself who is asking — it verifies
+    the signature rather than taking our word for it.
+    """
+    if request is None:
+        return {}
+    tok = request.cookies.get(SESSION_COOKIE, "")
+    return {"X-Catalog-Session": tok} if tok else {}
+
+
+def _etl_detail(r) -> str:
+    """The reason, in the words the person should read.
+
+    ETL Space already writes plain-English messages. Wrapping them in "ETL
+    Space: {"detail": ...}" turns a clear sentence into something that looks
+    like a crash — and on the sign-in screen it is the first thing a store
+    manager would ever see.
+    """
+    try:
+        body = r.json()
+        if isinstance(body, dict) and body.get("detail"):
+            return str(body["detail"])[:300]
+    except Exception:
+        pass
+    return f"The data service returned an error ({r.status_code})."
+
+
+async def etl_get(path: str, params: dict | None = None, request=None):
     _require_config()
     async with httpx.AsyncClient(timeout=120) as c:
-        r = await c.get(f"{ETL_BASE}{path}", params=params or {}, **_etl_auth())
+        opts = _etl_auth()
+        opts["headers"] = dict(opts.get("headers") or {}, **_session_headers(request))
+        r = await c.get(f"{ETL_BASE}{path}", params=params or {}, **opts)
     if r.status_code >= 400:
-        raise HTTPException(r.status_code, f"ETL Space: {r.text[:300]}")
+        raise HTTPException(r.status_code, _etl_detail(r))
     return r.json()
 
 
-async def etl_send(method: str, path: str, payload=None):
+async def etl_send(method: str, path: str, payload=None, request=None):
     _require_config()
     async with httpx.AsyncClient(timeout=120) as c:
-        r = await c.request(method, f"{ETL_BASE}{path}", json=payload, **_etl_auth())
+        opts = _etl_auth()
+        opts["headers"] = dict(opts.get("headers") or {}, **_session_headers(request))
+        r = await c.request(method, f"{ETL_BASE}{path}", json=payload, **opts)
     if r.status_code >= 400:
-        raise HTTPException(r.status_code, f"ETL Space: {r.text[:300]}")
+        raise HTTPException(r.status_code, _etl_detail(r))
     try:
         return r.json()
     except Exception:
@@ -197,12 +239,12 @@ async def rows(ident: str, request: Request):
         # let ETL Space resolve the dataset from the catalog's own mapping
         params["profile"] = prof
         params.pop("dataset", None)
-        return await etl_get(f"/api/app/rows/{ident}", params)
+        return await etl_get(f"/api/app/rows/{ident}", params, request=request)
     ds = _dataset_for(ident)
     if not ds:
         raise HTTPException(400, "No dataset configured for that request.")
     params["dataset"] = ds
-    return await etl_get(f"/api/app/rows/{ds}", params)
+    return await etl_get(f"/api/app/rows/{ds}", params, request=request)
 
 
 @app.get("/api/app/freshness")
@@ -284,6 +326,85 @@ def _page_file() -> str | None:
         candidates = sorted(glob.glob(os.path.join("static", "*.htm*")),
                             key=os.path.getmtime, reverse=True)
     return candidates[0] if candidates else None
+
+
+# ---------------------------------------------------------------- sign in
+#
+# The browser only ever talks to this app. We hold the session cookie on our
+# own domain and forward the signed token to ETL Space server-to-server, using
+# a credential that never reaches a browser. Two independent judgements: this
+# app decides whether you are signed in, ETL decides what you are entitled to.
+
+@app.post("/api/auth/signin")
+async def auth_signin(request: Request):
+    body = await request.json()
+    data = await etl_send("POST", "/api/access/signin",
+                          {"email": body.get("email", ""), "password": body.get("password", "")})
+    token = data.pop("token", "")
+    resp = JSONResponse(data)
+    resp.set_cookie(
+        SESSION_COOKIE, token,
+        httponly=True,                       # JavaScript cannot read it
+        secure=request.url.scheme == "https",
+        samesite="lax",                      # not sent from other people's sites
+        max_age=int(os.environ.get("SESSION_HOURS", "12") or 12) * 3600,
+        path="/",
+    )
+    return resp
+
+
+@app.post("/api/auth/change-password")
+async def auth_change_password(request: Request):
+    body = await request.json()
+    return await etl_send("POST", "/api/access/change-password",
+                          {"current": body.get("current", ""), "new": body.get("new", "")},
+                          request=request)
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request):
+    if not request.cookies.get(SESSION_COOKIE):
+        raise HTTPException(401, "Not signed in.")
+    return await etl_get("/api/access/me", request=request)
+
+
+@app.post("/api/auth/signout")
+async def auth_signout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(SESSION_COOKIE, path="/")
+    return resp
+
+
+class RequireSignIn(BaseHTTPMiddleware):
+    """Anyone without a session gets the sign-in page.
+
+    The path they wanted is carried through as ?next=, so a bookmarked order
+    form asks who you are and then takes you where you were going.
+    """
+    async def dispatch(self, request, call_next):
+        if not REQUIRE_SIGNIN or not ETL_BASE:
+            return await call_next(request)
+        path = request.url.path
+        if path.startswith(PUBLIC_PATHS) or request.cookies.get(SESSION_COOKIE):
+            return await call_next(request)
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "Please sign in."}, status_code=401)
+        nxt = path + (("?" + request.url.query) if request.url.query else "")
+        from urllib.parse import quote
+        return RedirectResponse(f"/login?next={quote(nxt, safe='')}", status_code=302)
+
+
+app.add_middleware(RequireSignIn)
+
+
+@app.get("/login")
+async def login_page():
+    try:
+        with open("static/login.html", "rb") as fh:
+            return Response(fh.read(), media_type="text/html")
+    except FileNotFoundError:
+        return Response("<h1>Sign-in page missing</h1><p>Upload <code>login.html</code> "
+                        "to the static folder.</p>", status_code=500, media_type="text/html")
 
 
 @app.get("/")

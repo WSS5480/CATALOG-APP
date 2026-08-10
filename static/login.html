@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in — Product Catalog</title>
+<style>
+  :root{--navy:#0C447C;--navy2:#08294c;--ink:#1b2130;--muted:#6b7690;--line:#e3e7f0;
+        --good:#12925f;--warn:#e0592a;--paper:#fff}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;color:var(--ink);background:#eef1f7}
+  .land{min-height:100%;display:grid;grid-template-columns:1.15fr .85fr}
+  .left{background:linear-gradient(150deg,var(--navy),var(--navy2));color:#fff;
+        padding:56px 52px;display:flex;flex-direction:column;justify-content:center}
+  .left h1{font-size:36px;margin:0 0 12px;line-height:1.15;letter-spacing:-.01em}
+  .left p{font-size:15.5px;line-height:1.6;color:#c8dbf1;max-width:430px;margin:0 0 26px}
+  .pts{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:13px}
+  .pts li{display:flex;gap:11px;align-items:flex-start;font-size:14px;color:#dce8f7;line-height:1.55}
+  .pts span{flex:none;width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,.16);
+            display:flex;align-items:center;justify-content:center;font-size:12px}
+  .right{background:var(--paper);padding:56px 48px;display:flex;flex-direction:column;justify-content:center}
+  .right h2{margin:0 0 4px;font-size:23px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 26px}
+  label.f{display:block;font-size:11.5px;font-weight:700;letter-spacing:.06em;
+          text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+  input.f{width:100%;padding:12px 13px;border:1px solid var(--line);border-radius:10px;
+          font:inherit;font-size:16px;background:#fbfcfe}
+  input.f:focus{outline:2px solid #b9d2f2;border-color:var(--navy)}
+  .fg{margin-bottom:16px}
+  .btn{border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:800;
+       font-size:15px;cursor:pointer;width:100%;background:var(--navy);color:#fff}
+  .btn:hover{background:#0a3560}
+  .btn:disabled{opacity:.6;cursor:default}
+  .msg{display:none;margin:0 0 16px;border-radius:10px;padding:11px 13px;font-size:13.5px;font-weight:600}
+  .msg.on{display:block}
+  .msg.bad{background:#fde5e5;color:#8f1d1d;border-left:4px solid #c0392b}
+  .msg.ok{background:#dcefe4;color:#0d5b3c;border-left:4px solid var(--good)}
+  .foot{margin-top:20px;font-size:12.5px;color:var(--muted);line-height:1.6;
+        border-top:1px solid var(--line);padding-top:14px}
+  #changeBox{display:none}
+  @media(max-width:860px){
+    .land{grid-template-columns:1fr}
+    .left{padding:34px 24px}
+    .left h1{font-size:27px}
+    .pts{display:none}
+    .right{padding:30px 24px}
+  }
+</style>
+</head>
+<body>
+<div class="land">
+  <div class="left">
+    <h1 id="brand">Product Catalog</h1>
+    <p>Sign in with the email address assigned to you. Everything behind this is filtered to
+       you before it leaves the server — your locations, your vendors, your orders.</p>
+    <ul class="pts">
+      <li><span>✓</span><div>A store sees its own location. A district manager sees every store in their district.</div></li>
+      <li><span>✓</span><div>You only see the vendors designated to you. The rest are never sent to your browser at all.</div></li>
+      <li><span>✓</span><div>One sign-in covers the catalog, your orders and your reports.</div></li>
+    </ul>
+  </div>
+
+  <div class="right">
+    <div id="signInBox">
+      <h2>Sign in</h2>
+      <p class="sub">Use your work email address.</p>
+      <div class="msg" id="msg"></div>
+      <form id="f" autocomplete="on">
+        <div class="fg">
+          <label class="f" for="email">Work email</label>
+          <input class="f" id="email" name="username" type="email" autocomplete="username"
+                 autocapitalize="off" spellcheck="false" required>
+        </div>
+        <div class="fg">
+          <label class="f" for="password">Password</label>
+          <input class="f" id="password" name="password" type="password"
+                 autocomplete="current-password" required>
+        </div>
+        <button class="btn" id="go" type="submit">Sign in</button>
+      </form>
+      <div class="foot">
+        Forgotten your password? It can't be looked up — ask whoever set up your catalog
+        to issue you a new one.
+      </div>
+    </div>
+
+    <div id="changeBox">
+      <h2>Choose a password</h2>
+      <p class="sub">You were given a temporary one. Pick your own to carry on.</p>
+      <div class="msg" id="msg2"></div>
+      <form id="f2" autocomplete="on">
+        <div class="fg">
+          <label class="f" for="cur">Temporary password</label>
+          <input class="f" id="cur" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="fg">
+          <label class="f" for="new1">New password</label>
+          <input class="f" id="new1" type="password" autocomplete="new-password" required minlength="8">
+        </div>
+        <div class="fg">
+          <label class="f" for="new2">Confirm new password</label>
+          <input class="f" id="new2" type="password" autocomplete="new-password" required minlength="8">
+        </div>
+        <button class="btn" id="go2" type="submit">Save and continue</button>
+      </form>
+      <div class="foot">At least 8 characters. It is stored as a one-way hash — nobody can read it back, including whoever set up your catalog.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+// Where they were heading before they were asked to sign in.
+const NEXT = new URLSearchParams(location.search).get('next') || '/';
+
+function say(el, text, ok){
+  el.textContent = text;
+  el.className = 'msg on ' + (ok ? 'ok' : 'bad');
+}
+
+$('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('go');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try{
+    const r = await fetch('/api/auth/signin', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email: $('email').value.trim(), password: $('password').value })
+    });
+    const body = await r.json();
+    if(!r.ok) throw new Error(body.detail || 'That email and password do not match.');
+    if(body.must_change){
+      // A temporary password gets you exactly one place: this form.
+      $('signInBox').style.display = 'none';
+      $('changeBox').style.display = 'block';
+      $('cur').value = $('password').value;
+      $('new1').focus();
+      return;
+    }
+    location.href = NEXT;
+  }catch(err){
+    say($('msg'), err.message, false);
+    $('password').value = '';
+    $('password').focus();
+  }finally{
+    btn.disabled = false; btn.textContent = 'Sign in';
+  }
+});
+
+$('f2').addEventListener('submit', async e => {
+  e.preventDefault();
+  if($('new1').value !== $('new2').value){
+    return say($('msg2'), 'Those two passwords do not match.', false);
+  }
+  const btn = $('go2');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try{
+    const r = await fetch('/api/auth/change-password', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ current: $('cur').value, new: $('new1').value })
+    });
+    const body = await r.json();
+    if(!r.ok) throw new Error(body.detail || 'Could not change the password.');
+    say($('msg2'), 'Saved. Taking you in…', true);
+    setTimeout(() => location.href = NEXT, 700);
+  }catch(err){
+    say($('msg2'), err.message, false);
+  }finally{
+    btn.disabled = false; btn.textContent = 'Save and continue';
+  }
+});
+
+// Show the catalog's own name if the server knows it.
+fetch('/api/app/config').then(r => r.json()).then(c => {
+  const n = (c && (c.catalogLabel || c.catalog)) || '';
+  if(n) $('brand').textContent = n;
+}).catch(() => {});
+</script>
+</body>
+</html>

@@ -2046,6 +2046,162 @@ body.qc-open #orderFormModal .btn-danger{border-radius:8px!important;padding:3px
 </script>
 
 
+
+<!-- ── Slide-out cart: the short version ─────────────────────────────────
+     The drawer reuses the full order form's markup, which meant it showed
+     the whole thing — order details, item picker, Add Multiple Items, Edit
+     Submit Orders. In a slide-out you want the cart and almost nothing else.
+
+     It also inherited the full form's "Back to Catalog" button, which sets
+     display:none inline — and loses to `body.qc-open #orderFormModal{display:
+     block!important}`. So the button did nothing at all. The drawer gets its
+     own header with a back arrow that closes properly.
+-->
+<style id="qcShortCss">
+/* Everything in the drawer is hidden, then the cart is put back. Panels
+   nested inside the cart section have to be named directly — they are not
+   siblings, which is why hiding by position missed them before. */
+body.qc-open #orderFormModalBox > .form-section{display:none !important;}
+body.qc-open #orderFormModalBox > .form-section.qc-keep{display:block !important;}
+body.qc-open #pendingOrdersPanel,
+body.qc-open #manageLinesPanel{display:none !important;}
+body.qc-open #orderFormModalBox > h2{display:none !important;}
+/* The full form's back button belongs to the full form. */
+body.qc-open #backToCatalogBtn{display:none !important;}
+
+/* Setup fields appear only while something required is still blank. */
+body.qc-open #orderFormModalBox > .form-section.qc-setup{display:none !important;}
+body.qc-open.qc-need-setup #orderFormModalBox > .form-section.qc-setup{display:block !important;}
+body.qc-open.qc-need-setup #qcSetupNote{display:block;}
+#qcSetupNote{display:none;background:#fff4e5;border:1px solid #f0b450;color:#7a4b00;
+  border-radius:10px;padding:9px 11px;font-size:12.5px;font-weight:600;margin:0 0 10px;}
+
+#qcBar{display:none;position:sticky;top:0;z-index:6;align-items:center;gap:10px;
+  background:#16213f;color:#fff;border-radius:0 0 14px 14px;padding:11px 12px;margin:0 0 10px;}
+body.qc-open #qcBar{display:flex;}
+#qcBar button{border:0;background:rgba(255,255,255,.14);color:#fff;font-family:inherit;
+  font-weight:800;font-size:13px;border-radius:9px;padding:8px 12px;cursor:pointer;}
+#qcBar button:hover{background:rgba(255,255,255,.26);}
+#qcBar .qc-title{font-weight:800;font-size:14px;}
+#qcBar .qc-sp{margin-left:auto;}
+body.qc-open #qcClose{display:none !important;}   /* the bar owns closing now */
+
+/* The drawer sizes itself to its contents instead of guessing 600px. The cart
+   table is wide — hiding columns to make it fit meant the information you
+   opened the cart to read was the first thing thrown away. */
+body.qc-open #orderFormModal{
+  width:var(--qcW, min(920px, 96vw)) !important;
+  max-width:96vw !important;
+}
+/* Every cart column stays; the drawer widens to suit. Matching the original
+   rule's shape (:nth-child) so specificity ties and later-wins applies. */
+body.qc-open #orderFormModal .cart-table th:nth-child(n),
+body.qc-open #orderFormModal .cart-table td:nth-child(n){display:table-cell !important;}
+body.qc-open #orderFormModal .cart-table{font-size:12.5px !important;width:100% !important;}
+body.qc-open #orderFormModalBox{overflow-x:auto !important;}
+/* buttons never get clipped at the edge */
+body.qc-open #orderFormModal .btn-submit{width:auto !important;white-space:nowrap !important;}
+@media (max-width:820px){
+  body.qc-open #orderFormModal{width:100vw !important;max-width:100vw !important;}
+}
+</style>
+<script id="qc-shortcart">(function(){
+  if(window.__qcShort)return; window.__qcShort=1;
+  function $(id){return document.getElementById(id);}
+
+  // Close the drawer and put the page back exactly as the cart script left it.
+  // The cart script keeps the originals on window, so this can undo them.
+  function qcExit(toCatalog){
+    var mo=$('orderFormModal');
+    document.body.classList.remove('qc-open');
+    if(mo){
+      if(window._qcStyle!=null){mo.setAttribute('style',window._qcStyle);window._qcStyle=null;}
+      if(window._qcHome&&mo.parentNode===document.body){
+        try{window._qcHome.p.insertBefore(mo,window._qcHome.s);}catch(e){}
+        window._qcHome=null;
+      }
+      if(toCatalog)mo.style.setProperty('display','none','important');
+    }
+    if(toCatalog){
+      var cv=$('catalogView');
+      if(cv)cv.style.setProperty('display','block','important');
+      var bb=$('backToCatalogBtn'); if(bb)bb.style.display='none';
+      window.scrollTo(0,0);
+    }
+  }
+  window.qcExitToCatalog=function(){qcExit(true);};
+
+  // The full form's own back button is broken inside the drawer for the same
+  // reason. Make it exit properly wherever it is clicked from.
+  window.backToCatalog=function(){qcExit(true);};
+
+  function markSections(){
+    var box=$('orderFormModalBox'); if(!box)return;
+    var body=$('cartBody');
+    var cart=body&&body.closest?body.closest('.form-section'):null;
+    if(cart&&cart.parentNode===box)cart.classList.add('qc-keep');
+    var d=$('district');
+    var setup=d&&d.closest?d.closest('.form-section'):null;
+    if(setup&&setup.parentNode===box)setup.classList.add('qc-setup');
+    if(setup&&!$('qcSetupNote')){
+      var note=document.createElement('div');
+      note.id='qcSetupNote';
+      note.textContent='Fill these in once and the cart remembers them for the rest of your session.';
+      setup.insertBefore(note,setup.firstChild);
+    }
+  }
+
+  function buildBar(){
+    var box=$('orderFormModalBox'); if(!box||$('qcBar'))return;
+    var bar=document.createElement('div'); bar.id='qcBar';
+    var back=document.createElement('button');
+    back.type='button'; back.textContent='← Back to Catalog';
+    back.onclick=function(ev){ev.preventDefault();qcExit(true);};
+    var title=document.createElement('span');
+    title.className='qc-title'; title.id='qcBarTitle'; title.textContent='Cart';
+    var sp=document.createElement('span'); sp.className='qc-sp';
+    var full=document.createElement('button');
+    full.type='button'; full.textContent='Full form →';
+    full.onclick=function(ev){
+      ev.preventDefault(); qcExit(false);
+      var cv=$('catalogView'); if(cv)cv.style.setProperty('display','none','important');
+      var mo=$('orderFormModal'); if(mo)mo.style.setProperty('display','block','important');
+      window.scrollTo(0,0);
+    };
+    bar.appendChild(back); bar.appendChild(title); bar.appendChild(sp); bar.appendChild(full);
+    box.insertBefore(bar,box.firstChild);
+  }
+
+  // Grow the drawer to whatever the cart actually needs, capped at the
+  // viewport. Measured from the table, so adding columns widens it by itself.
+  function autoWidth(){
+    if(!document.body.classList.contains('qc-open'))return;
+    var mo=$('orderFormModal'); if(!mo)return;
+    if(window.matchMedia('(max-width: 820px)').matches){
+      mo.style.setProperty('--qcW','100vw'); return;
+    }
+    var tbl=$('cartBody')?$('cartBody').closest('table'):null;
+    var need=tbl?tbl.scrollWidth:0;
+    var w=Math.min(Math.round(window.innerWidth*0.96), Math.max(620, need+56));
+    mo.style.setProperty('--qcW', w+'px');
+  }
+  window.addEventListener('resize',autoWidth);
+
+  function sync(){
+    markSections(); buildBar(); autoWidth();
+    var n=0; try{n=JSON.parse(localStorage.getItem('ddx_order_form_cart')||'[]').length;}catch(e){}
+    var t=$('qcBarTitle');
+    if(t)t.textContent=n?('Cart · '+n+' item'+(n===1?'':'s')):'Cart is empty';
+    var d=$('district'),s=$('store'),sb=$('submittedBy');
+    var need=(d&&!d.value)||(s&&!s.value)||(sb&&!sb.value);
+    document.body.classList.toggle('qc-need-setup',!!need);
+  }
+  setInterval(sync,600); sync();
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'&&document.body.classList.contains('qc-open'))qcExit(true);
+  });
+})();</script>
+
 <!-- ── Reload data + freshness stamp ──────────────────────────────────────
      "Is this screen stale?" should never be a guess. The stamp reads the
      dataset's last-written time straight from ETL Space, so you can tell a

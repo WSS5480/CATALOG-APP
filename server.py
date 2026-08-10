@@ -24,6 +24,7 @@ import base64
 import json
 import os
 import secrets
+import time
 from urllib.parse import quote
 
 import httpx
@@ -48,6 +49,11 @@ DISTRICT_FILTER = os.environ.get("DISTRICT_FILTER", "")
 # ETL Space (Apps -> Catalogs), so adding one never means touching Render:
 # open this same app with ?catalog=<name> and it serves that catalog instead.
 CATALOG_PROFILE = os.environ.get("CATALOG_PROFILE", "")
+
+# Which application this deployment is, as named on the Apps tab. ETL answers
+# "what does this person get?" per application, so an order-form deployment set
+# to APPLICATION=orders reads its own instance and never the catalog's.
+APPLICATION = os.environ.get("APPLICATION", "catalog").strip() or "catalog"
 
 # which dataset in ETL Space feeds each part of this app
 DATASETS = {
@@ -161,7 +167,7 @@ async def etl_send(method: str, path: str, payload=None, request=None):
 # ---------------- config the app UI can read ----------------
 
 @app.get("/api/app/config")
-async def app_config(catalog: str = ""):
+async def app_config(request: Request, catalog: str = ""):
     """What this page is serving.
 
     A catalog defined in ETL Space wins over the DS_* environment variables, so
@@ -174,6 +180,15 @@ async def app_config(catalog: str = ""):
             "catalog": "", "catalogLabel": "", "available": [],
             "source": "env", "configured": bool(ETL_BASE and DATASETS["catalog"])}
     if not ETL_BASE:
+        return base
+    # A signed-in person's own app instance wins over anything set at deploy
+    # time, so the page names the customer whose catalog is on screen.
+    my = await _my_datasets(request)
+    if my and my.get("ok"):
+        base.update({"datasets": my.get("datasets") or {},
+                     "catalog": my.get("instance") or "",
+                     "catalogLabel": my.get("customer") or "",
+                     "source": "session", "configured": bool(my.get("master"))})
         return base
     try:
         prof = await etl_get("/api/app/profile", {"name": wanted})
@@ -198,21 +213,78 @@ async def app_config(catalog: str = ""):
 
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True, "etl_configured": bool(ETL_BASE), "catalog": DATASETS["catalog"]}
+    return {"ok": True, "etl_configured": bool(ETL_BASE), "application": APPLICATION,
+            "catalog": DATASETS["catalog"]}
 
 
 # ---------------- the app's data calls, proxied to ETL Space ----------------
 
+_ALIAS = {
+    "catalog": "catalog", "storemapping": "users", "stores": "users",
+    "users": "users", "vendorinfolist": "vendors", "vendors": "vendors",
+    "ashfreight": "freight", "freight": "freight",
+}
+
+
+def _role_of(role_or_id: str) -> str:
+    """Which part of the app is asking — catalog, users, vendors or freight."""
+    return _ALIAS.get((role_or_id or "").lower(), "catalog")
+
+
 def _dataset_for(role_or_id: str) -> str:
-    """Resolve whatever the page asks for into this app's dataset name."""
-    key = (role_or_id or "").lower()
-    alias = {
-        "catalog": "catalog", "storemapping": "users", "stores": "users",
-        "users": "users", "vendorinfolist": "vendors", "vendors": "vendors",
-        "ashfreight": "freight", "freight": "freight",
-    }
-    role = alias.get(key, "catalog")
+    """The env-configured dataset. Only used when there is no session at all."""
+    role = _role_of(role_or_id)
     return DATASETS.get(role) or DATASETS.get("catalog") or ""
+
+
+# The signed-in person's dataset map, asked of ETL rather than fixed at deploy.
+# Cached briefly and keyed by session so a change on the Apps tab shows up within
+# the minute instead of needing an environment variable edited and a redeploy.
+_MY_SETS: dict = {}
+_MY_TTL = 60
+
+
+async def _my_datasets(request: Request):
+    """What this person's catalog is made of, according to ETL Space.
+
+    Returns None when there is no session — the ETL screens and any
+    single-catalog deployment then fall back to the DS_* variables exactly as
+    before. With a session, ETL's answer wins outright: the login decides the
+    customer, so one deployment serves all of them.
+    """
+    tok = request.cookies.get(SESSION_COOKIE, "")
+    if not tok or not ETL_BASE:
+        return None
+    now = time.time()
+    hit = _MY_SETS.get(tok)
+    if hit and hit[0] > now:
+        return hit[1]
+    try:
+        data = await etl_get("/api/app/my/datasets",
+                             {"application": APPLICATION}, request=request)
+    except HTTPException:
+        return None                      # older ETL Space — fall back to env
+    _MY_SETS[tok] = (now + _MY_TTL, data)
+    if len(_MY_SETS) > 500:              # keep the cache from growing forever
+        for k in [k for k, v in list(_MY_SETS.items()) if v[0] <= now]:
+            _MY_SETS.pop(k, None)
+    return data
+
+
+async def _resolve_dataset(ident: str, request: Request) -> str:
+    """The dataset behind this request, for this person."""
+    role = _role_of(ident)
+    my = await _my_datasets(request)
+    if my is None:
+        return _dataset_for(ident)
+    if not my.get("ok"):
+        raise HTTPException(400, my.get("reason")
+                            or "No catalog is set up for your account yet.")
+    ds = (my.get("datasets") or {}).get(role, "")
+    if not ds:
+        raise HTTPException(400, f"{my.get('customer') or 'Your customer'} has no "
+                                 f"{role} dataset set up on the Apps tab.")
+    return ds
 
 
 @app.post("/api/app/query/{ident}")
@@ -223,11 +295,10 @@ async def query(ident: str, request: Request):
     if prof:
         return await etl_send("POST", f"/api/app/query/{ident}?profile={prof}",
                               {"sql": body.get("sql", "")})
-    ds = _dataset_for(ident)
+    ds = await _resolve_dataset(ident, request)
     if not ds:
         raise HTTPException(400, "This app has no dataset configured for that request. "
-                                 "Set DS_CATALOG / DS_USERS / DS_VENDORS, or define a "
-                                 "catalog in ETL Space under Apps.")
+                                 "Set it up on the Apps tab in ETL Space.")
     return await etl_send("POST", f"/api/app/query/{ds}", {"sql": body.get("sql", ""),
                                                            "dataset": ds})
 
@@ -241,19 +312,25 @@ async def rows(ident: str, request: Request):
         params["profile"] = prof
         params.pop("dataset", None)
         return await etl_get(f"/api/app/rows/{ident}", params, request=request)
-    ds = _dataset_for(ident)
-    if not ds:
-        raise HTTPException(400, "No dataset configured for that request.")
+    ds = await _resolve_dataset(ident, request)
     params["dataset"] = ds
     return await etl_get(f"/api/app/rows/{ds}", params, request=request)
 
 
 @app.get("/api/app/freshness")
-async def freshness(catalog: str = "", profile: str = ""):
+async def freshness(request: Request, catalog: str = "", profile: str = ""):
     """When each dataset behind this app was last written, straight from ETL
     Space — so "is this screen stale?" has an answer you can read."""
     prof = (profile or catalog or CATALOG_PROFILE or "").strip()
     sets = DATASETS
+    # The signed-in person's own datasets, so the timestamp is for the catalog
+    # they are actually looking at. This is also why the stamp used to read
+    # "could not read the data timestamp": the env var named a dataset that no
+    # longer existed, so ETL had nothing to report for it.
+    my = await _my_datasets(request)
+    if my and my.get("ok"):
+        sets = my.get("datasets") or DATASETS
+        prof = ""
     if prof:
         try:
             p = await etl_get("/api/app/profile", {"name": prof})

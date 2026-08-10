@@ -1762,7 +1762,7 @@ var poll=setInterval(function(){ if(window.__catalog && window.__catalog.getProd
 
 
 
-<script>/*__pinBar*/(function(){function go(){var tb=document.querySelector('.cat-toolbar'),view=document.getElementById('catalogView');if(!tb||!view){return setTimeout(go,300);}var sp=document.createElement('div');sp.setAttribute('data-pinspacer','1');tb.parentNode.insertBefore(sp,tb);function sync(){if(view.offsetWidth===0)return;var pr=sp.getBoundingClientRect();tb.style.position='fixed';tb.style.top='0px';tb.style.left=pr.left+'px';tb.style.width=pr.width+'px';tb.style.zIndex='500';tb.style.boxSizing='border-box';tb.style.background='#fff';tb.style.boxShadow='0 2px 6px rgba(0,0,0,0.10)';sp.style.height=tb.offsetHeight+'px';}sync();window.addEventListener('resize',sync);try{if(window.ResizeObserver){var ro=new ResizeObserver(sync);ro.observe(view);ro.observe(tb);}}catch(e){}setInterval(sync,1500);}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',go);else go();})();
+<script>/*__pinBar*/(function(){function go(){var tb=document.querySelector('.cat-toolbar'),view=document.getElementById('catalogView');if(!tb||!view){return setTimeout(go,300);}var sp=document.createElement('div');sp.setAttribute('data-pinspacer','1');tb.parentNode.insertBefore(sp,tb);function sync(){if(view.offsetWidth===0)return;var pr=sp.getBoundingClientRect();tb.style.position='fixed';tb.style.top='0px';tb.style.left=pr.left+'px';tb.style.width=pr.width+'px';tb.style.zIndex='500';tb.style.boxSizing='border-box';tb.style.background='#fff';tb.style.boxShadow='0 2px 6px rgba(0,0,0,0.10)';sp.style.height=tb.offsetHeight+'px';}sync();window.addEventListener('resize',sync);try{if(window.ResizeObserver){var ro=new ResizeObserver(sync);ro.observe(view);ro.observe(tb);}}catch(e){}setInterval(sync,1500);}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){go(0);});else go(0);})();
 (function(){
   var Q=String.fromCharCode(63), A=String.fromCharCode(38);
   function _n(s){ return String(s==null?'':s).replace(/\s+/g,' ').trim().toUpperCase(); }
@@ -2200,6 +2200,65 @@ body.qc-open #orderFormModal .btn-submit{width:auto !important;white-space:nowra
   document.addEventListener('keydown',function(e){
     if(e.key==='Escape'&&document.body.classList.contains('qc-open'))qcExit(true);
   });
+})();</script>
+
+
+<!-- ── Who am I, and a way out ──────────────────────────────────────────
+     Testing means signing in as a store, then a district manager, then the
+     director. Without a way to sign out you have to clear cookies each time.
+-->
+<style id="whoAmICss">
+#whoAmI{position:fixed;top:8px;right:10px;z-index:2147483000;display:none;
+  align-items:center;gap:8px;background:#16213f;color:#fff;border-radius:999px;
+  padding:6px 8px 6px 14px;font:600 12.5px/1 'Segoe UI',system-ui,sans-serif;
+  box-shadow:0 4px 14px rgba(10,20,45,.35)}
+#whoAmI.on{display:flex}
+#whoAmI b{font-weight:800}
+/* The address is drawn from an attribute, not a text node, so the
+   Store→Location relabeller cannot rewrite the middle of an email. */
+#whoAmI .email::after{content:attr(data-email)}
+#whoAmI .role{background:rgba(255,255,255,.16);border-radius:999px;padding:3px 9px;font-size:11px}
+#whoAmI button{border:0;background:#e0592a;color:#fff;border-radius:999px;
+  padding:6px 12px;font:800 12px 'Segoe UI',system-ui,sans-serif;cursor:pointer}
+#whoAmI button:hover{background:#c94a1f}
+@media (max-width:820px){
+  #whoAmI{top:auto;bottom:10px;left:10px;right:auto;padding:5px 6px 5px 11px}
+  #whoAmI .email{display:none}
+}
+</style>
+<script>(function(){
+  if(window.__whoAmI)return; window.__whoAmI=1;
+  var ROLES={store:'Store',district:'District Manager',purchasing:'Purchasing Director',
+             owner:'Catalog Owner',admin:'Administrator'};
+  function build(me){
+    if(document.getElementById('whoAmI'))return;
+    var d=document.createElement('div'); d.id='whoAmI';
+    var sc=(me&&me.scope)||{};
+    d.innerHTML='<span class="email" data-email="'+((sc.email||'').replace(/["<>&]/g,''))+'"></span>'+
+      '<span class="role">'+(ROLES[sc.role]||sc.role||'')+'</span>'+
+      '<button type="button">Sign out</button>';
+    d.querySelector('button').onclick=function(){
+      fetch('/api/auth/signout',{method:'POST'})
+        .then(function(){location.href='/login';})
+        .catch(function(){location.href='/login';});
+    };
+    document.body.appendChild(d);
+    d.classList.add('on');
+  }
+  // The session cookie can lag a redirect by a moment, so try a few times
+  // rather than deciding on the first answer.
+  function go(tries){
+    tries = tries || 0;
+    fetch('/api/auth/me',{credentials:'same-origin'})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(me){
+        if(me){build(me);return;}
+        if(tries < 4)setTimeout(function(){go(tries+1);}, 600);
+      })
+      .catch(function(){ if(tries < 4)setTimeout(function(){go(tries+1);}, 600); });
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){go(0);});
+  else go(0);
 })();</script>
 
 <!-- ── Reload data + freshness stamp ──────────────────────────────────────

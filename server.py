@@ -24,6 +24,7 @@ import base64
 import json
 import os
 import secrets
+from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -375,6 +376,71 @@ async def auth_signout():
     return resp
 
 
+# ---------------------------------------------------------------- owner admin
+#
+# The catalog owner's Admin page. Every route here is a pass-through to ETL
+# Space carrying the signed-in person's session, so this app decides nothing
+# about who may do what — ETL reads the token, works out whether they own a
+# catalog, and refuses on its own account. Adding a route here can widen what
+# a browser can reach but never what a person is entitled to.
+#
+# RequireSignIn already turns away anyone without a cookie, so by the time a
+# request arrives here there is a session to forward.
+
+@app.get("/api/admin/my-catalog")
+async def admin_my_catalog(request: Request):
+    return await etl_get("/api/access/my-catalog", request=request)
+
+
+@app.post("/api/admin/my-catalog/{name}")
+async def admin_save_my_catalog(name: str, request: Request):
+    return await etl_send("POST", f"/api/access/my-catalog/{quote(name, safe='')}",
+                          await request.json(), request=request)
+
+
+@app.get("/api/admin/my-people")
+async def admin_my_people(request: Request):
+    return await etl_get("/api/access/my-people", request=request)
+
+
+@app.post("/api/admin/my-people/{email}/password")
+async def admin_set_password(email: str, request: Request):
+    return await etl_send("POST",
+                          f"/api/access/my-people/{quote(email, safe='')}/password",
+                          await request.json(), request=request)
+
+
+@app.post("/api/admin/my-people/{email}/force-reset")
+async def admin_force_reset(email: str, request: Request):
+    return await etl_send("POST",
+                          f"/api/access/my-people/{quote(email, safe='')}/force-reset",
+                          None, request=request)
+
+
+@app.get("/api/admin/users/rows")
+async def admin_user_rows(request: Request):
+    return await etl_get("/api/access/users/rows", request=request)
+
+
+@app.post("/api/admin/users/rows")
+async def admin_save_user_rows(request: Request):
+    """Save the location grid. ETL re-runs every flow that reads the dataset,
+    so the catalog reflects the change without waiting for the next upload."""
+    return await etl_send("POST", "/api/access/users/rows",
+                          await request.json(), request=request)
+
+
+@app.get("/admin")
+async def admin_page():
+    try:
+        with open("static/admin.html", "rb") as fh:
+            return Response(fh.read(), media_type="text/html",
+                            headers={"Cache-Control": "no-cache"})
+    except FileNotFoundError:
+        return Response("<h1>Admin page missing</h1><p>Upload <code>admin.html</code> "
+                        "to the static folder.</p>", status_code=500, media_type="text/html")
+
+
 class RequireSignIn(BaseHTTPMiddleware):
     """Anyone without a session gets the sign-in page.
 
@@ -407,6 +473,48 @@ async def login_page():
                         "to the static folder.</p>", status_code=500, media_type="text/html")
 
 
+# The Admin link, added to the catalog page as it is served rather than edited
+# into it. index.html is a large ported page and every hand-edit to it is a
+# chance to lose something; injecting the link here means the catalog file never
+# has to change, and removing this block removes the button completely.
+ADMIN_LAUNCHER = b"""
+<style>
+#cat-admin-link{position:fixed;right:16px;bottom:16px;z-index:2147483000;display:none;
+  background:#0C447C;color:#fff;border-radius:999px;padding:11px 17px;font:700 14px 'Segoe UI',
+  system-ui,-apple-system,Arial,sans-serif;text-decoration:none;box-shadow:0 3px 14px rgba(12,32,68,.3)}
+#cat-admin-link:hover{background:#0a3560}
+@media print{#cat-admin-link{display:none !important}}
+</style>
+<a id="cat-admin-link" href="/admin">&#9881; Admin</a>
+<script>
+// Shown only to someone ETL Space says owns a catalog, or to an administrator.
+// The button appearing is a convenience, not a permission: every admin route
+// re-checks who is asking, so revealing it to the wrong person would give them
+// a page full of refusals rather than a page full of other people's stores.
+(function(){
+  fetch('/api/auth/me', {credentials:'same-origin'})
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(d){
+      var s = d && d.scope;
+      if (s && (s.all === true || s.role === 'owner')) {
+        var el = document.getElementById('cat-admin-link');
+        if (el) el.style.display = 'inline-block';
+      }
+    }).catch(function(){});
+})();
+</script>
+"""
+
+
+def _with_admin_launcher(body: bytes) -> bytes:
+    if b'id="cat-admin-link"' in body:
+        return body
+    cut = body.lower().rfind(b"</body>")
+    if cut == -1:
+        return body + ADMIN_LAUNCHER
+    return body[:cut] + ADMIN_LAUNCHER + body[cut:]
+
+
 @app.get("/")
 async def home():
     page = _page_file()
@@ -418,7 +526,7 @@ async def home():
             status_code=404, media_type="text/html")
     with open(page, "rb") as fh:
         body = fh.read()
-    return Response(body, media_type="text/html",
+    return Response(_with_admin_launcher(body), media_type="text/html",
                     headers={"Cache-Control": "no-cache"})
 
 

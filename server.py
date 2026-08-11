@@ -902,21 +902,29 @@ ADMIN_BUTTON = b"""
 """
 
 
-async def _may_administer(request) -> bool:
-    """Does the person being served this page administer anything?
+async def _me_scope(request) -> dict:
+    """Who is being served, asked of ETL Space server-to-server.
 
-    Asked of ETL Space server-to-server, because it is the only thing that
-    knows. Anything short of a clear yes is a no -- every admin route re-checks
-    its caller anyway, so being wrong here costs a shortcut, never access.
+    ETL is the only thing that knows, and it verifies the signed token for
+    itself. Anything short of a clear answer comes back empty -- every route
+    that matters re-checks its caller anyway, so being wrong here costs a
+    shortcut or a redirect, never access.
     """
     if request is None or not request.cookies.get(SESSION_COOKIE) or not ETL_BASE:
-        return False
+        return {}
     try:
         me = await etl_get("/api/access/me", request=request)
     except Exception:
-        return False
-    sc = (me or {}).get("scope") or {}
+        return {}
+    return (me or {}).get("scope") or {}
+
+
+def _scope_administers(sc: dict) -> bool:
     return sc.get("all") is True or str(sc.get("role") or "") in ("owner", "admin")
+
+
+async def _may_administer(request) -> bool:
+    return _scope_administers(await _me_scope(request))
 
 
 def _with_admin_launcher(body: bytes, may_administer: bool = False) -> bytes:
@@ -932,6 +940,12 @@ def _with_admin_launcher(body: bytes, may_administer: bool = False) -> bytes:
 
 @app.get("/")
 async def home(request: Request):
+    sc = await _me_scope(request)
+    # A vendor rep signs in through the same link as everyone else but their
+    # page is the editor, not the store catalog. Server-decided, like the
+    # Admin button: the browser is never asked to hide anything.
+    if str(sc.get("role") or "") == "vendor" and not sc.get("all"):
+        return RedirectResponse("/vendor", status_code=302)
     page = _page_file()
     if not page:
         return Response(
@@ -941,13 +955,48 @@ async def home(request: Request):
             status_code=404, media_type="text/html")
     with open(page, "rb") as fh:
         body = fh.read()
-    return Response(_with_admin_launcher(body, await _may_administer(request)),
+    return Response(_with_admin_launcher(body, _scope_administers(sc)),
                     media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/index.html")
 async def home_alias(request: Request):
     return await home(request)
+
+
+# ---------------------------------------------------------------- vendor editor
+#
+# A different page of the same app. Reps reach it automatically after signing
+# in; the owner and administrators can open /vendor to see what reps see.
+# ETL decides for itself, per request, what this person may read and write --
+# this app only chooses which page to draw.
+
+@app.get("/vendor")
+async def vendor_page(request: Request):
+    sc = await _me_scope(request)
+    role = str(sc.get("role") or "")
+    if role != "vendor" and not _scope_administers(sc):
+        return RedirectResponse("/", status_code=302)
+    try:
+        with open("static/vendor.html", "rb") as fh:
+            body = fh.read()
+    except FileNotFoundError:
+        return Response("<h1>Vendor editor not installed</h1><p>Upload "
+                        "<code>vendor.html</code> to the static folder.</p>",
+                        status_code=500, media_type="text/html")
+    return Response(body, media_type="text/html",
+                    headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/vendor/edits")
+async def vendor_edits_list(request: Request):
+    return await etl_get("/api/access/vendor-edits", request=request)
+
+
+@app.post("/api/vendor/edits")
+async def vendor_edits_submit(request: Request):
+    body = await request.json()
+    return await etl_send("POST", "/api/access/vendor-edits", body, request=request)
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

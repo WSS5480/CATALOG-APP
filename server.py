@@ -102,10 +102,17 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
+# Which app this browser is signing in to, set by visiting that app's own link.
+# It is only ever a claim about WHICH app, never about who — ETL still checks
+# the password and still decides what the person reaches. The worst a forged
+# one can do is send you to a customer whose people list does not name you,
+# which is a refusal.
+APP_COOKIE = "catalog_app"
 # Pages a signed-out visitor may still reach. Everything else redirects to
 # the sign-in screen, so a bookmarked deep link asks who you are first.
+# "/a/" is how a customer arrives, so it has to be reachable signed out.
 PUBLIC_PATHS = ("/login", "/login.html", "/api/auth/", "/healthz", "/favicon.ico",
-                "/app.css", "/static/")
+                "/app.css", "/static/", "/a/")
 REQUIRE_SIGNIN = os.environ.get("REQUIRE_SIGNIN", "1").strip().lower() in ("1", "true", "yes", "on")
 
 
@@ -415,9 +422,18 @@ def _page_file() -> str | None:
 
 @app.post("/api/auth/signin")
 async def auth_signin(request: Request):
+    """Sign in to one app.
+
+    Which app comes from the cookie the /a/<slug> link set, not from anything
+    the sign-in form has to send. That is deliberate: it means the login page
+    needs no changes at all, and a customer who arrives through their own link
+    signs in to their own app without knowing any of this happened.
+    """
     body = await request.json()
+    which = (body.get("app") or request.cookies.get(APP_COOKIE, "") or "").strip()
     data = await etl_send("POST", "/api/access/signin",
-                          {"email": body.get("email", ""), "password": body.get("password", "")})
+                          {"email": body.get("email", ""), "password": body.get("password", ""),
+                           "app": which})
     token = data.pop("token", "")
     resp = JSONResponse(data)
     resp.set_cookie(
@@ -538,6 +554,41 @@ class RequireSignIn(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequireSignIn)
+
+
+@app.get("/a/{slug}")
+async def app_link(slug: str, request: Request):
+    """One customer's way in.
+
+    Everything this does is remember which app you came for and send you on to
+    the sign-in page. It holds no session and grants nothing — but from here on,
+    the email and password you type are checked against THIS app's accounts and
+    THIS customer's people list, so the same address at another customer is a
+    different person with a different password.
+    """
+    try:
+        info = await etl_get(f"/api/apps2/by-slug/{quote(slug, safe='')}")
+    except HTTPException as e:
+        return Response(
+            f"<h1>That link does not match an app</h1><p>{e.detail}</p>"
+            "<p>Check the address, or ask for a new link.</p>",
+            status_code=404, media_type="text/html")
+    if not info.get("ready"):
+        missing = ", ".join(info.get("missing_required") or []) or "some of its setup"
+        return Response(
+            f"<h1>{info.get('name','This app')} is not finished being set up</h1>"
+            f"<p>It still needs {missing}. Nobody can sign in until that is done.</p>",
+            status_code=503, media_type="text/html")
+    resp = RedirectResponse("/", status_code=302)
+    resp.set_cookie(
+        APP_COOKIE, info.get("slug") or slug,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+        max_age=180 * 24 * 3600,        # outlives the session, so the link is a bookmark
+        path="/",
+    )
+    return resp
 
 
 @app.get("/login")

@@ -220,8 +220,18 @@ async def app_config(request: Request, catalog: str = ""):
 
 @app.get("/healthz")
 async def healthz():
+    """Enough to tell what this deployment will actually do, without a session.
+
+    `catalog_profile_set` is here because a profile named at deploy time used to
+    silently override every signed-in person's own datasets, and nothing on this
+    page said so.
+    """
     return {"ok": True, "etl_configured": bool(ETL_BASE), "application": APPLICATION,
-            "catalog": DATASETS["catalog"]}
+            "catalog": DATASETS["catalog"],
+            "catalog_profile_set": bool(CATALOG_PROFILE),
+            "catalog_profile": CATALOG_PROFILE or "",
+            "require_signin": REQUIRE_SIGNIN,
+            "app_link_route": True}
 
 
 # ---------------- the app's data calls, proxied to ETL Space ----------------
@@ -297,8 +307,12 @@ async def _resolve_dataset(ident: str, request: Request) -> str:
 @app.post("/api/app/query/{ident}")
 async def query(ident: str, request: Request):
     body = await request.json()
-    prof = (request.query_params.get("profile") or body.get("profile")
-            or CATALOG_PROFILE or "").strip()
+    my = await _my_datasets(request)
+    if my is not None and not my.get("ok"):
+        raise HTTPException(400, my.get("reason")
+                            or "No catalog is set up for your account yet.")
+    prof = "" if my is not None else (request.query_params.get("profile") or body.get("profile")
+                                      or CATALOG_PROFILE or "").strip()
     if prof:
         return await etl_send("POST", f"/api/app/query/{ident}?profile={prof}",
                               {"sql": body.get("sql", "")})
@@ -312,10 +326,29 @@ async def query(ident: str, request: Request):
 
 @app.get("/api/app/rows/{ident}")
 async def rows(ident: str, request: Request):
+    """Rows for the signed-in person.
+
+    Their own app decides which dataset, ahead of any catalog profile named at
+    deploy time. That order matters and it used to be the other way round: with
+    CATALOG_PROFILE set, every request went to the old profile mapping and
+    ignored the session entirely, so somebody could sign in perfectly, be
+    entitled to hundreds of rows, and be shown a catalog built from whatever
+    dataset that mapping still pointed at — quite possibly one that no longer
+    exists. The profile is the fallback now, not the winner.
+    """
     params = dict(request.query_params)
-    prof = (params.pop("profile", "") or CATALOG_PROFILE or "").strip()
+    asked = params.pop("profile", "").strip()
+    my = await _my_datasets(request)
+    if my is not None:
+        if not my.get("ok"):
+            raise HTTPException(400, my.get("reason")
+                                or "No catalog is set up for your account yet.")
+        ds = await _resolve_dataset(ident, request)
+        params["dataset"] = ds
+        return await etl_get(f"/api/app/rows/{ds}", params, request=request)
+    prof = (asked or CATALOG_PROFILE or "").strip()
     if prof:
-        # let ETL Space resolve the dataset from the catalog's own mapping
+        # no session at all — fall back to the catalog's own mapping
         params["profile"] = prof
         params.pop("dataset", None)
         return await etl_get(f"/api/app/rows/{ident}", params, request=request)

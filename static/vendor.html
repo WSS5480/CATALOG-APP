@@ -1,0 +1,310 @@
+<!-- ==================================================================
+  CATALOG APP  --  repo WSS5480/CATALOG-APP  --  file static/vendor.html
+  Upload to:  https://github.com/WSS5480/CATALOG-APP/upload/main/static
+  The vendor catalog editor. Reps sign in through the same link as the
+  stores and land here instead of the store catalog. Edits are appended
+  to <folder>_vendor_edits in ETL Space; the MASTER CATALOG flow folds
+  them in on its next run. Nothing here writes to the master catalog.
+=================================================================== -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vendor Catalog Editor</title>
+<style>
+:root{--navy:#16213f;--navy2:#0e1730;--orange:#e0592a;--line:#e3e7f0;}
+*{box-sizing:border-box;}
+body{margin:0;background:#f5f6fa;font:14px 'Segoe UI',system-ui,-apple-system,Arial,sans-serif;color:#1b2130;}
+header{position:sticky;top:0;z-index:50;background:var(--navy);color:#fff;
+  padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+  box-shadow:0 2px 8px rgba(10,20,45,.25);}
+header h1{font-size:16px;font-weight:800;margin:0;white-space:nowrap;}
+header .who{display:flex;gap:8px;align-items:center;font-size:12px;margin-left:auto;flex-wrap:wrap;}
+header .chip{background:rgba(255,255,255,.14);border-radius:999px;padding:4px 10px;font-weight:700;}
+header .chip.v{background:var(--orange);}
+header button{border:0;background:#fff;color:var(--navy);border-radius:999px;
+  padding:7px 13px;font-weight:800;font-size:12px;cursor:pointer;}
+.note{background:#fff4e5;border:1px solid #f0b450;color:#7a4b00;border-radius:12px;
+  padding:10px 14px;margin:12px 16px 0;font-size:13px;font-weight:600;}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;}
+.bar input[type=text]{flex:1 1 260px;border:1px solid var(--line);border-radius:12px;
+  padding:10px 14px;font-size:15px;background:#fff;}
+.bar .count{font-size:12px;color:#5a6273;font-weight:700;white-space:nowrap;}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));
+  gap:12px;padding:0 16px 110px;}
+.card{background:#fff;border-radius:14px;box-shadow:0 1px 4px rgba(15,25,55,.08);
+  padding:12px;display:flex;flex-direction:column;gap:8px;}
+.card.changed{outline:2px solid var(--orange);}
+.card .top{display:flex;gap:10px;align-items:center;}
+.card img{width:56px;height:56px;object-fit:contain;background:#fff;border:1px solid var(--line);
+  border-radius:10px;flex:0 0 auto;}
+.card .noimg{width:56px;height:56px;display:flex;align-items:center;justify-content:center;
+  background:#f2f4f9;border-radius:10px;color:#9aa1b2;font-size:10px;flex:0 0 auto;}
+.card .id{min-width:0;}
+.card .id b{display:block;font-size:13px;}
+.card .id span{font-size:11px;color:#5a6273;}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:6px 8px;}
+.f{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.f.wide{grid-column:1 / -1;}
+.f label{font-size:10px;font-weight:800;color:#5a6273;text-transform:uppercase;letter-spacing:.03em;}
+.f input{border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:13px;width:100%;
+  background:#fff;}
+.f input.dirty{border-color:var(--orange);background:#fff5f0;}
+#submitBar{position:fixed;left:0;right:0;bottom:0;z-index:60;background:var(--navy2);
+  color:#fff;display:flex;gap:10px;align-items:center;padding:12px 16px;
+  padding-bottom:max(12px, env(safe-area-inset-bottom));box-shadow:0 -4px 16px rgba(10,20,45,.3);}
+#submitBar .sum{font-weight:800;font-size:13px;}
+#submitBar .sp{margin-left:auto;}
+#submitBar button{border:0;border-radius:999px;padding:11px 18px;font-weight:800;
+  font-size:14px;cursor:pointer;font-family:inherit;}
+#resetBtn{background:rgba(255,255,255,.14);color:#fff;}
+#saveBtn{background:var(--orange);color:#fff;}
+#saveBtn:disabled{opacity:.4;cursor:default;}
+#toast{position:fixed;left:16px;right:16px;bottom:84px;z-index:70;background:#12925f;color:#fff;
+  font-weight:700;padding:12px 16px;border-radius:12px;box-shadow:0 8px 20px rgba(0,0,0,.25);
+  opacity:0;transition:.25s;pointer-events:none;max-width:640px;margin:0 auto;}
+#toast.on{opacity:1;}
+#toast.bad{background:#c0392b;}
+.empty{padding:40px 20px;text-align:center;color:#5a6273;font-size:14px;line-height:1.6;}
+#recent{margin:0 16px 130px;background:#fff;border-radius:14px;box-shadow:0 1px 4px rgba(15,25,55,.08);
+  padding:12px 14px;display:none;}
+#recent h2{font-size:13px;margin:0 0 8px;}
+#recent table{width:100%;border-collapse:collapse;font-size:12px;}
+#recent th{text-align:left;color:#5a6273;font-size:10.5px;text-transform:uppercase;padding:4px 6px;
+  border-bottom:1px solid var(--line);}
+#recent td{padding:5px 6px;border-bottom:1px solid #f0f2f7;}
+@media (max-width:560px){
+  #grid{grid-template-columns:1fr;padding:0 10px 120px;}
+  .note{margin:10px;}
+  .bar{padding:10px;}
+  #recent{margin:0 10px 130px;}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Vendor Catalog Editor</h1>
+  <div class="who">
+    <span class="chip" id="whoEmail"></span>
+    <span class="chip v" id="whoVendor"></span>
+    <button type="button" id="signOut">Sign out</button>
+  </div>
+</header>
+
+<div class="note">Edit your items below and press <b>Submit changes</b>. Changes are
+sent to the catalog owner's data space and go live when the catalog next runs —
+they never change the store catalog instantly.</div>
+
+<div class="bar">
+  <input type="text" id="q" placeholder="Search model # or item name...">
+  <span class="count" id="count"></span>
+</div>
+
+<div id="grid"></div>
+<div id="recent">
+  <h2>Recently submitted</h2>
+  <table><thead><tr><th>When</th><th>Model #</th><th>By</th></tr></thead>
+  <tbody id="recentBody"></tbody></table>
+</div>
+
+<div id="submitBar">
+  <span class="sum" id="sum">No changes yet</span>
+  <span class="sp"></span>
+  <button type="button" id="resetBtn">Reset</button>
+  <button type="button" id="saveBtn" disabled>Submit changes</button>
+</div>
+<div id="toast"></div>
+
+<script>
+(function(){
+  'use strict';
+  var $=function(id){return document.getElementById(id);};
+  // What a rep may type into. Model # and Vendor are the row's identity and
+  // stay read-only — an edit is "this item, these new values".
+  var FIELDS=[
+    ['ItemName','Item name',1],
+    ['Brand','Brand',0],['Color','Color',0],
+    ['Category','Category',0],['SubCategory','Sub category',0],
+    ['Collection','Collection',0],
+    ['PromoCost','Promo cost',0],['RegularCost','Regular cost',0],
+    ['QTYAvailable','Availability',0],['DisplayOrder','Display order',0],
+    ['ItemImage2','Image URL',1]
+  ];
+  var items=[], edits={};   // edits[model||vendor] = {field:newValue}
+
+  // The app layer has served the same column under more than one name over
+  // time (promo_cost as Price and PromoCost, qty_available in two casings).
+  // Read whichever arrived so an older ETL build still fills every box.
+  var ALIASES={PromoCost:['PromoCost','Price'],QTYAvailable:['QTYAvailable','QtyAvailable']};
+  function val(p,name){
+    var names=ALIASES[name]||[name];
+    for(var i=0;i<names.length;i++){ if(p[names[i]]!=null) return String(p[names[i]]); }
+    return '';
+  }
+
+  function toast(m,bad){ var t=$('toast'); t.textContent=m; t.className=bad?'bad on':'on';
+    clearTimeout(t._t); t._t=setTimeout(function(){t.className='';},3500); }
+
+  function key(p){ return String(p.ModelNum||'')+'||'+String(p.Vendor||''); }
+
+  function dirtyCount(){ var n=0; for(var k in edits){ n+=Object.keys(edits[k]).length; } return n; }
+  function rowCount(){ return Object.keys(edits).length; }
+
+  function paintSum(){
+    var n=dirtyCount();
+    $('sum').textContent=n?(n+' change'+(n===1?'':'s')+' on '+rowCount()+' item'+(rowCount()===1?'':'s')):'No changes yet';
+    $('saveBtn').disabled=!n;
+  }
+
+  function draw(){
+    var q=($('q').value||'').trim().toLowerCase();
+    var grid=$('grid'); grid.innerHTML='';
+    var shown=0;
+    items.forEach(function(p){
+      var hay=(String(p.ModelNum||'')+' '+String(p.ItemName||'')).toLowerCase();
+      if(q && hay.indexOf(q)===-1) return;
+      shown++;
+      var k=key(p), card=document.createElement('div');
+      card.className='card'+(edits[k]?' changed':'');
+      var img=String(p.ItemImage2||'').trim();
+      var top=document.createElement('div'); top.className='top';
+      if(/^https?:\/\//i.test(img)){ var im=document.createElement('img'); im.src=img; im.loading='lazy';
+        im.onerror=function(){ var d=document.createElement('div'); d.className='noimg'; d.textContent='no image'; im.replaceWith(d); };
+        top.appendChild(im);
+      } else { var d0=document.createElement('div'); d0.className='noimg'; d0.textContent='no image'; top.appendChild(d0); }
+      var id=document.createElement('div'); id.className='id';
+      id.innerHTML='<b></b><span></span>';
+      id.querySelector('b').textContent=String(p.ModelNum||'(no model #)');
+      id.querySelector('span').textContent=String(p.Vendor||'');
+      top.appendChild(id); card.appendChild(top);
+      var fl=document.createElement('div'); fl.className='fields';
+      FIELDS.forEach(function(f){
+        var name=f[0], label=f[1], wide=f[2];
+        var wrap=document.createElement('div'); wrap.className='f'+(wide?' wide':'');
+        var lab=document.createElement('label'); lab.textContent=label; wrap.appendChild(lab);
+        var inp=document.createElement('input'); inp.type='text';
+        var cur=(edits[k]&&name in edits[k])?edits[k][name]:val(p,name);
+        inp.value=cur;
+        if(edits[k]&&name in edits[k]) inp.className='dirty';
+        inp.oninput=function(){
+          var orig=val(p,name);
+          if(inp.value===orig){
+            if(edits[k]){ delete edits[k][name]; if(!Object.keys(edits[k]).length) delete edits[k]; }
+            inp.className=''; card.className='card'+(edits[k]?' changed':'');
+          } else {
+            (edits[k]=edits[k]||{})[name]=inp.value;
+            inp.className='dirty'; card.className='card changed';
+          }
+          paintSum();
+        };
+        wrap.appendChild(inp); fl.appendChild(wrap);
+      });
+      card.appendChild(fl);
+      grid.appendChild(card);
+    });
+    $('count').textContent=items.length?(shown+' of '+items.length+' items'):'';
+    if(!items.length){
+      grid.innerHTML='<div class="empty">No items are shared with your sign-in yet.<br>'+
+        'Ask the catalog owner to add a rule granting your vendor its items.</div>';
+    }
+    paintSum();
+  }
+
+  $('q').addEventListener('input',draw);
+
+  $('resetBtn').onclick=function(){ edits={}; draw(); };
+
+  $('saveBtn').onclick=function(){
+    var rows=[];
+    for(var k in edits){
+      var p=null;
+      for(var i=0;i<items.length;i++){ if(key(items[i])===k){ p=items[i]; break; } }
+      if(!p) continue;
+      // Send the whole row, not just the changed cells: the edits dataset is a
+      // journal of complete rows, so the flow can take the latest one per item
+      // without stitching fragments together.
+      var row={ModelNum:String(p.ModelNum||''),Vendor:String(p.Vendor||'')};
+      FIELDS.forEach(function(f){
+        var name=f[0];
+        row[name]=(name in edits[k])?edits[k][name]:val(p,name);
+      });
+      rows.push(row);
+    }
+    if(!rows.length) return;
+    $('saveBtn').disabled=true; $('saveBtn').textContent='Submitting…';
+    fetch('/api/vendor/edits',{method:'POST',headers:{'Content-Type':'application/json'},
+      credentials:'same-origin',body:JSON.stringify({rows:rows})})
+      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
+      .then(function(res){
+        var j=res.j||{};
+        if(res.ok && j.saved){
+          // fold the accepted values into the local rows so the page shows
+          // what was submitted, and clear the highlights
+          for(var k in edits){ for(var i=0;i<items.length;i++){ if(key(items[i])===k){
+            for(var f in edits[k]) items[i][f]=edits[k][f]; } } }
+          edits={};
+          toast(j.message||('Submitted '+j.saved+' changes.'));
+          loadRecent();
+        } else {
+          toast(j.message||j.detail||'Nothing was saved.',true);
+        }
+        draw();
+      })
+      .catch(function(){ toast('Could not reach the server. Nothing was saved.',true); })
+      .then(function(){ $('saveBtn').textContent='Submit changes'; paintSum(); });
+  };
+
+  $('signOut').onclick=function(){
+    fetch('/api/auth/signout',{method:'POST'})
+      .then(function(){location.href='/login';})
+      .catch(function(){location.href='/login';});
+  };
+
+  function loadRecent(){
+    fetch('/api/vendor/edits',{credentials:'same-origin'})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(d){
+        if(d&&d.vendors&&d.vendors.length){ $('whoVendor').textContent=d.vendors.join(', '); }
+        var rows=(d&&d.rows)||[];
+        if(!rows.length){ $('recent').style.display='none'; return; }
+        rows=rows.slice(-12).reverse();
+        var tb=$('recentBody'); tb.innerHTML='';
+        rows.forEach(function(r){
+          var tr=document.createElement('tr');
+          [String(r.edited_at||''),String(r.model||''),String(r.edited_by||'')].forEach(function(v){
+            var td=document.createElement('td'); td.textContent=v; tr.appendChild(td); });
+          tb.appendChild(tr);
+        });
+        $('recent').style.display='block';
+      }).catch(function(){});
+  }
+
+  fetch('/api/auth/me',{credentials:'same-origin'})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(me){
+      var sc=(me&&me.scope)||{};
+      $('whoEmail').textContent=sc.email||'';
+      var vs=sc.vendors||[];
+      $('whoVendor').textContent=sc.all?'Administrator (preview)':(vs.join(', ')||'Vendor');
+    }).catch(function(){});
+
+  fetch('/api/app/rows/catalog?groupby=ModelNum,ItemName,Vendor,Brand,Category,SubCategory,Collection,RegularCost,PromoCost,Price,Color,ItemImage2,QTYAvailable,QtyAvailable,DisplayOrder&limit=100000',
+        {credentials:'same-origin'})
+    .then(function(r){return r.ok?r.json():[];})
+    .then(function(rows){
+      items=(rows||[]).filter(function(p){return String(p.ModelNum||'').trim();});
+      items.sort(function(a,b){
+        var va=String(a.Vendor||''), vb=String(b.Vendor||'');
+        if(va!==vb) return va<vb?-1:1;
+        var da=parseFloat(a.DisplayOrder), db=parseFloat(b.DisplayOrder);
+        if(!isNaN(da)&&!isNaN(db)&&da!==db) return da-db;
+        return String(a.ModelNum||'')<String(b.ModelNum||'')?-1:1;
+      });
+      draw(); loadRecent();
+    })
+    .catch(function(){ toast('Could not load your items.',true); });
+})();
+</script>
+</body>
+</html>

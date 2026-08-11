@@ -833,6 +833,53 @@ SIGNOUT_BLOCK = b"""
   }
 })();
 </script>
+<script id="cat-clear-topright">
+(function(){
+  // The identity strip (#whoAmI, fixed to the top-right by the page) was
+  // sitting on top of the cart button and whatever else lives in that corner.
+  // Rather than hand-edit the big catalog page, measure at load: if the strip
+  // covers any control in the top-right, slide the strip down until it clears
+  // the lowest of them. Runs again on resize; leaves the phone layout alone
+  // (the page's own media query already relocates the strip there).
+  function clearTopRight(){
+    var who = document.getElementById('whoAmI');
+    if (!who) return false;
+    var cs = getComputedStyle(who);
+    if (cs.position !== 'fixed' || cs.display === 'none') return true;
+    who.style.top = '';                       // re-measure from the stylesheet position
+    var wr = who.getBoundingClientRect();
+    if (!wr.width || wr.top > 160) return true;   // hidden, or already moved by the page
+    var zoneRight = Math.max(360, wr.width + 80); // how far in from the right edge to look
+    var cands = document.querySelectorAll('button, a, [role="button"], [id^="qc"]');
+    var maxBottom = 0, hit = false;
+    for (var i = 0; i < cands.length; i++){
+      var el = cands[i];
+      if (el === who || who.contains(el)) continue;
+      var r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;          // not rendered
+      if (r.top >= 160) continue;                   // not in the top strip
+      if (r.right < innerWidth - zoneRight) continue;   // not in the corner
+      if (r.width > innerWidth / 2) continue;       // a whole bar, not a control
+      if (r.bottom > maxBottom) maxBottom = r.bottom;
+      if (r.left < wr.right + 8 && r.right > wr.left - 8 &&
+          r.top < wr.bottom + 8 && r.bottom > wr.top - 8) hit = true;
+    }
+    if (hit) who.style.top = Math.round(maxBottom + 10) + 'px';
+    return true;
+  }
+  // The strip and the cart button are both drawn by scripts after load, so
+  // keep trying briefly rather than assuming they are there on the first look.
+  var tries = 0;
+  var timer = setInterval(function(){
+    if ((clearTopRight() && tries > 14) || ++tries > 30) clearInterval(timer);
+  }, 400);
+  window.addEventListener('load', clearTopRight);
+  var rz;
+  window.addEventListener('resize', function(){
+    clearTimeout(rz); rz = setTimeout(clearTopRight, 150);
+  });
+})();
+</script>
 """
 
 # No script, no fetch, no display:none. The button used to hide itself and then

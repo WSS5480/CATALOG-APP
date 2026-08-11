@@ -191,11 +191,18 @@ async def app_config(request: Request, catalog: str = ""):
     # A signed-in person's own app instance wins over anything set at deploy
     # time, so the page names the customer whose catalog is on screen.
     my = await _my_datasets(request)
+    if my is not None and not my.get("ok"):
+        # Say why, and do not hand back the deploy-time datasets as though they
+        # were this person's. Nothing on screen should imply data it cannot show.
+        base.update({"datasets": {}, "configured": False, "source": "session",
+                     "reason": my.get("reason") or ""})
+        return base
     if my and my.get("ok"):
         base.update({"datasets": my.get("datasets") or {},
                      "catalog": my.get("instance") or "",
                      "catalogLabel": my.get("customer") or "",
-                     "source": "session", "configured": bool(my.get("master"))})
+                     "source": "session", "configured": bool(my.get("master")),
+                     "reason": ""})
         return base
     try:
         prof = await etl_get("/api/app/profile", {"name": wanted})
@@ -363,11 +370,15 @@ async def freshness(request: Request, catalog: str = "", profile: str = ""):
     Space — so "is this screen stale?" has an answer you can read."""
     prof = (profile or catalog or CATALOG_PROFILE or "").strip()
     sets = DATASETS
-    # The signed-in person's own datasets, so the timestamp is for the catalog
-    # they are actually looking at. This is also why the stamp used to read
-    # "could not read the data timestamp": the env var named a dataset that no
-    # longer existed, so ETL had nothing to report for it.
     my = await _my_datasets(request)
+    if my is not None and not my.get("ok"):
+        # Signed in, but ETL cannot place this person in an app. Falling back to
+        # the DS_ variables here is how the page came to announce
+        # 'Flow "flow_output"' — a dataset deleted weeks earlier — above an
+        # empty grid, which is a far worse answer than admitting there is none.
+        # The stamp has to describe the data actually on screen or say nothing.
+        return {"datasets": {}, "roles": {},
+                "unavailable": (my.get("reason") or "no catalog is set up for your account")}
     if my and my.get("ok"):
         sets = my.get("datasets") or DATASETS
         prof = ""

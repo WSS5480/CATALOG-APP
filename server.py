@@ -569,11 +569,68 @@ async def admin_save_user_rows(request: Request):
                           await request.json(), request=request)
 
 
+# Guidance for whoever runs a catalog, added to the page as it is served rather
+# than edited into it -- the same trick as the Admin button, and for the same
+# reason: admin.html never has to change, and deleting this block removes it
+# completely. Everything here is something an OWNER can act on; locking the
+# services themselves down lives in ETL Space, where the switches are.
+#
+# ASCII only in this literal, with HTML entities for the typography. A bytes
+# string cannot hold anything else, and the page is served as bytes.
+ADMIN_GUIDE = b"""
+<style>
+#cat-guide{max-width:860px;margin:26px auto;padding:16px 18px;border:1px solid #dde3ee;
+  border-left:4px solid #0C447C;border-radius:0 12px 12px 0;background:#f7f9fc;
+  font:14px/1.6 'Segoe UI',system-ui,-apple-system,Arial,sans-serif;color:#1b2130}
+#cat-guide h3{margin:0 0 4px;font-size:1rem}
+#cat-guide p{margin:0 0 10px;color:#68748c;font-size:.88rem}
+#cat-guide ol{margin:0 0 4px 20px}
+#cat-guide li{padding:3px 0;font-size:.9rem}
+#cat-guide b{color:#0C447C}
+#cat-guide code{background:#eef2f8;border:1px solid #dde3ee;border-radius:5px;padding:1px 5px}
+#cat-guide .note{margin-top:10px;padding:9px 11px;background:#fff8ec;border-left:3px solid #b76b00;
+  border-radius:0 8px 8px 0;font-size:.85rem;color:#7a4a00}
+@media print{#cat-guide{display:none}}
+</style>
+<div id="cat-guide">
+  <h3>Locking this down before real stores use it</h3>
+  <p>In order. Each one is something you can do from this page.</p>
+  <ol>
+    <li><b>Send people their own link, not this address.</b> Each customer has a sign-in
+      link ending <code>/a/&hellip;</code>. It is what makes an email and password belong to
+      that customer and to nobody else &mdash; the same address at another customer is a
+      different person entirely.</li>
+    <li><b>Give every person a password.</b> Anyone showing <i>never set</i> cannot sign in.
+      Set one and tell them what it is; it is stored as a one-way hash, so nobody &mdash;
+      including you &mdash; can read it back.</li>
+    <li><b>Leave &quot;must change&quot; ticked.</b> They choose their own on first sign-in,
+      and the one you told them stops working.</li>
+    <li><b>Force reset the moment somebody leaves.</b> It takes their password away at once.
+      Removing them from the location list does the same thing and is better, because there
+      is then no account left to forget about.</li>
+    <li><b>Check what a person gets before you trust it.</b> Use <i>Check a person</i> in
+      ETL Space rather than signing in as them.</li>
+  </ol>
+  <div class="note"><b>These are not the only locks.</b> The service-level ones &mdash; a
+    password on ETL Space itself, admin endpoints requiring a real session, and the connector
+    token &mdash; live in ETL Space under <b>Apps &rarr; Before real stores use this</b>, which
+    checks them against the running system and tells you which are still open.</div>
+</div>
+"""
+
+
+def _with_admin_guide(body: bytes) -> bytes:
+    if b'id="cat-guide"' in body:
+        return body
+    cut = body.lower().rfind(b"</body>")
+    return body + ADMIN_GUIDE if cut == -1 else body[:cut] + ADMIN_GUIDE + body[cut:]
+
+
 @app.get("/admin")
 async def admin_page():
     try:
         with open("static/admin.html", "rb") as fh:
-            return Response(fh.read(), media_type="text/html",
+            return Response(_with_admin_guide(fh.read()), media_type="text/html",
                             headers={"Cache-Control": "no-cache"})
     except FileNotFoundError:
         return Response("<h1>Admin page missing</h1><p>Upload <code>admin.html</code> "

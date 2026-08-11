@@ -708,14 +708,13 @@ async def login_page():
 # into it. index.html is a large ported page and every hand-edit to it is a
 # chance to lose something; injecting the link here means the catalog file never
 # has to change, and removing this block removes the button completely.
-ADMIN_LAUNCHER = b"""
-<style>
-#cat-admin-link{position:fixed;right:16px;bottom:16px;z-index:2147483000;display:none;
-  background:#0C447C;color:#fff;border-radius:999px;padding:11px 17px;font:700 14px 'Segoe UI',
-  system-ui,-apple-system,Arial,sans-serif;text-decoration:none;box-shadow:0 3px 14px rgba(12,32,68,.3)}
-#cat-admin-link:hover{background:#0a3560}
-@media print{#cat-admin-link{display:none !important}}
-
+# Pinning Sign out is for everybody. The Admin button is not, so it is a
+# separate block and the server chooses whether to send it at all.
+#
+# ASCII only in these literals -- they are bytes, spliced into the page as it is
+# served. HTML entities carry anything else.
+SIGNOUT_BLOCK = b"""
+<style id="cat-signout-css">
 /* On a tablet the sign-out button sits in the top bar where a thumb reaches it
    by accident. Pinned bottom-left it is still one tap, but on the opposite
    corner from Admin and away from everything else. Desktop is left alone. */
@@ -732,23 +731,8 @@ ADMIN_LAUNCHER = b"""
 }
 @media print{.cat-signout-pinned{display:none !important}}
 </style>
-<a id="cat-admin-link" href="/admin">&#9881; Admin</a>
 <script>
-// Shown only to someone ETL Space says owns a catalog, or to an administrator.
-// The button appearing is a convenience, not a permission: every admin route
-// re-checks who is asking, so revealing it to the wrong person would give them
-// a page full of refusals rather than a page full of other people's stores.
 (function(){
-  fetch('/api/auth/me', {credentials:'same-origin'})
-    .then(function(r){ return r.ok ? r.json() : null; })
-    .then(function(d){
-      var s = d && d.scope;
-      if (s && (s.all === true || s.role === 'owner')) {
-        var el = document.getElementById('cat-admin-link');
-        if (el) el.style.display = 'inline-block';
-      }
-    }).catch(function(){});
-
   // Find the sign-out control by its words rather than by an id, so this keeps
   // working whatever the catalog page is rebuilt to look like. The header is
   // drawn after sign-in resolves, so this watches for it rather than assuming
@@ -778,18 +762,54 @@ ADMIN_LAUNCHER = b"""
 </script>
 """
 
+# No script, no fetch, no display:none. The button used to hide itself and then
+# ask the browser whether it was allowed to appear, so any hiccup in that one
+# request left an administrator on a page with no way into Admin and nothing
+# saying why. The server knows who it is serving before it sends a byte, so it
+# decides: this markup reaches nobody who is not entitled to it. A failure now
+# costs a missing shortcut instead of looking like a permissions problem.
+ADMIN_BUTTON = b"""
+<style>
+#cat-admin-link{position:fixed;right:16px;bottom:16px;z-index:2147483000;display:inline-block;
+  background:#0C447C;color:#fff;border-radius:999px;padding:11px 17px;font:700 14px 'Segoe UI',
+  system-ui,-apple-system,Arial,sans-serif;text-decoration:none;box-shadow:0 3px 14px rgba(12,32,68,.3)}
+#cat-admin-link:hover{background:#0a3560}
+@media print{#cat-admin-link{display:none !important}}
+</style>
+<a id="cat-admin-link" href="/admin">&#9881; Admin</a>
+"""
 
-def _with_admin_launcher(body: bytes) -> bytes:
-    if b'id="cat-admin-link"' in body:
+
+async def _may_administer(request) -> bool:
+    """Does the person being served this page administer anything?
+
+    Asked of ETL Space server-to-server, because it is the only thing that
+    knows. Anything short of a clear yes is a no -- every admin route re-checks
+    its caller anyway, so being wrong here costs a shortcut, never access.
+    """
+    if request is None or not request.cookies.get(SESSION_COOKIE) or not ETL_BASE:
+        return False
+    try:
+        me = await etl_get("/api/access/me", request=request)
+    except Exception:
+        return False
+    sc = (me or {}).get("scope") or {}
+    return sc.get("all") is True or str(sc.get("role") or "") in ("owner", "admin")
+
+
+def _with_admin_launcher(body: bytes, may_administer: bool = False) -> bytes:
+    """Pin Sign out for everybody; add the Admin button only where it belongs."""
+    if b'id="cat-signout-css"' in body:
         return body
+    block = SIGNOUT_BLOCK + (ADMIN_BUTTON if may_administer else b"")
     cut = body.lower().rfind(b"</body>")
     if cut == -1:
-        return body + ADMIN_LAUNCHER
-    return body[:cut] + ADMIN_LAUNCHER + body[cut:]
+        return body + block
+    return body[:cut] + block + body[cut:]
 
 
 @app.get("/")
-async def home():
+async def home(request: Request):
     page = _page_file()
     if not page:
         return Response(
@@ -799,13 +819,13 @@ async def home():
             status_code=404, media_type="text/html")
     with open(page, "rb") as fh:
         body = fh.read()
-    return Response(_with_admin_launcher(body), media_type="text/html",
-                    headers={"Cache-Control": "no-cache"})
+    return Response(_with_admin_launcher(body, await _may_administer(request)),
+                    media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/index.html")
-async def home_alias():
-    return await home()
+async def home_alias(request: Request):
+    return await home(request)
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

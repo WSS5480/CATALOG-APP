@@ -2259,9 +2259,17 @@ body.qc-open #orderFormModalBox .qc-vf{display:none !important;}
         tbl.style.removeProperty('width');
         tbl.style.removeProperty('min-width');
       }
-      w=Math.min(Math.round(window.innerWidth*0.96), Math.max(620, need+56))+'px';
+      var cap=Math.round(window.innerWidth*0.96);
+      w=Math.min(cap, Math.max(620, need+56))+'px';
       var cur=parseInt(mo.style.getPropertyValue('width'),10);
-      if(cur && Math.abs(cur-parseInt(w,10))<=8) return;   // settled — leave it be
+      if(cur && cur<=cap){
+        if(Math.abs(cur-parseInt(w,10))<=8) return;   // settled — leave it be
+        // While the cart redraws (a quantity click, a comment), its steppers
+        // and inputs vanish for a beat and the table measures narrower — and
+        // shrinking on that reading made the drawer jump thinner and back on
+        // every tap. Open, it only grows; it re-fits fresh on the next open.
+        if(parseInt(w,10)<cur) return;
+      }
     }
     mo.style.setProperty('--qcW', w);
     mo.style.setProperty('width', w, 'important');
@@ -2279,6 +2287,14 @@ body.qc-open #orderFormModalBox .qc-vf{display:none !important;}
     document.body.classList.toggle('qc-need-setup',!!need);
   }
   setInterval(sync,600); sync();
+  // Size the drawer the instant it opens rather than on the next tick —
+  // without this it appeared at the cart script's 600px for half a second
+  // and then jumped to its fitted width.
+  if(window.MutationObserver){
+    new MutationObserver(function(){
+      if(document.body.classList.contains('qc-open'))autoWidth();
+    }).observe(document.body,{attributes:true,attributeFilter:['class']});
+  }
   document.addEventListener('keydown',function(e){
     if(e.key==='Escape'&&document.body.classList.contains('qc-open'))qcExit(true);
   });

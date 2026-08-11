@@ -2011,7 +2011,16 @@ body.qc-open #orderFormModal .btn-danger{border-radius:8px!important;padding:3px
  function _qcLeave(){ toast.classList.remove('on'); }
  fab.onclick=_qcToggle; fab.addEventListener('mouseenter',_qcHover); fab.addEventListener('mouseleave',_qcLeave);
  back.onclick=closeD; closeBtn.onclick=closeD;
- setInterval(function(){ try{ var c=JSON.parse(localStorage.getItem('ddx_order_form_cart')||'[]'); var el=$('qcCt'); if(el)el.textContent=c.length; var sub=document.querySelector('#orderFormModal .btn-submit'); if(sub){ sub.disabled=(c.length===0); } if(window._qcPending){ var dd=$('district'),ss=$('store'),nn=$('submittedBy'); if(dd&&dd.value&&ss&&ss.value&&nn&&nn.value){ var pp=window._qcPending; window._qcPending=null; window.catalogOrder(pp); } } var cv=$('catalogView'); var show=cv&&cv.style.display!=='none'; fab.style.display=show?'block':'none'; if(!show)closeD(); }catch(e){} },700);
+ setInterval(function(){ try{ var c=JSON.parse(localStorage.getItem('ddx_order_form_cart')||'[]'); var el=$('qcCt'); if(el)el.textContent=c.length; var sub=document.querySelector('#orderFormModal .btn-submit'); if(sub){ sub.disabled=(c.length===0); } if(window._qcPending){ var dd=$('district'),ss=$('store'),nn=$('submittedBy'); if(dd&&dd.value&&ss&&ss.value&&nn&&nn.value){
+   /* Wait for the whole name, not the first letter. It fires when the name
+      box loses focus (they tapped away — done), or when the value has sat
+      unchanged for ~2 seconds. Firing on "any value" added the item the
+      instant the first key was pressed, with a one-letter name saved. */
+   var typing=(document.activeElement===nn);
+   if(nn.value===window._qcNmLast){ window._qcNmTicks=(window._qcNmTicks||0)+1; }
+   else { window._qcNmTicks=0; window._qcNmLast=nn.value; }
+   if(!typing || window._qcNmTicks>=3){ window._qcNmTicks=0; window._qcNmLast=null;
+     var pp=window._qcPending; window._qcPending=null; window.catalogOrder(pp); } } } var cv=$('catalogView'); var show=cv&&cv.style.display!=='none'; fab.style.display=show?'block':'none'; if(!show)closeD(); }catch(e){} },700);
  var toast=document.createElement('div');toast.className='qc-toast';document.body.appendChild(toast);
  var _sayT=null; function say(m,bg,fg,hold){ toast.style.background=bg||'#12925f'; toast.style.color=fg||'#fff'; toast.textContent=m; toast.classList.add('on'); if(_sayT){clearTimeout(_sayT);_sayT=null;} if(!hold){_sayT=setTimeout(function(){toast.classList.remove('on');},2400);} }
  try{ window.alert=function(m){ say(String(m).slice(0,150),'#e53935','#fff'); }; }catch(eAl){}
@@ -2283,7 +2292,11 @@ body.qc-open #orderFormModalBox .qc-vf{display:none !important;}
     var t=$('qcBarTitle');
     if(t)t.textContent=n?('Cart · '+n+' item'+(n===1?'':'s')):'Cart is empty';
     var d=$('district'),s=$('store'),sb=$('submittedBy');
-    var need=(d&&!d.value)||(s&&!s.value)||(sb&&!sb.value);
+    // Keep the setup fields on screen while an item is still waiting to add
+    // itself. Hiding them the instant every box had a value yanked the name
+    // input off the page after its FIRST letter — which blurred it, which
+    // told the cart script the name was finished.
+    var need=(d&&!d.value)||(s&&!s.value)||(sb&&!sb.value)||!!window._qcPending;
     document.body.classList.toggle('qc-need-setup',!!need);
   }
   setInterval(sync,600); sync();

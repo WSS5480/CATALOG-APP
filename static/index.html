@@ -2246,8 +2246,22 @@ body.qc-open #orderFormModalBox .qc-vf{display:none !important;}
     else if(window.matchMedia('(max-width: 820px)').matches){ w='min(560px,96vw)'; }
     else{
       var tbl=$('cartBody')?$('cartBody').closest('table'):null;
-      var need=tbl?tbl.scrollWidth:0;
+      var need=0;
+      if(tbl){
+        // Measure the table's NATURAL width with the stretch-to-fit rule
+        // switched off for the moment of measurement. Measuring it stretched
+        // read back whatever width the drawer already had plus the margin,
+        // which widened the drawer a little more on every pass — it crept
+        // open a few pixels a second until it covered the page.
+        tbl.style.setProperty('width','max-content','important');
+        tbl.style.setProperty('min-width','0','important');
+        need=tbl.offsetWidth;
+        tbl.style.removeProperty('width');
+        tbl.style.removeProperty('min-width');
+      }
       w=Math.min(Math.round(window.innerWidth*0.96), Math.max(620, need+56))+'px';
+      var cur=parseInt(mo.style.getPropertyValue('width'),10);
+      if(cur && Math.abs(cur-parseInt(w,10))<=8) return;   // settled — leave it be
     }
     mo.style.setProperty('--qcW', w);
     mo.style.setProperty('width', w, 'important');

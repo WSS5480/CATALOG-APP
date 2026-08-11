@@ -344,6 +344,40 @@ async def query(ident: str, request: Request):
                                                            "dataset": ds})
 
 
+def _self_base(request) -> str:
+    """This deployment's own https address, as the browser sees it.
+
+    Read from the forwarded headers because behind Render's proxy the raw
+    scheme says http, and an http image URL on an https page is blocked as
+    mixed content — invisibly, which is the worst way to be wrong.
+    """
+    scheme = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    host = request.headers.get("host") or request.url.netloc
+    return f"{scheme}://{host}"
+
+
+def _absolutize_images(data, base: str):
+    """Turn /api/images/... into a full URL on this catalog's own domain.
+
+    The flow writes image paths relative on purpose — the data never hard-codes
+    a hostname, so it survives a domain change. But the catalog page refuses an
+    image URL that does not start with http: 727 freshly hosted photos read as
+    "no photo" and the page hid all but the broken ones. This server knows its
+    own address, so the rewrite belongs here — the data stays portable and the
+    page gets the absolute URLs it insists on.
+    """
+    if isinstance(data, list):
+        for item in data:
+            _absolutize_images(item, base)
+    elif isinstance(data, dict):
+        for k, v in data.items():
+            if isinstance(v, str) and v.startswith("/api/images/"):
+                data[k] = base + v
+            elif isinstance(v, (list, dict)):
+                _absolutize_images(v, base)
+    return data
+
+
 @app.get("/api/app/rows/{ident}")
 async def rows(ident: str, request: Request):
     """Rows for the signed-in person.
@@ -365,16 +399,16 @@ async def rows(ident: str, request: Request):
                                 or "No catalog is set up for your account yet.")
         ds = await _resolve_dataset(ident, request)
         params["dataset"] = ds
-        return await etl_get(f"/api/app/rows/{ds}", params, request=request)
+        return _absolutize_images(await etl_get(f"/api/app/rows/{ds}", params, request=request), _self_base(request))
     prof = (asked or CATALOG_PROFILE or "").strip()
     if prof:
         # no session at all — fall back to the catalog's own mapping
         params["profile"] = prof
         params.pop("dataset", None)
-        return await etl_get(f"/api/app/rows/{ident}", params, request=request)
+        return _absolutize_images(await etl_get(f"/api/app/rows/{ident}", params, request=request), _self_base(request))
     ds = await _resolve_dataset(ident, request)
     params["dataset"] = ds
-    return await etl_get(f"/api/app/rows/{ds}", params, request=request)
+    return _absolutize_images(await etl_get(f"/api/app/rows/{ds}", params, request=request), _self_base(request))
 
 
 @app.get("/api/app/freshness")

@@ -416,6 +416,32 @@ async def freshness(request: Request, catalog: str = "", profile: str = ""):
             "roles": {role: by_ds.get(name) for role, name in sets.items() if name}}
 
 
+# The cached product photos live on ETL Space, but the catalog page asks for
+# them as /api/images/... on THIS domain — the flow writes relative paths, and
+# relative is right: it means the data never hard-codes a hostname. So this
+# route passes an image request through to ETL with the connector's own
+# credentials, and tells the browser to keep the file for a day — the filename
+# is a hash of the content, so a changed image is a new name, never a stale hit.
+_IMG_NAME = None
+
+@app.get("/api/images/{name}")
+async def image_passthrough(name: str):
+    global _IMG_NAME
+    import re
+    if _IMG_NAME is None:
+        _IMG_NAME = re.compile(r"^[0-9a-f]{8,64}\.(?:jpg|jpeg|png|webp)$")
+    if not _IMG_NAME.match(name):
+        raise HTTPException(404, "No such image.")
+    _require_config()
+    async with httpx.AsyncClient(timeout=60) as c:
+        r = await c.get(f"{ETL_BASE}/api/images/{name}", **_etl_auth())
+    if r.status_code >= 400:
+        raise HTTPException(404, "No such image.")
+    return Response(r.content,
+                    media_type=r.headers.get("content-type", "image/jpeg"),
+                    headers={"Cache-Control": "public, max-age=86400, immutable"})
+
+
 @app.get("/api/app/collections/{coll}/documents/")
 async def orders_list(coll: str):
     return await etl_get(f"/api/app/collections/{coll}/documents/")

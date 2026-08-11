@@ -372,13 +372,15 @@ async def freshness(request: Request, catalog: str = "", profile: str = ""):
     sets = DATASETS
     my = await _my_datasets(request)
     if my is not None and not my.get("ok"):
-        # Signed in, but ETL cannot place this person in an app. Falling back to
-        # the DS_ variables here is how the page came to announce
-        # 'Flow "flow_output"' — a dataset deleted weeks earlier — above an
-        # empty grid, which is a far worse answer than admitting there is none.
-        # The stamp has to describe the data actually on screen or say nothing.
-        return {"datasets": {}, "roles": {},
-                "unavailable": (my.get("reason") or "no catalog is set up for your account")}
+        # Signed in, but ETL cannot place this person in an app.
+        #
+        # Deliberately NOT "unavailable": the catalog page reads that key as
+        # "this ETL Space predates the freshness endpoint" and prints "ETL Space
+        # is running an older build" — which is a confident, specific and
+        # completely wrong diagnosis of an account that simply has no app yet.
+        # A wrong explanation costs more than no explanation, so the stamp says
+        # nothing and the real reason travels on its own key.
+        return {"datasets": {}, "roles": {}, "reason": (my.get("reason") or "")}
     if my and my.get("ok"):
         sets = my.get("datasets") or DATASETS
         prof = ""

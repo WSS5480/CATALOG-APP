@@ -1,3 +1,15 @@
+# =============================================================================
+#  CATALOG APP   --   repo WSS5480/CATALOG-APP   --   file  server.py
+#  Upload to:  https://github.com/WSS5480/CATALOG-APP/upload/main
+#
+#  This file belongs to the CATALOG APP and to nothing else. It is NOT part of
+#  ETL Space. It holds no data, no database and no ETL code: it reaches ETL
+#  Space over HTTP using ETL_BASE_URL and ETL_API_TOKEN, and forwards the
+#  signed-in person's session for ETL to verify for itself.
+#
+#  Both repos contain a file called index.html. Check the folder in the link
+#  above before uploading, not just the filename.
+# =============================================================================
 """Catalog / Order Form app — a standalone service.
 
 It holds no data of its own. It connects to an ETL Space instance over HTTP
@@ -233,7 +245,8 @@ async def healthz():
     silently override every signed-in person's own datasets, and nothing on this
     page said so.
     """
-    return {"ok": True, "etl_configured": bool(ETL_BASE), "application": APPLICATION,
+    return {"ok": True, "service": "catalog-app",
+            "etl_configured": bool(ETL_BASE), "application": APPLICATION,
             "catalog": DATASETS["catalog"],
             "catalog_profile_set": bool(CATALOG_PROFILE),
             "catalog_profile": CATALOG_PROFILE or "",

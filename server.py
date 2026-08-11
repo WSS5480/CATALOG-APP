@@ -843,10 +843,12 @@ SIGNOUT_BLOCK = b"""
 # costs a missing shortcut instead of looking like a permissions problem.
 ADMIN_BUTTON = b"""
 <style>
+/* The catalog's own orange, not ETL's navy -- this button lives on the
+   store's page and should dress like it. Navy here read as a stranger. */
 #cat-admin-link{position:fixed;right:16px;bottom:16px;z-index:2147483000;display:inline-block;
-  background:#0C447C;color:#fff;border-radius:999px;padding:11px 17px;font:700 14px 'Segoe UI',
-  system-ui,-apple-system,Arial,sans-serif;text-decoration:none;box-shadow:0 3px 14px rgba(12,32,68,.3)}
-#cat-admin-link:hover{background:#0a3560}
+  background:#f26a2a;color:#fff;border-radius:999px;padding:11px 17px;font:700 14px 'Segoe UI',
+  system-ui,-apple-system,Arial,sans-serif;text-decoration:none;box-shadow:0 3px 14px rgba(140,50,0,.35)}
+#cat-admin-link:hover{background:#d95a1f}
 @media print{#cat-admin-link{display:none !important}}
 </style>
 <a id="cat-admin-link" href="/admin">&#9881; Admin</a>

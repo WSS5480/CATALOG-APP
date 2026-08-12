@@ -734,6 +734,7 @@ app.add_middleware(RequireSignIn)
 
 @app.get("/a/{slug}")
 async def app_link(slug: str, request: Request):
+    await _report_base(request)
     """One customer's way in.
 
     Everything this does is remember which app you came for and send you on to
@@ -938,8 +939,33 @@ def _with_admin_launcher(body: bytes, may_administer: bool = False) -> bytes:
     return body[:cut] + block + body[cut:]
 
 
+# Tell ETL Space this app's public address, once, so sign-in links and invites
+# build themselves — nobody should type a URL the system already knows. Fire
+# and forget: a failure costs nothing and the next page view tries again.
+_BASE_REPORT = {"value": "", "at": 0.0}
+
+
+async def _report_base(request):
+    try:
+        base = _self_base(request)
+    except Exception:
+        return
+    if not base or not ETL_BASE:
+        return
+    import time as _t
+    now = _t.time()
+    if _BASE_REPORT["value"] == base and now - _BASE_REPORT["at"] < 3600:
+        return
+    _BASE_REPORT.update(value=base, at=now)
+    try:
+        await etl_send("POST", "/api/access/catalog-base", {"base": base}, request=request)
+    except Exception:
+        pass
+
+
 @app.get("/")
 async def home(request: Request):
+    await _report_base(request)
     sc = await _me_scope(request)
     # A vendor rep signs in through the same link as everyone else but their
     # page is the editor, not the store catalog. Server-decided, like the

@@ -124,7 +124,7 @@ APP_COOKIE = "catalog_app"
 # the sign-in screen, so a bookmarked deep link asks who you are first.
 # "/a/" is how a customer arrives, so it has to be reachable signed out.
 PUBLIC_PATHS = ("/login", "/login.html", "/api/auth/", "/healthz", "/favicon.ico",
-                "/app.css", "/static/", "/a/")
+                "/app.css", "/static/", "/a/", "/welcome")
 REQUIRE_SIGNIN = os.environ.get("REQUIRE_SIGNIN", "1").strip().lower() in ("1", "true", "yes", "on")
 
 
@@ -986,6 +986,89 @@ async def vendor_page(request: Request):
                         status_code=500, media_type="text/html")
     return Response(body, media_type="text/html",
                     headers={"Cache-Control": "no-cache"})
+
+
+# ---------------------------------------------------------------- invites
+#
+# /welcome is where an invite link lands: the person chooses their own
+# password, once, and is sent to their app's sign-in. The page is served
+# signed-out by design — the link IS the credential, verified by ETL, and it
+# dies the moment it is used. ASCII only in this literal (it is bytes).
+
+WELCOME_PAGE = b"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Welcome &#8212; set your password</title>
+<style>
+body{margin:0;background:#f5f6fa;font:15px 'Segoe UI',system-ui,-apple-system,Arial,sans-serif;
+  color:#1b2130;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px;
+  box-sizing:border-box}
+.card{background:#fff;border-radius:16px;box-shadow:0 6px 28px rgba(15,25,55,.12);
+  padding:26px 24px;width:min(420px,94vw);box-sizing:border-box}
+h1{font-size:18px;margin:0 0 6px;color:#16213f}
+p{font-size:13.5px;color:#5a6273;line-height:1.55;margin:0 0 16px}
+label{display:block;font-size:11px;font-weight:800;color:#5a6273;text-transform:uppercase;
+  letter-spacing:.04em;margin:12px 0 4px}
+input{width:100%;box-sizing:border-box;border:1px solid #e3e7f0;border-radius:10px;
+  padding:11px 13px;font-size:16px}
+button{width:100%;margin-top:18px;border:0;border-radius:999px;background:#e0592a;color:#fff;
+  font-weight:800;font-size:15px;padding:13px;cursor:pointer;font-family:inherit}
+button:disabled{opacity:.5}
+#msg{margin-top:12px;font-size:13px;font-weight:700;display:none;border-radius:10px;padding:10px 12px}
+#msg.bad{display:block;background:#fde5e5;color:#8f1d1d}
+#msg.good{display:block;background:#dcefe4;color:#0d5b3c}
+</style></head><body>
+<div class="card">
+  <h1>Welcome</h1>
+  <p>You have been invited to the catalog. Choose a password &#8212; it belongs to you
+     and nobody can look it up, so keep it somewhere safe.</p>
+  <label>New password</label><input type="password" id="p1" autocomplete="new-password">
+  <label>Type it again</label><input type="password" id="p2" autocomplete="new-password">
+  <button id="go" type="button">Set my password</button>
+  <div id="msg"></div>
+</div>
+<script>
+(function(){
+  var tok=new URLSearchParams(location.search).get('i')||'';
+  var msg=document.getElementById('msg'), go=document.getElementById('go');
+  function say(t,good){msg.textContent=t;msg.className=good?'good':'bad';}
+  if(!tok){say('This link is missing its invite code. Ask for a new invite.');go.disabled=true;}
+  go.onclick=function(){
+    var a=document.getElementById('p1').value, b=document.getElementById('p2').value;
+    if(a.length<8)return say('Choose a password of at least 8 characters.');
+    if(a!==b)return say('Those two do not match.');
+    go.disabled=true; go.textContent='Setting...';
+    fetch('/api/auth/accept-invite',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token:tok,password:a})})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+      .then(function(res){
+        if(res.ok&&res.j.ok){
+          say('Done. Taking you to sign in...',true);
+          setTimeout(function(){location.href='/a/'+(res.j.app||'');},900);
+        }else{
+          say(res.j.detail||res.j.message||'That did not work. Ask for a new invite.');
+          go.disabled=false; go.textContent='Set my password';
+        }
+      })
+      .catch(function(){say('Could not reach the server. Try again.');
+        go.disabled=false; go.textContent='Set my password';});
+  };
+})();
+</script></body></html>"""
+
+
+@app.get("/welcome")
+async def welcome_page():
+    return Response(WELCOME_PAGE, media_type="text/html",
+                    headers={"Cache-Control": "no-cache"})
+
+
+@app.post("/api/auth/accept-invite")
+async def auth_accept_invite(request: Request):
+    body = await request.json()
+    return await etl_send("POST", "/api/access/invites/accept",
+                          {"token": body.get("token", ""),
+                           "password": body.get("password", "")})
 
 
 @app.get("/api/vendor/edits")

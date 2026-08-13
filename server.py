@@ -124,7 +124,9 @@ APP_COOKIE = "catalog_app"
 # the sign-in screen, so a bookmarked deep link asks who you are first.
 # "/a/" is how a customer arrives, so it has to be reachable signed out.
 PUBLIC_PATHS = ("/login", "/login.html", "/api/auth/", "/healthz", "/favicon.ico",
-                "/app.css", "/static/", "/a/", "/welcome")
+                "/app.css", "/static/", "/a/", "/welcome",
+                "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png",
+                "/favicon.png", "/manifest.webmanifest")
 REQUIRE_SIGNIN = os.environ.get("REQUIRE_SIGNIN", "1").strip().lower() in ("1", "true", "yes", "on")
 
 

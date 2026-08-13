@@ -958,7 +958,8 @@ async def _report_base(request):
         return
     _BASE_REPORT.update(value=base, at=now)
     try:
-        await etl_send("POST", "/api/access/catalog-base", {"base": base}, request=request)
+        await etl_send("POST", "/api/access/catalog-base",
+                       {"base": base, "application": APPLICATION}, request=request)
     except Exception:
         pass
 

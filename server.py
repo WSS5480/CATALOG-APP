@@ -707,6 +707,152 @@ def _with_admin_guide(body: bytes) -> bytes:
 # the server dresses it on the way out: a script that rewrites raw snake_case
 # titles into human words wherever they show as text. Display only — the data
 # keys underneath are untouched, so editing and saving still use real names.
+
+# The Admin page predates the Users panel, so the panel is added at the door:
+# Locations goes away, People becomes Users, and the same grant rows that the
+# ETL Apps tab draws appear here — both fed by the one engine in ETL Space.
+USERS_PANEL = """
+<style id="cat-users-css">
+#ial-users{padding:14px 2px}
+#ial-users table{width:100%;border-collapse:collapse;font-size:13px;min-width:620px}
+#ial-users th{text-align:left;padding:6px 8px;color:#5a6273;font-weight:700;font-size:12px}
+#ial-users td{padding:6px 8px;border-top:1px solid #e6e8ee;vertical-align:top}
+#ial-users select{max-width:170px;font-size:13px;padding:4px}
+#ial-users .ial-bar{display:flex;gap:14px;flex-wrap:wrap;align-items:end;margin-bottom:12px}
+#ial-users .ial-f{display:flex;flex-direction:column;gap:3px;font-size:12px;color:#5a6273}
+#ial-users button{padding:6px 12px;border:1px solid #d1d5db;border-radius:7px;background:#fff;cursor:pointer;font-size:13px}
+#ial-users .ial-add{background:#16294f;color:#fff;border-color:#16294f;font-weight:600}
+#ial-users .ial-wrap{overflow-x:auto}
+</style>
+<script id="cat-users-panel">
+(function(){
+  function human(s){return String(s||'').split('_').filter(Boolean)
+    .map(function(w){return w.toLowerCase()==='id'?'ID':w.charAt(0).toUpperCase()+w.slice(1);}).join(' ');}
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  var D=null, VALS={};
+  function opts(list,cur,blank){
+    return '<option value="">'+esc(blank)+'</option>'+(list||[]).map(function(v){
+      return '<option value="'+esc(v)+'"'+(String(v)===String(cur||'')?' selected':'')+'>'+esc(v)+'</option>';}).join('');
+  }
+  function vals(ds,col){
+    var k=ds+'|'+col;
+    if(VALS[k])return Promise.resolve(VALS[k]);
+    if(!ds||!col)return Promise.resolve([]);
+    return fetch('/api/admin/app-values?dataset='+encodeURIComponent(ds)+'&column='+encodeURIComponent(col),
+      {credentials:'same-origin'}).then(function(r){return r.ok?r.json():{values:[]};})
+      .then(function(j){VALS[k]=j.values||[];return VALS[k];}).catch(function(){return [];});
+  }
+  function save(){
+    return fetch('/api/admin/app-users',{method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({groups:D.groups,grants:D.grants})}).then(function(){return load();});
+  }
+  window.ialSetGroup=function(k,v){D.groups[k]=v; VALS={}; save();};
+  window.ialAdd=function(){D.grants.push({group1:'',group2:'',user:'',column:'',values:[]}); draw();};
+  window.ialSet=function(i,f,el){
+    if(f==='values'){D.grants[i].values=Array.prototype.map.call(el.selectedOptions,function(o){return o.value;});}
+    else {D.grants[i][f]=el.value; if(f==='column')D.grants[i].values=[];}
+    save();
+  };
+  window.ialDrop=function(i){D.grants.splice(i,1); save();};
+  function draw(){
+    var host=document.getElementById('ial-users'); if(!host||!D)return;
+    var h='<div class="ial-bar">'
+      +'<label class="ial-f">Group 1 column<select onchange="ialSetGroup(\'g1\',this.value)">'
+      +opts((D.user_columns||[]).map(human),null,'— choose —').replace(/value="([^"]*)"/g,function(m,p){
+         var raw=(D.user_columns||[]).find(function(c){return human(c)===p;})||''; return 'value="'+raw+'"';})
+      +'</select></label>'
+      +'<label class="ial-f">Group 2 column<select onchange="ialSetGroup(\'g2\',this.value)">'
+      +opts((D.user_columns||[]).map(human),null,'— choose —').replace(/value="([^"]*)"/g,function(m,p){
+         var raw=(D.user_columns||[]).find(function(c){return human(c)===p;})||''; return 'value="'+raw+'"';})
+      +'</select></label></div>';
+    // mark the chosen ones
+    h=h.replace('<select onchange="ialSetGroup(\'g1\',this.value)">','<select id="ialg1" onchange="ialSetGroup(\'g1\',this.value)">');
+    h=h.replace('<select onchange="ialSetGroup(\'g2\',this.value)">','<select id="ialg2" onchange="ialSetGroup(\'g2\',this.value)">');
+    h+='<div class="ial-wrap"><table><thead><tr><th>Group 1</th><th>Group 2</th><th>User</th>'
+      +'<th>Column</th><th>Rows</th><th></th></tr></thead><tbody id="ial-rows">'
+      +'<tr><td colspan="6">Loading…</td></tr></tbody></table></div>'
+      +'<div style="margin-top:10px"><button class="ial-add" onclick="ialAdd()">➕ New grant access</button> '
+      +'<span style="font-size:12px;color:#6b7280">Fill only as far as you need — naming a user '
+      +'overrules their group.</span></div>';
+    host.innerHTML=h;
+    var s1=document.getElementById('ialg1'), s2=document.getElementById('ialg2');
+    if(s1)s1.value=D.groups.g1||''; if(s2)s2.value=D.groups.g2||'';
+    Promise.all((D.grants||[]).map(function(g){return vals(D.catalog_dataset,g.column);}))
+      .then(function(rowVals){
+        var body=document.getElementById('ial-rows'); if(!body)return;
+        if(!(D.grants||[]).length){
+          body.innerHTML='<tr><td colspan="6" style="color:#6b7280">Nobody has access yet.</td></tr>';return;}
+        body.innerHTML=D.grants.map(function(g,i){
+          var chosen=g.values||[];
+          var pickVals=g.column
+            ? '<select multiple size="3" onchange="ialSet('+i+',\'values\',this)">'
+              +(rowVals[i]||[]).map(function(v){
+                 return '<option value="'+esc(v)+'"'+(chosen.indexOf(String(v))>=0?' selected':'')+'>'+esc(v)+'</option>';}).join('')
+              +'</select>' : '<span style="color:#6b7280">every row</span>';
+          return '<tr>'
+            +'<td><select onchange="ialSet('+i+',\'group1\',this)">'+opts(D.group1_values,g.group1,'— any —')+'</select></td>'
+            +'<td><select onchange="ialSet('+i+',\'group2\',this)">'+opts(D.group2_values,g.group2,'— any —')+'</select></td>'
+            +'<td><select onchange="ialSet('+i+',\'user\',this)">'+opts(D.people,g.user,'— any —')+'</select></td>'
+            +'<td><select onchange="ialSet('+i+',\'column\',this)">'+opts(D.catalog_columns,g.column,'— any —')+'</select></td>'
+            +'<td>'+pickVals+'</td>'
+            +'<td><button onclick="ialDrop('+i+')">✕</button></td></tr>';
+        }).join('');
+      });
+  }
+  function load(){
+    return fetch('/api/admin/app-users',{credentials:'same-origin'})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(j){ if(!j)return; D=j; D.groups=D.groups||{g1:'',g2:''}; D.grants=D.grants||[]; draw(); })
+      .catch(function(){});
+  }
+  function tabs(){
+    var btns=document.querySelectorAll('button,a,[role="tab"]');
+    var host=null;
+    for(var i=0;i<btns.length;i++){
+      var t=(btns[i].textContent||'').trim();
+      if(/^locations$/i.test(t))btns[i].style.display='none';
+      if(/^people\s*&\s*passwords$/i.test(t)||/^people$/i.test(t)){
+        btns[i].textContent='Users'; host=btns[i];
+      }
+    }
+    return host;
+  }
+  function mount(){
+    tabs();
+    if(document.getElementById('ial-users'))return;
+    // put the panel at the top of whatever section holds the people list
+    var anchor=null, all=document.querySelectorAll('h1,h2,h3');
+    for(var i=0;i<all.length;i++){
+      var t=(all[i].textContent||'').trim();
+      if(/people|passwords|users/i.test(t)){anchor=all[i];break;}
+    }
+    var box=document.createElement('div');
+    box.id='ial-users';
+    box.innerHTML='<h3 style="margin:0 0 8px;font-size:15px">Access grants</h3>'
+      +'<div style="color:#6b7280">Loading…</div>';
+    if(anchor&&anchor.parentNode)anchor.parentNode.insertBefore(box,anchor);
+    else document.body.appendChild(box);
+    load();
+  }
+  if(document.readyState!=='loading')mount(); else document.addEventListener('DOMContentLoaded',mount);
+  if(window.MutationObserver)new MutationObserver(function(){tabs();})
+    .observe(document.documentElement,{childList:true,subtree:true});
+})();
+</script>
+""".encode("utf-8")
+
+
+def _with_users_panel(body: bytes) -> bytes:
+    if b'id="cat-users-panel"' in body:
+        return body
+    cut = body.lower().rfind(b"</body>")
+    if cut == -1:
+        return body + USERS_PANEL
+    return body[:cut] + USERS_PANEL + body[cut:]
+
+
 HUMANIZE_SNIPPET = b"""
 <script id="cat-humanize">
 (function(){
@@ -758,7 +904,7 @@ def _with_humanizer(body: bytes) -> bytes:
 async def admin_page():
     try:
         with open("static/admin.html", "rb") as fh:
-            return Response(_with_humanizer(_with_admin_guide(fh.read())),
+            return Response(_with_users_panel(_with_humanizer(_with_admin_guide(fh.read()))),
                             media_type="text/html",
                             headers={"Cache-Control": "no-cache"})
     except FileNotFoundError:
@@ -1164,6 +1310,29 @@ async def vendor_edits_submit(request: Request):
     body = await request.json()
     return await etl_send("POST", "/api/access/vendor-edits", body, request=request)
 
+
+
+# ---------------- users & access, mirrored from ETL Space ----------------
+#
+# The Admin page here and the Apps tab in ETL Space are two windows on one
+# thing. Rather than a second implementation drifting away from the first,
+# both ask ETL the same question; this is only the pass-through.
+
+@app.get("/api/admin/app-users")
+async def admin_app_users(request: Request):
+    return await etl_get("/api/access/app-users", request=request)
+
+
+@app.post("/api/admin/app-users")
+async def admin_save_app_users(request: Request):
+    body = await request.json()
+    return await etl_send("POST", "/api/access/app-users", body, request=request)
+
+
+@app.get("/api/admin/app-values")
+async def admin_app_values(dataset: str, column: str, request: Request):
+    return await etl_get("/api/access/app-values",
+                         {"dataset": dataset, "column": column}, request=request)
 
 
 # ---------------- brand icons, served from code -------------------------------

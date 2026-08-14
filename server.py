@@ -701,11 +701,65 @@ def _with_admin_guide(body: bytes) -> bytes:
     return body + ADMIN_GUIDE if cut == -1 else body[:cut] + ADMIN_GUIDE + body[cut:]
 
 
+
+# Column names reach the admin page exactly as the dataset spells them —
+# store_name, district_manager_email. The page file predates this concern, so
+# the server dresses it on the way out: a script that rewrites raw snake_case
+# titles into human words wherever they show as text. Display only — the data
+# keys underneath are untouched, so editing and saving still use real names.
+HUMANIZE_SNIPPET = b"""
+<script id="cat-humanize">
+(function(){
+  var SPECIAL={id:'ID',url:'URL',sku:'SKU',upc:'UPC',qty:'Qty',ai:'AI'};
+  function human(s){
+    return s.split('_').filter(Boolean).map(function(w){
+      var lw=w.toLowerCase();
+      return SPECIAL[lw]||lw.charAt(0).toUpperCase()+lw.slice(1);
+    }).join(' ');
+  }
+  var RAW=/^[a-z][a-z0-9]*(_[a-z0-9]+)+$/;
+  var WORD=/^[a-z][a-z0-9]{2,}$/;
+  var busy=false;
+  function fix(){
+    if(busy)return; busy=true;
+    try{
+      document.querySelectorAll('th').forEach(function(el){
+        if(el.childElementCount)return;
+        var t=el.textContent.trim();
+        if(RAW.test(t)||WORD.test(t))el.textContent=human(t);
+      });
+      document.querySelectorAll('p,div,span,label,option').forEach(function(el){
+        if(el.childElementCount)return;
+        var t=el.textContent;
+        if(t.indexOf('_')<0)return;
+        el.textContent=t.replace(/\\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\\b/g,human);
+      });
+    }finally{setTimeout(function(){busy=false;},250);}
+  }
+  window.addEventListener('load',fix);
+  document.addEventListener('DOMContentLoaded',fix);
+  if(window.MutationObserver)new MutationObserver(function(){fix();})
+    .observe(document.documentElement,{childList:true,subtree:true});
+})();
+</script>
+"""
+
+
+def _with_humanizer(body: bytes) -> bytes:
+    if b'id="cat-humanize"' in body:
+        return body
+    cut = body.lower().rfind(b"</body>")
+    if cut == -1:
+        return body + HUMANIZE_SNIPPET
+    return body[:cut] + HUMANIZE_SNIPPET + body[cut:]
+
+
 @app.get("/admin")
 async def admin_page():
     try:
         with open("static/admin.html", "rb") as fh:
-            return Response(_with_admin_guide(fh.read()), media_type="text/html",
+            return Response(_with_humanizer(_with_admin_guide(fh.read())),
+                            media_type="text/html",
                             headers={"Cache-Control": "no-cache"})
     except FileNotFoundError:
         return Response("<h1>Admin page missing</h1><p>Upload <code>admin.html</code> "

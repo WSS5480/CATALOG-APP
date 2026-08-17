@@ -755,7 +755,8 @@ USERS_PANEL = """
   function save(){
     return fetch('/api/admin/app-users',{method:'POST',credentials:'same-origin',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({groups:D.groups,grants:D.grants})}).then(load);
+      body:JSON.stringify({groups:D.groups,grants:D.grants,
+        extra_people:D.extra_people||[],extra_locations:D.extra_locations||[]})}).then(load);
   }
   function draw(){
     var host=document.getElementById('ial-users'); if(!host||!D)return;
@@ -800,11 +801,83 @@ USERS_PANEL = """
           +'<td><button data-ial="drop" data-i="'+i+'">X</button></td></tr>';
       }).join('');
     });
+    drawExtras(host);
+  }
+  // Typed-in people and stores. Same rows the ETL screen edits — one store,
+  // two doors — so whichever is open, the other shows it on its next load.
+  function dl(id,list){
+    return '<datalist id="'+id+'">'+(list||[]).map(function(v){
+      return '<option value="'+esc(v)+'"></option>';}).join('')+'</datalist>';
+  }
+  function txt(k,i,v,ph,list){
+    return '<input data-ial="'+k+'" data-i="'+i+'" value="'+esc(v||'')+'" placeholder="'+esc(ph||'')+'"'
+      +(list?(' list="'+list+'"'):'')+' style="width:100%;min-width:110px;padding:4px;'
+      +'border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
+  }
+  function drawExtras(host){
+    var P=D.extra_people||[], L=D.extra_locations||[], FILE=D.locations||[];
+    var mine={}; L.forEach(function(l){mine[String(l.location||'').toLowerCase()]=1;});
+    var fileRows=FILE.filter(function(l){return !mine[String(l.location||'').toLowerCase()];});
+    var box=document.createElement('div');
+    box.innerHTML=
+      dl('ial-g1',D.group1_values)+dl('ial-g2',D.group2_values)
+      +'<h3 style="margin:22px 0 4px;font-size:15px">Users added by hand</h3>'
+      +'<p style="margin:0 0 8px;font-size:12px;color:#6b7280">People who are not in '
+      +esc(D.users_dataset||'the users dataset')+'. Give them a group and the grants above reach '
+      +'them like anybody else.</p>'
+      +'<div class="ial-wrap"><table><thead><tr><th>Email</th><th>User</th><th>Group 1</th>'
+      +'<th>Group 2</th><th>Access</th><th></th></tr></thead><tbody>'
+      +(P.length?P.map(function(p,i){
+        return '<tr>'
+          +'<td>'+txt('pe',i,p.email,'name@company.com')+'</td>'
+          +'<td>'+txt('pu',i,p.user,'81 - ALAMO')+'</td>'
+          +'<td>'+txt('p1',i,p.group_1,'',"ial-g1")+'</td>'
+          +'<td>'+txt('p2',i,p.group_2,'',"ial-g2")+'</td>'
+          +'<td><select data-ial="pa" data-i="'+i+'">'
+            +'<option value="member"'+(p.access!=='admin'?' selected':'')+'>Member</option>'
+            +'<option value="admin"'+(p.access==='admin'?' selected':'')+'>Admin</option></select></td>'
+          +'<td><button data-ial="pdrop" data-i="'+i+'">X</button></td></tr>';
+        }).join('')
+        :'<tr><td colspan="6" style="color:#6b7280">Nobody added by hand.</td></tr>')
+      +'</tbody></table></div>'
+      +'<div style="margin-top:8px"><button class="ial-add" data-ial="padd">+ Add a user</button></div>'
+      +'<h3 style="margin:22px 0 4px;font-size:15px">Locations</h3>'
+      +'<p style="margin:0 0 8px;font-size:12px;color:#6b7280">The stores this catalog serves, from '
+      +esc(D.locations_dataset||'the users dataset')+'. Add one here when it opens before the next '
+      +'ETL run.</p>'
+      +'<div class="ial-wrap"><table><thead><tr><th>Location</th><th>Name</th><th>User</th>'
+      +'<th>Group 1</th><th>Group 2</th><th></th></tr></thead><tbody>'
+      +L.map(function(l,i){
+        return '<tr>'
+          +'<td>'+txt('ln',i,l.location,'99')+'</td>'
+          +'<td>'+txt('lm',i,l.location_name,'')+'</td>'
+          +'<td>'+txt('lu',i,l.user,'')+'</td>'
+          +'<td>'+txt('l1',i,l.group_1,'',"ial-g1")+'</td>'
+          +'<td>'+txt('l2',i,l.group_2,'',"ial-g2")+'</td>'
+          +'<td><button data-ial="ldrop" data-i="'+i+'">X</button></td></tr>';
+        }).join('')
+      +fileRows.map(function(l){
+        return '<tr style="color:#6b7280"><td>'+esc(l.location)+'</td><td>'+esc(l.location_name)
+          +'</td><td>'+esc(l.user)+'</td><td>'+esc(l.group_1)+'</td><td>'+esc(l.group_2)
+          +'</td><td style="font-size:11px">from the dataset</td></tr>';
+        }).join('')
+      +(!L.length&&!fileRows.length
+        ?'<tr><td colspan="6" style="color:#6b7280">No locations yet.</td></tr>':'')
+      +'</tbody></table></div>'
+      +'<div style="margin-top:8px"><button class="ial-add" data-ial="ladd">+ Add a location</button></div>';
+    host.appendChild(box);
   }
   function onChange(e){
     var el=e.target, k=el.getAttribute&&el.getAttribute('data-ial');
     if(!k||!D)return;
     if(k==='g1'||k==='g2'){ D.groups[k]=el.value; VALS={}; save(); return; }
+    var PMAP={pe:'email',pu:'user',p1:'group_1',p2:'group_2',pa:'access'};
+    var LMAP={ln:'location',lm:'location_name',lu:'user',l1:'group_1',l2:'group_2'};
+    var j=parseInt(el.getAttribute('data-i'),10);
+    if(PMAP[k]){ if(!isNaN(j)&&(D.extra_people||[])[j]){
+      D.extra_people[j][PMAP[k]]=el.value; save(); } return; }
+    if(LMAP[k]){ if(!isNaN(j)&&(D.extra_locations||[])[j]){
+      D.extra_locations[j][LMAP[k]]=el.value; save(); } return; }
     var i=parseInt(el.getAttribute('data-i'),10);
     if(isNaN(i)||!D.grants[i])return;
     if(k==='values'){
@@ -820,11 +893,18 @@ USERS_PANEL = """
     if(!k||!D)return;
     if(k==='add'){ D.grants.push({group1:'',group2:'',user:'',column:'',values:[]}); draw(); }
     else if(k==='drop'){ D.grants.splice(parseInt(el.getAttribute('data-i'),10),1); save(); }
+    else if(k==='padd'){ D.extra_people=(D.extra_people||[]).concat(
+        [{email:'',user:'',group_1:'',group_2:'',access:'member'}]); draw(); }
+    else if(k==='pdrop'){ D.extra_people.splice(parseInt(el.getAttribute('data-i'),10),1); save(); }
+    else if(k==='ladd'){ D.extra_locations=(D.extra_locations||[]).concat(
+        [{location:'',location_name:'',user:'',group_1:'',group_2:''}]); draw(); }
+    else if(k==='ldrop'){ D.extra_locations.splice(parseInt(el.getAttribute('data-i'),10),1); save(); }
   }
   function load(){
     return fetch('/api/admin/app-users',{credentials:'same-origin'})
       .then(function(r){return r.ok?r.json():null;})
-      .then(function(j){ if(!j)return; D=j; D.groups=D.groups||{g1:'',g2:''}; D.grants=D.grants||[]; draw(); })
+      .then(function(j){ if(!j)return; D=j; D.groups=D.groups||{g1:'',g2:''}; D.grants=D.grants||[];
+        D.extra_people=D.extra_people||[]; D.extra_locations=D.extra_locations||[]; draw(); })
       .catch(function(){});
   }
   function leaves(re){

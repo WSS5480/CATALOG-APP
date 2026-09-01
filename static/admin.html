@@ -125,6 +125,7 @@
 <div class="tabs">
   <button id="t-people"    class="on" onclick="showTab('people')">Passwords</button>
   <button id="t-users"              onclick="showTab('users')">Users</button>
+  <button id="t-builder"            onclick="showTab('builder')">Builder</button>
   <button id="t-locations"          onclick="showTab('locations')">User Data</button>
   <button id="t-catalog"            onclick="showTab('catalog')">Catalog</button>
 </div>
@@ -176,6 +177,17 @@
       <p class="cs">Group columns, access grants, and the users and locations added by hand.
         Grants are saved as you change them.</p>
       <!-- the access panel mounts itself under this heading -->
+    </div>
+  </section>
+
+  <!-- ═══════════ BUILDER ═══════════ -->
+  <section id="s-builder" class="screen">
+    <div class="card">
+      <h3>Catalog Builder</h3>
+      <p class="cs">Your whole catalog, built here. Drop each vendor's file in, check the schema
+        it recognised, press Build — the storefront serves the result at once, from this app's
+        own database.</p>
+      <div id="bld-body" class="center">Loading…</div>
     </div>
   </section>
 
@@ -255,7 +267,7 @@ async function api(path, opts){
 }
 
 function showTab(name){
-  ['people','users','locations','catalog'].forEach(n => {
+  ['people','users','builder','locations','catalog'].forEach(n => {
     $('s-' + n).classList.toggle('on', n === name);
     $('t-' + n).classList.toggle('on', n === name);
   });
@@ -660,12 +672,168 @@ async function saveCatalog(){
   }
 }
 
+/* ───────────────────────── the catalog builder ───────────────────────── */
+
+let BLD = null;
+
+async function loadBuilder(){
+  try{ BLD = await api('/api/admin/builder'); }
+  catch(e){ $('bld-body').innerHTML = '<div class="center">' + esc(e.message) + '</div>'; return; }
+  drawBuilder();
+}
+
+function bldMissing(src){
+  return (src.missing || []).length
+    ? '<span class="tag no">needs: ' + esc(src.missing.join(', ')) + '</span>'
+    : '<span class="tag ok">ready</span>';
+}
+
+function drawBuilder(){
+  const b = $('bld-body');
+  if(!BLD.connected){
+    b.innerHTML = '<div class="msg on info" style="display:block">The catalog\'s own database is '
+      + 'not connected yet. In Render: open <b>catalog-db</b>, copy its <b>Internal Database '
+      + 'URL</b>, and add it to this service as <b>CATALOG_DATABASE_URL</b>. Reload this tab '
+      + 'once the deploy finishes.</div>';
+    return;
+  }
+  const built = BLD.built;
+  b.innerHTML =
+    (built
+      ? '<div class="msg on ' + (built.serving ? 'ok' : 'info') + '" style="display:block">' +
+        '<b>' + built.rows + ' rows built</b> · ' + esc(built.at) + ' · ' +
+        (built.serving ? 'the storefront is serving this now.' : 'built, but NOT serving.') +
+        ' <button class="btn ghost sm" onclick="bldServe(' + (!built.serving) + ')">' +
+        (built.serving ? 'Stop serving (back to ETL dataset)' : 'Serve this') + '</button></div>'
+      : '<div class="msg on info" style="display:block">Nothing built yet. Add sources below, ' +
+        'then press Build.</div>') +
+    '<div class="row" style="margin:8px 0 16px">' +
+      '<input type="file" id="bld-file" accept=".csv,.xlsx,.xlsm,.xls" style="font-size:13px">' +
+      '<input class="f" id="bld-vendor" placeholder="Vendor name (fills the Vendor column if the file has none)" style="max-width:330px">' +
+      '<button class="btn" onclick="bldUpload()">Add source</button>' +
+    '</div>' +
+    ((BLD.sources || []).map(src =>
+      '<div style="border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:12px">' +
+        '<div class="row"><b>' + esc(src.name) + '</b> ' + bldMissing(src) +
+        '<span class="muted small">' + src.rows + ' rows · ' + esc(src.filename) + '</span>' +
+        '<span style="flex:1"></span>' +
+        '<button class="btn ghost sm" onclick="bldPreview(\'' + esc(src.id) + '\')">Preview</button>' +
+        '<button class="btn ghost sm" onclick="bldRemove(\'' + esc(src.id) + '\',\'' + esc(src.name) + '\')">✕</button></div>' +
+        '<div class="row" style="margin-top:6px"><label class="f" style="margin:0">Vendor label</label>' +
+          '<input class="f" style="max-width:240px" value="' + esc(src.vendor || '') + '"' +
+          ' onchange="bldVendor(\'' + esc(src.id) + '\',this.value)"></div>' +
+        '<div class="two" style="margin-top:9px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">' +
+          BLD.fields.map(f => {
+            const cur = src.mapping[f.name] || '';
+            const dark = f.required && !cur && !(f.name === 'Vendor' && src.vendor);
+            return '<div class="fg" style="margin-bottom:8px"><label class="f"' +
+              (dark ? ' style="color:#c0392b"' : '') + '>' + esc(f.name) +
+              (f.required ? ' *' : '') + '</label>' +
+              '<select class="f" style="padding:7px 9px;font-size:13.5px"' +
+              ' onchange="bldMap(\'' + esc(src.id) + '\',\'' + esc(f.name) + '\',this.value)">' +
+              '<option value="">— not in this file —</option>' +
+              src.columns.map(c => '<option' + (c === cur ? ' selected' : '') + '>' +
+                esc(c) + '</option>').join('') + '</select></div>';
+          }).join('') +
+        '</div>' +
+        '<div id="bld-prev-' + esc(src.id) + '"></div>' +
+      '</div>').join('') || '') +
+    '<div class="row" style="margin-top:6px">' +
+      '<button class="btn green" onclick="bldBuild()">⚒ Build the catalog</button>' +
+      '<span class="muted small">Appends every ready source into one dataset and serves it.</span>' +
+    '</div>';
+}
+
+async function bldUpload(){
+  const f = $('bld-file').files[0];
+  if(!f) return say('Choose a file first.', 'bad');
+  say('Reading ' + f.name + '…', 'info');
+  const b64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(',')[1] || '');
+    r.onerror = rej;
+    r.readAsDataURL(f);
+  });
+  try{
+    const out = await api('/api/admin/builder/upload', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({filename: f.name, vendor: $('bld-vendor').value, content_b64: b64})});
+    say('✓ ' + f.name + ' — ' + out.rows + ' rows, ' + out.mapped + ' fields recognised' +
+        (out.missing.length ? ('; still needs ' + out.missing.join(', ')) : ' — ready.'),
+        out.missing.length ? 'info' : 'ok');
+    await loadBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+async function bldMap(id, field, col){
+  const src = (BLD.sources || []).find(s => s.id === id); if(!src) return;
+  if(col) src.mapping[field] = col; else delete src.mapping[field];
+  try{
+    await api('/api/admin/builder/map', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id: id, mapping: src.mapping})});
+    src.missing = BLD.fields.filter(f => f.required && !src.mapping[f.name] &&
+      !(f.name === 'Vendor' && src.vendor)).map(f => f.name);
+    drawBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+async function bldVendor(id, v){
+  try{
+    await api('/api/admin/builder/map', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id: id, vendor: v})});
+    await loadBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+async function bldRemove(id, name){
+  if(!confirm('Remove the source "' + name + '"?\n\nIts rows leave the next build.')) return;
+  try{
+    await api('/api/admin/builder/remove', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id})});
+    await loadBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+async function bldPreview(id){
+  const box = $('bld-prev-' + id); if(!box) return;
+  box.innerHTML = '<span class="muted small">Loading preview…</span>';
+  try{
+    const p = await api('/api/admin/builder/preview?id=' + encodeURIComponent(id));
+    box.innerHTML = '<div class="scroll" style="max-height:220px;margin-top:9px">' +
+      '<table class="t"><thead><tr>' +
+      p.columns.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr></thead><tbody>' +
+      p.rows.map(r => '<tr>' + p.columns.map(c =>
+        '<td class="ro">' + esc(String(r[c] === null ? '' : r[c]).slice(0, 40)) + '</td>').join('') +
+        '</tr>').join('') + '</tbody></table></div>';
+  }catch(e){ box.innerHTML = '<span class="muted small">' + esc(e.message) + '</span>'; }
+}
+
+async function bldBuild(){
+  try{
+    const out = await api('/api/admin/builder/build', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: '{}'});
+    say('✓ ' + out.message, 'ok');
+    await loadBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+async function bldServe(on){
+  try{
+    await api('/api/admin/builder/serving', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({serving: on})});
+    await loadBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
 /* ───────────────────────── start ───────────────────────── */
 
 loadMe();
 loadPeople();
 loadRows();
 loadCatalog();
+loadBuilder();
 </script>
 
 <style id="cat-users-css">
@@ -717,6 +885,34 @@ loadCatalog();
     return fetch('/api/admin/app-values?dataset='+encodeURIComponent(ds)+'&column='+encodeURIComponent(col),
       {credentials:'same-origin'}).then(function(r){return r.ok?r.json():{values:[]};})
       .then(function(j){VALS[k]=j.values||[];return VALS[k];}).catch(function(){return [];});
+  }
+  var QT=null;
+  function saveQuiet(){
+    clearTimeout(QT);
+    QT=setTimeout(function(){
+      fetch('/api/admin/app-users',{method:'POST',credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({groups:D.groups,grants:D.grants,
+          extra_people:D.extra_people||[]})}).then(function(r){
+        if(!r.ok){
+          return r.json().catch(function(){return {};}).then(function(b){
+            alert('NOT SAVED — the server refused this change:\n\n'
+              +(b.detail||('error '+r.status)));
+            return load();
+          });
+        }
+      });
+    },700);
+  }
+  function sumFor(el){
+    var d=el.closest('details'); if(!d)return;
+    var i=parseInt(el.getAttribute('data-i'),10);
+    var f=el.getAttribute('data-f')||'values';
+    var g=D.grants[i]||{};
+    var arr=(f==='values')?( (g.values||[]).map(String) ):toArr(g[f]);
+    var word=arr.length?(arr.length<=2?arr.join(', '):arr.length+' selected'):'— any —';
+    if(f==='values'&&g.exclude&&arr.length)word='all except '+(arr.length<=2?arr.join(', '):arr.length);
+    var su=d.querySelector('summary'); if(su)su.textContent=word+' ▾';
   }
   function save(){
     return fetch('/api/admin/app-users',{method:'POST',credentials:'same-origin',
@@ -859,7 +1055,8 @@ loadCatalog();
         if(el.checked){ if(arr.indexOf(el.value)<0)arr.push(el.value); }
         else arr=arr.filter(function(v){return v!==el.value;});
         D.grants[j][f]=arr;
-        save();
+        sumFor(el);
+        saveQuiet();
       }
       return;
     }
@@ -868,8 +1065,14 @@ loadCatalog();
       if(el.checked){ if(cur.indexOf(el.value)<0)cur.push(el.value); }
       else cur=cur.filter(function(v){return v!==el.value;});
       D.grants[i].values=cur;
+      sumFor(el);
+      saveQuiet();
+      return;
     } else if(k==='vexc'){
       D.grants[i].exclude=el.checked;
+      sumFor(el);
+      saveQuiet();
+      return;
     } else if(k==='vfilter'){
       var q=(el.value||'').toLowerCase();
       el.parentElement.querySelectorAll('label').forEach(function(l){

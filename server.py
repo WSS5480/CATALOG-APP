@@ -3311,10 +3311,20 @@ def _feed_fetch_api(cfg: dict, progress=None):
                 return found
         return payload
 
+    def _get_retry(cl, url, params, seg):
+        try:
+            try:
+                return cl.get(url, headers=headers, params=params)
+            except httpx.TimeoutException:
+                return cl.get(url, headers=headers, params=params)
+        except httpx.TimeoutException:
+            raise ValueError(f"{seg} took too long to answer — over 5 minutes, twice in "
+                             f"a row. A smaller limit parameter usually fixes this.")
+
     def _pull_one(cl, url, tag=""):
         """One endpoint -> (filename, raw bytes, dataframe-or-None)."""
         seg = url.rsplit("/", 1)[-1].split("?")[0] or "feed"
-        r = cl.get(url, headers=headers, params=qparams or None)
+        r = _get_retry(cl, url, qparams or None, seg)
         if r.status_code != 200:
             where = f" on {seg}" if tag else ""
             raise ValueError(f"The API answered {r.status_code}{where}.")
@@ -3388,8 +3398,7 @@ def _feed_fetch_api(cfg: dict, progress=None):
             if limit_val > 0 and first_page_n >= limit_val and "page" not in qd:
                 page = 2
                 while page <= 200:
-                    r2 = cl.get(url, headers=headers,
-                                params=qparams + [("page", str(page))])
+                    r2 = _get_retry(cl, url, qparams + [("page", str(page))], seg)
                     if r2.status_code != 200:
                         break
                     try:
@@ -3411,7 +3420,11 @@ def _feed_fetch_api(cfg: dict, progress=None):
         return name, data, None
 
     import io
-    with httpx.Client(timeout=120, follow_redirects=True, auth=auth) as cl:
+    # Some vendor APIs (price endpoints especially) think for minutes before
+    # answering, so give each page five minutes rather than two — and retry a
+    # page once when it times out, since a second ask often lands.
+    tmo = httpx.Timeout(300.0, connect=30.0)
+    with httpx.Client(timeout=tmo, follow_redirects=True, auth=auth) as cl:
         if len(urls) == 1:
             name, data, df = _pull_one(cl, urls[0])
             if df is None:
@@ -3703,7 +3716,33 @@ def _feed_run_due(force_ids=None, customer=None) -> dict:
     return {"ran": ran, "rebuilt": rebuilt}
 
 
+def _feed_clear_stale_running():
+    """A restart mid-pull leaves feed_status saying running:true forever —
+    turn those into a plain note so the card's bar never freezes."""
+    try:
+        from sqlalchemy import text
+        eng = _builder_engine()
+        with eng.connect() as c:
+            rows = c.execute(text("select id, feed_status from cat_sources")).mappings().all()
+        for r in rows:
+            st = _feed_status_of(r)
+            if st.get("running"):
+                st.pop("running", None)
+                st["ok"] = False
+                st["note"] = "That pull was cut off by a service restart — press Check now to run it again."
+                with eng.begin() as c:
+                    c.execute(text("update cat_sources set feed_status=:s where id=:i"),
+                              {"s": json.dumps(st), "i": r["id"]})
+    except Exception:
+        pass
+
+
 async def _feed_loop():
+    try:
+        if os.environ.get("CATALOG_DATABASE_URL", "").strip():
+            await asyncio.to_thread(_feed_clear_stale_running)
+    except Exception:
+        pass
     await asyncio.sleep(45)
     while True:
         try:

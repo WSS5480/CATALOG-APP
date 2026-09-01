@@ -124,7 +124,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v24</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v25</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1025,7 +1025,19 @@ function bldFeedBox(src){
           '<div style="flex-basis:100%"><span class="muted small">Query parameters — sent with ' +
             'every pull, like Domo\'s key/value rows:</span></div>' +
           '<div id="fd-qps-' + esc(src.id) + '" style="flex-basis:100%">' + qrows + '</div>' +
-          '<button class="btn ghost sm" onclick="bldQpAdd(\'' + esc(src.id) + '\')">＋ parameter</button>';
+          '<button class="btn ghost sm" onclick="bldQpAdd(\'' + esc(src.id) + '\')">＋ parameter</button>' +
+          '<div style="flex-basis:100%;margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
+            '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-atpon-' + esc(src.id) + '"' +
+            (f.atp_on ? ' checked' : '') + '> <b>Also pull quantities</b> (Ashley ATP) — after the main pull, ' +
+            'every SKU is checked for availability + lead time and joined on. Adds 10–25 minutes for a big catalog.</label></div>' +
+          inp('atp-external', 'ATP External ID — e.g. Buddys3989100', f.atp_external_id, '210px') +
+          '<input class="f" type="password" id="fd-atp-keycode-' + esc(src.id) +
+            '" placeholder="ATP KeyCode" value="' + esc(f.atp_keycode || '') + '" style="max-width:170px">' +
+          inp('atp-user', 'ATP user — e.g. AD_…_VP', f.atp_user, '160px') +
+          '<input class="f" type="password" id="fd-atp-pass-' + esc(src.id) +
+            '" placeholder="ATP password" value="' + esc(f.atp_password || '') + '" style="max-width:150px">' +
+          inp('atp-customer', 'customer (blank = from parameters)', f.atp_customer, '200px') +
+          inp('atp-shipto', 'shipto (blank = from parameters)', f.atp_shipto, '180px');
   }else if(t === 'sftp'){
     cfg = inp('host', 'sftp.vendor.com', f.host, '190px') +
           inp('port', '22', f.port || 22, '70px') +
@@ -1115,6 +1127,13 @@ async function bldFeedSave(id){
     const ks = [...document.querySelectorAll('.fd-qpk-' + id)].map(e => e.value.trim());
     const vs = [...document.querySelectorAll('.fd-qpv-' + id)].map(e => e.value.trim());
     feed.qparams = ks.map((k, j) => [k, vs[j] || '']).filter(p => p[0]);
+    feed.atp_on = ($('fd-atpon-' + id) || {checked:false}).checked;
+    feed.atp_external_id = g('atp-external');
+    feed.atp_keycode = ($('fd-atp-keycode-' + id) || {value:''}).value;
+    feed.atp_user = g('atp-user');
+    feed.atp_password = ($('fd-atp-pass-' + id) || {value:''}).value;
+    feed.atp_customer = g('atp-customer');
+    feed.atp_shipto = g('atp-shipto');
   }
   if(t === 'sftp'){ feed.host = g('host'); feed.port = g('port') || 22; feed.user = g('user');
                     feed.password = ($('fd-pass-' + id) || {value:''}).value;

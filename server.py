@@ -745,6 +745,9 @@ async def auth_signin(request: Request):
         data = {"ok": True, "email": email, "must_change": bool(p["must_change"])}
         token = _local_token(email)
     else:
+        if not ETL_BASE:
+            raise HTTPException(401, "No account with that email here. Ask your administrator "
+                                     "to add you on the Users tab and set your password.")
         which = (body.get("app") or request.cookies.get(APP_COOKIE, "") or "").strip()
         try:
             data = await etl_send("POST", "/api/access/signin",

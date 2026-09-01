@@ -2912,6 +2912,57 @@ async def groups_save(request: Request):
     return {"ok": True, "message": f"Saved group {name}."}
 
 
+@app.post("/api/admin/groups/members")
+async def groups_members(request: Request):
+    """Put people into a group, or take them out, from the group's side.
+    A person has two group slots — joining fills the first empty one, and
+    leaving clears whichever slot named this group."""
+    await _people_gate(request)
+    body = await request.json() or {}
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "Which group?")
+    add = [str(e).strip().lower() for e in (body.get("add") or []) if str(e).strip()]
+    remove = [str(e).strip().lower() for e in (body.get("remove") or []) if str(e).strip()]
+    from sqlalchemy import text
+    full, moved = [], 0
+    with _builder_engine().begin() as c:
+        for email in add:
+            row = c.execute(text("select group1, group2 from cat_people where email=:e"),
+                            {"e": email}).first()
+            if row is None:
+                continue
+            g1, g2 = str(row[0] or "").strip(), str(row[1] or "").strip()
+            if name in (g1, g2):
+                continue
+            if not g1:
+                c.execute(text("update cat_people set group1=:n where email=:e"),
+                          {"n": name, "e": email})
+            elif not g2:
+                c.execute(text("update cat_people set group2=:n where email=:e"),
+                          {"n": name, "e": email})
+            else:
+                full.append(email)
+                continue
+            moved += 1
+        for email in remove:
+            row = c.execute(text("select group1, group2 from cat_people where email=:e"),
+                            {"e": email}).first()
+            if row is None:
+                continue
+            if str(row[0] or "").strip() == name:
+                c.execute(text("update cat_people set group1='' where email=:e"), {"e": email})
+                moved += 1
+            elif str(row[1] or "").strip() == name:
+                c.execute(text("update cat_people set group2='' where email=:e"), {"e": email})
+                moved += 1
+    msg = f"{moved} change{'' if moved == 1 else 's'} to {name}."
+    if full:
+        msg += (" Not added (both group slots already used): " + ", ".join(full[:5]) +
+                " \u2014 clear one of their groups on their row first.")
+    return {"ok": True, "message": msg, "refused": full}
+
+
 @app.post("/api/admin/groups/delete")
 async def groups_delete(request: Request):
     await _people_gate(request)

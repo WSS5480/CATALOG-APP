@@ -1568,7 +1568,10 @@ async def brand_manifest():
                 {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"}]}
 
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# NOTE: the static-file mount used to live here.  It now sits at the very
+# BOTTOM of this file — routes are matched in the order they are defined, and
+# a mount at "/" catches every path, so anything defined after it (like the
+# Builder endpoints below) would be unreachable.  Keep the mount last, always.
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1990,3 +1993,8 @@ async def _builder_rows_local(ident: str, request: Request):
         return None
     except Exception:
         return None
+
+
+# The static-file mount goes LAST: a mount at "/" catches every path, so every
+# API route above must already be registered before it.
+app.mount("/", StaticFiles(directory="static", html=True), name="static")

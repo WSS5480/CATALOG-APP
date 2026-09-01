@@ -81,6 +81,12 @@ DATASETS = {
 
 app = FastAPI(title="Catalog / Order Form")
 
+# A 37,000-row catalog as raw JSON is a fifteen-megabyte page load; gzipped it
+# is under two. The mapping app got this the first time "loads real slow" was
+# said out loud — this app should have had it the same day.
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 
 class AppAuth(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):

@@ -583,6 +583,19 @@ async def orders_create(coll: str, request: Request):
     if not isinstance(content, dict):
         content = payload if isinstance(payload, dict) else {}
     content.setdefault("SubmittedBy", who.get("email", ""))
+    # Budgets: a location or group past its monthly number still submits, but
+    # every line is flagged over budget — and only an administrator can approve.
+    try:
+        p = _person(str(who.get("email") or ""))
+        if p is not None and not p["admin"]:
+            notes = _budget_check(_builder_engine(), cust, p, content)
+            if notes:
+                content["OverBudget"] = "Yes"
+                content["BudgetNote"] = "; ".join(notes)[:300]
+                if not str(content.get("RegionalApproval") or "").strip():
+                    content["RegionalApproval"] = "NEEDED — over budget"
+    except Exception:
+        pass
     rid = secrets.token_hex(8)
     from sqlalchemy import text
     with _builder_engine().begin() as c:
@@ -604,6 +617,21 @@ async def orders_update(coll: str, doc_id: str, request: Request):
     if not isinstance(content, dict):
         content = payload if isinstance(payload, dict) else {}
     from sqlalchemy import text
+    is_admin = bool((who.get("scope") or {}).get("all")) or bool(who.get("admin"))
+    if not is_admin:
+        with _builder_engine().connect() as c:
+            row = c.execute(text("select content from cat_orders where id=:i and coll=:o "
+                                 "and customer=:c"), {"i": doc_id, "o": coll, "c": cust}).first()
+        if row is not None:
+            try:
+                old_c = json.loads(row[0] or "{}")
+            except Exception:
+                old_c = {}
+            if str(old_c.get("OverBudget") or "") == "Yes":
+                # the flag and the approval field are the administrator's alone
+                content["OverBudget"] = "Yes"
+                content["BudgetNote"] = old_c.get("BudgetNote", "")
+                content["RegionalApproval"] = old_c.get("RegionalApproval", "NEEDED — over budget")
     with _builder_engine().begin() as c:
         n = c.execute(text("update cat_orders set content=:b, updated_at=current_timestamp "
                            "where id=:i and coll=:o and customer=:c"),
@@ -1859,7 +1887,9 @@ def _builder_migrate(engine):
                 added_at timestamptz default now(),
                 last_signin text default '')"""))
         for ddl in ("alter table cat_people add column if not exists perms text default '{}'",
-                    "alter table cat_groups add column if not exists perms text default '{}'"):
+                    "alter table cat_groups add column if not exists perms text default '{}'",
+                    "alter table cat_people add column if not exists budget text default ''",
+                    "alter table cat_groups add column if not exists budget text default ''"):
             try:
                 c.execute(text(ddl))
             except Exception:
@@ -1887,6 +1917,7 @@ def _builder_migrate(engine):
                 vendors_mode text default 'all',
                 vendors text default '[]',
                 perms text default '{}',
+                budget text default '',
                 primary key (customer, name))"""))
         # Per-vendor ordering details: where orders go, freight minimums.
         c.execute(text("""
@@ -2412,6 +2443,88 @@ def _pending_level(sc: dict) -> int:
     return _PENDING_LEVELS.get(str(pr.get("pending", "delete")).lower(), 3)
 
 
+def _money(s):
+    try:
+        v = float(str(s).replace("$", "").replace(",", "").strip())
+        return v if v > 0 else None
+    except Exception:
+        return None
+
+
+def _person_group_names(cust: str, g2: str, g1: str) -> set:
+    """Every group this person is in, parents included — the cascade."""
+    names = set()
+    for gname in (str(g2 or "").strip(), str(g1 or "").strip()):
+        seen = set()
+        g = _group_row(cust, gname)
+        while g is not None and g["name"] not in seen and len(seen) < 12:
+            seen.add(g["name"])
+            names.add(g["name"])
+            g = _group_row(cust, str(g["parent"] or "").strip())
+    return names
+
+
+def _month_spend(eng, cust: str, exclude_order: str = "") -> dict:
+    """This month's ordered total per submitter email. Deleted lines and the
+    order currently being submitted are left out."""
+    from sqlalchemy import text
+    month = time.strftime("%Y-%m")
+    out = {}
+    with eng.connect() as c:
+        rows = c.execute(text("select content, created_at from cat_orders where customer=:c"),
+                         {"c": cust}).all()
+    for content, created in rows:
+        try:
+            d = json.loads(content or "{}")
+        except Exception:
+            continue
+        if d.get("_deleted"):
+            continue
+        if exclude_order and str(d.get("OrderNumber") or "") == exclude_order:
+            continue
+        if str(created or "")[:7] != month:
+            continue
+        try:
+            amt = float(str(d.get("LineTotal") or 0) or 0)
+        except Exception:
+            amt = 0.0
+        em = str(d.get("SubmittedBy") or "").strip().lower()
+        out[em] = out.get(em, 0.0) + amt
+    return out
+
+
+def _budget_check(eng, cust: str, p, content: dict) -> list:
+    """Sentences describing every budget this order pushes past, or []."""
+    order_no = str(content.get("OrderNumber") or "")
+    try:
+        total = float(str(content.get("TotalAmount") or content.get("LineTotal") or 0) or 0)
+    except Exception:
+        total = 0.0
+    spend = _month_spend(eng, cust, exclude_order=order_no)
+    notes = []
+    pb = _money(p["budget"])
+    mine = spend.get(str(p["email"]).lower(), 0.0)
+    if pb is not None and mine + total > pb:
+        notes.append(f"{p['user_label'] or p['email']} is over its ${pb:,.0f} monthly budget "
+                     f"(${mine + total:,.0f} with this order)")
+    my_groups = _person_group_names(cust, p["group2"], p["group1"])
+    if my_groups:
+        from sqlalchemy import text
+        with eng.connect() as c:
+            allp = c.execute(text("select email, group1, group2 from cat_people")).all()
+        chains = {str(e).lower(): _person_group_names(cust, g2, g1) for e, g1, g2 in allp}
+        for gname in sorted(my_groups):
+            g = _group_row(cust, gname)
+            gb = _money(g["budget"]) if g is not None else None
+            if gb is None:
+                continue
+            gspend = sum(v for em, v in spend.items() if gname in chains.get(em, set()))
+            if gspend + total > gb:
+                notes.append(f"group {gname} is over its ${gb:,.0f} monthly budget "
+                             f"(${gspend + total:,.0f} with this order)")
+    return notes
+
+
 def _group_row(cust: str, name: str):
     if not name:
         return None
@@ -2528,9 +2641,11 @@ async def people_list(request: Request):
     if not _people_on():
         raise HTTPException(400, "The catalog's own database is not connected yet.")
     from sqlalchemy import text
-    with _builder_engine().connect() as c:
+    eng = _builder_engine()
+    with eng.connect() as c:
         rows = c.execute(text("select * from cat_people order by group1, user_label, email"))\
                 .mappings().all()
+    spend = _month_spend(eng, _builder_only_customer() or "main")
     out = []
     for p in rows:
         try:
@@ -2544,6 +2659,8 @@ async def people_list(request: Request):
         out.append({"email": p["email"], "user": p["user_label"],
                     "group1": p["group1"], "group2": p["group2"],
                     "admin": bool(p["admin"]), "perms": prm,
+                    "budget": p["budget"] or "",
+                    "spent": round(spend.get(str(p["email"]).lower(), 0.0), 2),
                     "vendors_mode": str(p["vendors_mode"] or "all"), "vendors": vens,
                     "pw": ("must_change" if p["must_change"] else "set") if p["pw_hash"]
                           else "never",
@@ -2570,6 +2687,7 @@ async def people_save(request: Request):
             "g2": str(body.get("group2") or "").strip()[:120],
             "a": admin, "vm": mode, "vs": json.dumps(vens),
             "pm": json.dumps(_clean_perms(body.get("perms"))),
+            "b": str(body.get("budget") or "").strip()[:40],
             "c": _builder_only_customer()}
     from sqlalchemy import text
     with _builder_engine().begin() as c:
@@ -2577,12 +2695,12 @@ async def people_save(request: Request):
                         {"e": email}).first()
         if row:
             c.execute(text("update cat_people set user_label=:u, group1=:g1, group2=:g2, "
-                           "admin=:a, vendors_mode=:vm, vendors=:vs, perms=:pm "
+                           "admin=:a, vendors_mode=:vm, vendors=:vs, perms=:pm, budget=:b "
                            "where email=:e"), vals)
         else:
             c.execute(text("insert into cat_people(email,customer,user_label,group1,group2,"
-                           "admin,vendors_mode,vendors,perms) "
-                           "values(:e,:c,:u,:g1,:g2,:a,:vm,:vs,:pm)"), vals)
+                           "admin,vendors_mode,vendors,perms,budget) "
+                           "values(:e,:c,:u,:g1,:g2,:a,:vm,:vs,:pm,:b)"), vals)
     return {"ok": True, "added": not bool(row),
             "message": ("Added " if not row else "Updated ") + email +
                        (". Set their password on the Passwords tab before they can sign in."
@@ -2758,7 +2876,8 @@ async def groups_list(request: Request):
             prm = {}
         out.append({"name": g["name"], "parent": g["parent"] or "",
                     "vendors_mode": str(g["vendors_mode"] or "all"), "vendors": vens,
-                    "perms": prm, "members": counts.get(g["name"], 0)})
+                    "perms": prm, "budget": g["budget"] or "",
+                    "members": counts.get(g["name"], 0)})
     return {"ok": True, "groups": out}
 
 
@@ -2778,17 +2897,18 @@ async def groups_save(request: Request):
     vens = [str(v)[:120] for v in (body.get("vendors") or []) if str(v).strip()][:500]
     cust = _builder_only_customer() or "main"
     pm = json.dumps(_clean_perms(body.get("perms")))
+    bud = str(body.get("budget") or "").strip()[:40]
     from sqlalchemy import text
     with _builder_engine().begin() as c:
         n = c.execute(text("update cat_groups set parent=:p, vendors_mode=:m, vendors=:v, "
-                           "perms=:pm where customer=:c and name=:n"),
-                      {"p": parent, "m": mode, "v": json.dumps(vens), "pm": pm,
+                           "perms=:pm, budget=:b where customer=:c and name=:n"),
+                      {"p": parent, "m": mode, "v": json.dumps(vens), "pm": pm, "b": bud,
                        "c": cust, "n": name}).rowcount
         if not n:
-            c.execute(text("insert into cat_groups(customer,name,parent,vendors_mode,vendors,perms) "
-                           "values(:c,:n,:p,:m,:v,:pm)"),
+            c.execute(text("insert into cat_groups(customer,name,parent,vendors_mode,vendors,"
+                           "perms,budget) values(:c,:n,:p,:m,:v,:pm,:b)"),
                       {"c": cust, "n": name, "p": parent, "m": mode,
-                       "v": json.dumps(vens), "pm": pm})
+                       "v": json.dumps(vens), "pm": pm, "b": bud})
     return {"ok": True, "message": f"Saved group {name}."}
 
 

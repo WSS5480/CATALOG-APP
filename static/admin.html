@@ -31,7 +31,8 @@
                white-space:nowrap}
   .tabs button.on{color:var(--navy);border-bottom-color:var(--navy)}
 
-  .wrap{max-width:1100px;margin:0 auto;padding:16px}
+  .wrap{max-width:none;margin:0 auto;padding:16px 28px}
+  @media(max-width:900px){.wrap{padding:16px}}
   .card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:16px;
         margin-bottom:16px}
   .card h3{margin:0 0 4px;font-size:16px}
@@ -939,7 +940,7 @@ loadBuilder();
           return '<option value="'+esc(c.v)+'"'+(c.v===cur?' selected':'')+'>'+esc(c.t)+'</option>';
         }).join('')+'</select>';
     }
-    host.innerHTML='<h3 style="margin:0 0 10px;font-size:15px">Access grants <span style="font-size:10px;color:#9aa3b5;font-weight:600">v2</span></h3>'
+    host.innerHTML='<h3 style="margin:0 0 10px;font-size:15px">Access grants <span style="font-size:10px;color:#9aa3b5;font-weight:600">v3</span></h3>'
       +'<div class="ial-bar">'
       +'<label class="ial-f">Group 1 column'+colSel('g1',D.groups.g1||'')+'</label>'
       +'<label class="ial-f">Group 2 column'+colSel('g2',D.groups.g2||'')+'</label></div>'

@@ -398,6 +398,11 @@ def _absolutize_images(data, base: str):
 async def rows(ident: str, request: Request):
     """Rows for the signed-in person.
 
+    The catalog itself is served from THIS app's own store whenever the
+    customer has built one on the Builder tab — the first brick of standing
+    alone. Everything else, and every customer without a built catalog,
+    proxies exactly as before.
+
     Their own app decides which dataset, ahead of any catalog profile named at
     deploy time. That order matters and it used to be the other way round: with
     CATALOG_PROFILE set, every request went to the old profile mapping and
@@ -406,6 +411,9 @@ async def rows(ident: str, request: Request):
     dataset that mapping still pointed at — quite possibly one that no longer
     exists. The profile is the fallback now, not the winner.
     """
+    local = await _builder_rows_local(ident, request)
+    if local is not None:
+        return local
     params = dict(request.query_params)
     asked = params.pop("profile", "").strip()
     my = await _my_datasets(request)
@@ -1561,3 +1569,424 @@ async def brand_manifest():
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# THE CATALOG BUILDER — this app's own ETL, on this app's own database.
+#
+# The catalog used to be built in ETL Space and served from its store. This
+# section is the start of standing alone: vendor files are uploaded HERE,
+# checked against the catalog's own schema HERE, appended into one catalog
+# HERE, and served from a database that belongs to this app. ETL Space keeps
+# sign-in and the mapping app; the catalog's data world lives at home now.
+#
+# Three moves, deliberately simpler than the tool this replaces:
+#   1. CONNECT   — drop a vendor file in; it becomes a source.
+#   2. CHECK     — every source is read against the schema the catalog needs;
+#                  what can be recognised is mapped by itself, the rest is a
+#                  dropdown, and nothing builds while a required field is dark.
+#   3. BUILD     — every ready source is normalised to the schema and appended
+#                  into one catalog dataset, which the storefront serves at
+#                  once, from here.
+# ════════════════════════════════════════════════════════════════════════════
+
+_BDB = {"engine": None}
+
+
+def _builder_engine():
+    url = os.environ.get("CATALOG_DATABASE_URL", "").strip()
+    if not url:
+        raise HTTPException(400, "The catalog's own database is not connected yet. In Render, "
+                                 "copy catalog-db's Internal Database URL into this service as "
+                                 "CATALOG_DATABASE_URL, and this screen comes alive.")
+    if _BDB["engine"] is None:
+        from sqlalchemy import create_engine
+        _BDB["engine"] = create_engine(url, pool_pre_ping=True, pool_size=3, max_overflow=2)
+        _builder_migrate(_BDB["engine"])
+    return _BDB["engine"]
+
+
+def _builder_migrate(engine):
+    from sqlalchemy import text
+    with engine.begin() as c:
+        c.execute(text("""
+            create table if not exists cat_sources(
+                id text primary key,
+                customer text not null,
+                name text not null,
+                filename text default '',
+                vendor_label text default '',
+                table_name text not null,
+                mapping text default '{}',
+                row_count integer default 0,
+                added_at timestamptz default now(),
+                updated_at timestamptz default now())"""))
+        c.execute(text("""
+            create table if not exists cat_built(
+                customer text primary key,
+                table_name text not null,
+                row_count integer default 0,
+                serving boolean default true,
+                built_at timestamptz default now())"""))
+
+
+# The schema the catalog reads — the same names the storefront asks for.
+BUILDER_FIELDS = [
+    ("ModelNum",     True,  "Model / SKU the order is placed against"),
+    ("ItemName",     True,  "Product name on the card"),
+    ("Vendor",       True,  "Who supplies it — filled from the label below if the file has no column"),
+    ("RegularCost",  True,  "List cost"),
+    ("Price",        False, "Promotional cost, where there is one"),
+    ("ItemImage2",   False, "Image URL the card shows"),
+    ("Brand",        False, ""), ("Category", False, ""), ("SubCategory", False, ""),
+    ("Collection",   False, ""), ("Color", False, ""),
+    ("DisplayOrder", False, "Sort order"), ("QtyAvailable", False, "Stock on hand"),
+]
+_BUILDER_ALIASES = {
+    "ModelNum": ["model", "model_num", "modelnum", "model_number", "model #", "sku", "item_number"],
+    "ItemName": ["item_name", "itemname", "description", "item_description",
+                 "product_name", "title", "item", "name"],
+    "Vendor": ["vendor", "vendor_name", "supplier"],
+    "Brand": ["brand"], "Category": ["category"],
+    "SubCategory": ["sub_category", "subcategory", "sub category"],
+    "Collection": ["collection"],
+    "RegularCost": ["regular_cost", "regularcost", "regular cost", "cost", "price"],
+    "Price": ["promo_cost", "promocost", "promo cost", "sale_price", "price"],
+    "Color": ["color", "colour"],
+    "ItemImage2": ["item_image_2", "item_image", "item_display_image_1", "image", "image_url",
+                   "item_image_jpeg"],
+    "DisplayOrder": ["display_order", "displayorder", "display order"],
+    "QtyAvailable": ["qty_available", "qtyavailable", "qty available", "quantity", "stock"],
+}
+
+
+def _bnorm(s: str) -> str:
+    return "".join(ch for ch in str(s).lower() if ch.isalnum())
+
+
+def _builder_automap(columns) -> dict:
+    """Which column supplies each schema field — recognised, never invented."""
+    by_norm = {}
+    for c in columns:
+        by_norm.setdefault(_bnorm(c), str(c))
+    out = {}
+    for name, _req, _h in BUILDER_FIELDS:
+        hit = by_norm.get(_bnorm(name))
+        if not hit:
+            for cand in _BUILDER_ALIASES.get(name, []):
+                hit = by_norm.get(_bnorm(cand))
+                if hit:
+                    break
+        if hit:
+            out[name] = hit
+    return out
+
+
+def _bslug(s: str) -> str:
+    out = "".join(ch if ch.isalnum() else "_" for ch in str(s).lower()).strip("_")
+    while "__" in out:
+        out = out.replace("__", "_")
+    return out or "x"
+
+
+async def _builder_admin(request: Request):
+    """Who is asking, and which customer's builder is this.
+
+    Sign-in still lives in ETL Space for now — the session is checked there,
+    and everything after that happens here, on this app's own store."""
+    me = await etl_get("/api/access/me", request=request)
+    sc = (me or {}).get("scope") or {}
+    if not _scope_administers(sc):
+        raise HTTPException(403, "Only an administrator or the catalog owner can build the catalog.")
+    customer = str(sc.get("customer") or "").strip()
+    if not customer:
+        try:
+            my = await _my_datasets(request)
+            customer = str((my or {}).get("customer") or "").strip()
+        except Exception:
+            customer = ""
+    if not customer:
+        raise HTTPException(400, "This session is not inside any one customer's catalog — open the "
+                                 "admin through the customer's own sign-in link.")
+    return sc, _bslug(customer), customer
+
+
+def _builder_missing(mapping: dict, vendor_label: str) -> list:
+    out = []
+    for name, req, _h in BUILDER_FIELDS:
+        if not req:
+            continue
+        if name == "Vendor" and (mapping.get("Vendor") or vendor_label):
+            continue
+        if not mapping.get(name):
+            out.append(name)
+    return out
+
+
+@app.get("/api/admin/builder")
+async def builder_state(request: Request):
+    sc, cust, label = await _builder_admin(request)
+    if not os.environ.get("CATALOG_DATABASE_URL", "").strip():
+        return {"connected": False, "customer": label,
+                "fields": [{"name": n, "required": r, "help": h} for n, r, h in BUILDER_FIELDS],
+                "sources": [], "built": None}
+    from sqlalchemy import text
+    eng = _builder_engine()
+    with eng.connect() as c:
+        rows = c.execute(text("select * from cat_sources where customer=:c order by added_at"),
+                         {"c": cust}).mappings().all()
+        built = c.execute(text("select * from cat_built where customer=:c"),
+                          {"c": cust}).mappings().first()
+    sources = []
+    for r in rows:
+        m = json.loads(r["mapping"] or "{}")
+        with eng.connect() as c:
+            cols = [x[0] for x in c.execute(text(
+                "select column_name from information_schema.columns "
+                "where table_name=:t order by ordinal_position"), {"t": r["table_name"]})]
+        sources.append({"id": r["id"], "name": r["name"], "filename": r["filename"],
+                        "vendor": r["vendor_label"], "rows": r["row_count"],
+                        "mapping": m, "columns": cols,
+                        "missing": _builder_missing(m, r["vendor_label"])})
+    return {"connected": True, "customer": label,
+            "fields": [{"name": n, "required": r, "help": h} for n, r, h in BUILDER_FIELDS],
+            "sources": sources,
+            "built": ({"rows": built["row_count"], "at": str(built["built_at"])[:19],
+                       "serving": bool(built["serving"])} if built else None)}
+
+
+@app.post("/api/admin/builder/upload")
+async def builder_upload(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json()
+    filename = str((body or {}).get("filename") or "upload.csv")
+    vendor = str((body or {}).get("vendor") or "").strip()
+    raw = base64.b64decode(str((body or {}).get("content_b64") or ""), validate=False)
+    if not raw:
+        raise HTTPException(400, "The file arrived empty.")
+    if len(raw) > 30 * 1024 * 1024:
+        raise HTTPException(400, "That file is over 30 MB — trim it or split it first.")
+    import io
+    import pandas as pd
+    try:
+        if filename.lower().endswith((".xlsx", ".xlsm", ".xls")):
+            df = pd.read_excel(io.BytesIO(raw))
+        else:
+            df = pd.read_csv(io.BytesIO(raw), dtype=str, keep_default_na=False,
+                             encoding_errors="replace")
+    except Exception as e:
+        raise HTTPException(400, f"Could not read that file: {e}")
+    if df.empty or not len(df.columns):
+        raise HTTPException(400, "The file has no rows.")
+    df.columns = [str(c).strip() for c in df.columns]
+    eng = _builder_engine()
+    sid = secrets.token_hex(4)
+    table = f"src_{cust}_{sid}"
+    df.astype(str).to_sql(table, eng, if_exists="replace", index=False, chunksize=2000)
+    mapping = _builder_automap(df.columns)
+    from sqlalchemy import text
+    with eng.begin() as c:
+        c.execute(text("insert into cat_sources(id,customer,name,filename,vendor_label,"
+                       "table_name,mapping,row_count) values(:i,:c,:n,:f,:v,:t,:m,:r)"),
+                  {"i": sid, "c": cust, "n": filename.rsplit(".", 1)[0][:80], "f": filename[:120],
+                   "v": vendor[:80], "t": table, "m": json.dumps(mapping), "r": int(len(df))})
+    return {"ok": True, "id": sid, "rows": int(len(df)),
+            "mapped": len(mapping), "missing": _builder_missing(mapping, vendor)}
+
+
+@app.post("/api/admin/builder/map")
+async def builder_map(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json()
+    sid = str((body or {}).get("id") or "")
+    from sqlalchemy import text
+    eng = _builder_engine()
+    with eng.begin() as c:
+        row = c.execute(text("select * from cat_sources where id=:i and customer=:c"),
+                        {"i": sid, "c": cust}).mappings().first()
+        if not row:
+            raise HTTPException(404, "No such source.")
+        vals = {}
+        if "mapping" in (body or {}):
+            m = {str(k): str(v) for k, v in ((body or {}).get("mapping") or {}).items() if str(v)}
+            vals["mapping"] = json.dumps(m)
+        if "vendor" in (body or {}):
+            vals["vendor_label"] = str((body or {}).get("vendor") or "")[:80]
+        if vals:
+            sets = ", ".join(f"{k}=:{k}" for k in vals)
+            vals.update({"i": sid, "c": cust})
+            c.execute(text(f"update cat_sources set {sets}, updated_at=now() "
+                           "where id=:i and customer=:c"), vals)
+    return {"ok": True}
+
+
+@app.post("/api/admin/builder/remove")
+async def builder_remove(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json()
+    sid = str((body or {}).get("id") or "")
+    from sqlalchemy import text
+    eng = _builder_engine()
+    with eng.begin() as c:
+        row = c.execute(text("select table_name from cat_sources where id=:i and customer=:c"),
+                        {"i": sid, "c": cust}).mappings().first()
+        if not row:
+            raise HTTPException(404, "No such source.")
+        c.execute(text("delete from cat_sources where id=:i and customer=:c"),
+                  {"i": sid, "c": cust})
+        c.execute(text(f'drop table if exists "{row["table_name"]}"'))
+    return {"ok": True}
+
+
+@app.get("/api/admin/builder/preview")
+async def builder_preview(request: Request, id: str = ""):
+    """The first rows of one source AS THE CATALOG WILL SEE THEM."""
+    sc, cust, _label = await _builder_admin(request)
+    import pandas as pd
+    from sqlalchemy import text
+    eng = _builder_engine()
+    with eng.connect() as c:
+        row = c.execute(text("select * from cat_sources where id=:i and customer=:c"),
+                        {"i": id, "c": cust}).mappings().first()
+    if not row:
+        raise HTTPException(404, "No such source.")
+    df = pd.read_sql_query(f'select * from "{row["table_name"]}" limit 8', eng)
+    m = json.loads(row["mapping"] or "{}")
+    out = pd.DataFrame()
+    for name, _req, _h in BUILDER_FIELDS:
+        src = m.get(name)
+        if src and src in df.columns:
+            out[name] = df[src].astype(str)
+        elif name == "Vendor" and row["vendor_label"]:
+            out[name] = row["vendor_label"]
+        else:
+            out[name] = ""
+    return {"columns": list(out.columns), "rows": json.loads(out.to_json(orient="records"))}
+
+
+@app.post("/api/admin/builder/build")
+async def builder_build(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    import pandas as pd
+    from sqlalchemy import text
+    eng = _builder_engine()
+    with eng.connect() as c:
+        srcs = c.execute(text("select * from cat_sources where customer=:c order by added_at"),
+                         {"c": cust}).mappings().all()
+    if not srcs:
+        raise HTTPException(400, "No sources yet — upload at least one vendor file first.")
+    blocked = []
+    for r in srcs:
+        miss = _builder_missing(json.loads(r["mapping"] or "{}"), r["vendor_label"])
+        if miss:
+            blocked.append(f"{r['name']}: {', '.join(miss)}")
+    if blocked:
+        raise HTTPException(400, "Not built — these sources still have required fields with no "
+                                 "column: " + " · ".join(blocked[:4]))
+    frames, per = [], []
+    for r in srcs:
+        df = pd.read_sql_table(r["table_name"], eng)
+        m = json.loads(r["mapping"] or "{}")
+        out = pd.DataFrame()
+        for name, _req, _h in BUILDER_FIELDS:
+            src = m.get(name)
+            if src and src in df.columns:
+                out[name] = df[src].astype(str)
+            elif name == "Vendor" and r["vendor_label"]:
+                out[name] = r["vendor_label"]
+            else:
+                out[name] = ""
+        out = out[out["ModelNum"].astype(str).str.strip() != ""]
+        frames.append(out)
+        per.append({"source": r["name"], "rows": int(len(out))})
+    allf = pd.concat(frames, ignore_index=True)
+    table = f"built_{cust}"
+    allf.to_sql(table, eng, if_exists="replace", index=False, chunksize=2000)
+    with eng.begin() as c:
+        c.execute(text("delete from cat_built where customer=:c"), {"c": cust})
+        c.execute(text("insert into cat_built(customer,table_name,row_count,serving) "
+                       "values(:c,:t,:r,true)"), {"c": cust, "t": table, "r": int(len(allf))})
+    return {"ok": True, "rows": int(len(allf)), "sources": per,
+            "message": f"Built {len(allf)} rows from {len(per)} source"
+                       f"{'' if len(per) == 1 else 's'}. The catalog is serving it now."}
+
+
+@app.post("/api/admin/builder/serving")
+async def builder_serving(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json()
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("update cat_built set serving=:s where customer=:c"),
+                  {"s": bool((body or {}).get("serving")), "c": cust})
+    return {"ok": True}
+
+
+# ── serving: the storefront reads the built catalog from HERE when one exists ──
+
+_BSCOPE: dict = {}
+
+
+async def _builder_rows_local(ident: str, request: Request):
+    """Serve catalog rows from this app's own store, when this customer has
+    built one and left it serving. Anything else returns None and the request
+    proxies exactly as before — including every other role the page reads."""
+    try:
+        if _role_of(ident) != "catalog":
+            return None
+        if not os.environ.get("CATALOG_DATABASE_URL", "").strip():
+            return None
+        tok = request.cookies.get(SESSION_COOKIE, "")
+        if not tok:
+            return None
+        now = time.time()
+        hit = _BSCOPE.get(tok)
+        if hit and hit[0] > now:
+            sc = hit[1]
+        else:
+            me = await etl_get("/api/access/me", request=request)
+            sc = (me or {}).get("scope") or {}
+            _BSCOPE[tok] = (now + 60, sc)
+            if len(_BSCOPE) > 500:
+                for k in [k for k, v in list(_BSCOPE.items()) if v[0] <= now]:
+                    _BSCOPE.pop(k, None)
+        cust = _bslug(str(sc.get("customer") or ""))
+        if not cust or cust == "x":
+            return None
+        import pandas as pd
+        from sqlalchemy import text
+        eng = _builder_engine()
+        with eng.connect() as c:
+            built = c.execute(text("select * from cat_built where customer=:c and serving"),
+                              {"c": cust}).mappings().first()
+        if not built:
+            return None
+        df = pd.read_sql_table(built["table_name"], eng)
+        # Access still means something here: a person whose reach is a set of
+        # vendors sees exactly those vendors of the built catalog.
+        if not sc.get("all") and not sc.get("vendors_all"):
+            vend = {str(v).strip().lower() for v in (sc.get("vendors") or [])}
+            df = df[df["Vendor"].astype(str).str.strip().str.lower().isin(vend)] if vend else df.iloc[0:0]
+        params = dict(request.query_params)
+        want = [c.strip() for c in (params.get("groupby") or params.get("fields") or "").split(",")
+                if c.strip()]
+        if want:
+            by_norm = {}
+            for c in df.columns:
+                by_norm.setdefault(_bnorm(c), c)
+            have = [by_norm[_bnorm(w)] for w in want if _bnorm(w) in by_norm]
+            have = list(dict.fromkeys(have))
+            if have:
+                df = df[have]
+                if params.get("groupby"):
+                    df = df.drop_duplicates()
+        try:
+            lim = max(1, min(int(params.get("limit") or 100000), 500000))
+        except Exception:
+            lim = 100000
+        df = df.head(lim)
+        return JSONResponse(json.loads(df.to_json(orient="records")))
+    except HTTPException:
+        return None
+    except Exception:
+        return None

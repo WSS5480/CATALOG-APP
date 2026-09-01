@@ -3218,8 +3218,13 @@ def _feed_fetch_api(cfg: dict):
     if h and ":" in h:
         k, v = h.split(":", 1)
         headers[k.strip()] = v.strip()
-    with httpx.Client(timeout=90, follow_redirects=True) as cl:
-        r = cl.get(url, headers=headers)
+    auth = None
+    if str(cfg.get("auth_user") or "").strip():
+        auth = (str(cfg.get("auth_user")).strip(), str(cfg.get("auth_pass") or ""))
+    qparams = [(str(k), str(v)) for k, v in (cfg.get("qparams") or [])
+               if str(k).strip()]
+    with httpx.Client(timeout=90, follow_redirects=True, auth=auth) as cl:
+        r = cl.get(url, headers=headers, params=qparams or None)
         if r.status_code != 200:
             raise ValueError(f"The API answered {r.status_code}.")
         data = r.content
@@ -3517,8 +3522,9 @@ async def _feed_start():
 
 def _feed_public(cfg: dict) -> dict:
     out = dict(cfg or {})
-    if out.get("password"):
-        out["password"] = _PW_KEPT
+    for k in ("password", "auth_pass"):
+        if out.get(k):
+            out[k] = _PW_KEPT
     return out
 
 
@@ -3545,6 +3551,12 @@ async def builder_feed_save(request: Request):
         if kind == "api":
             keep["url"] = str(cfg.get("url") or "").strip()
             keep["header"] = str(cfg.get("header") or "").strip()
+            keep["auth_user"] = str(cfg.get("auth_user") or "").strip()
+            ap = str(cfg.get("auth_pass") or "")
+            keep["auth_pass"] = old.get("auth_pass", "") if ap == _PW_KEPT else ap
+            keep["qparams"] = [[str(k)[:80], str(v)[:300]]
+                               for k, v in (cfg.get("qparams") or [])
+                               if str(k).strip()][:20]
         elif kind == "sftp":
             keep["host"] = str(cfg.get("host") or "").strip()
             try:

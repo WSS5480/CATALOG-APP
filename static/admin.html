@@ -95,6 +95,11 @@
   .ticks label:last-child{border-bottom:0}
   .ticks label.off{opacity:.5;cursor:not-allowed}
   .ticks input{width:17px;height:17px;flex:none}
+  /* tick lists can live inside tables — the grid's wide-input styling must
+     never reach their checkboxes */
+  table.t td .ticks input{width:17px;min-width:17px;height:17px}
+  table.t td .ticks label{white-space:nowrap}
+  table.t td input[id^="gp-bud-"]{width:auto}
   .ticks .nm{font-weight:600}
   .ticks .sub{color:var(--muted);font-size:12px}
 
@@ -113,6 +118,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v8</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -481,13 +487,16 @@ function drawGroups(){
       '</select> <span class="muted small">' + esc(gAccessWord(g)) + '</span></td>' +
       '<td class="row">' + (g.vendors_mode === 'all' ? '' :
         '<button class="btn ghost sm" data-gt="' + i + '">vendors…</button>') +
-        '<button class="btn ghost sm" data-gtb="' + i + '">tabs…</button></td>' +
+        '<button class="btn ghost sm" data-gtb="' + i + '">tabs…</button>' +
+        '<button class="btn ghost sm" data-gpp="' + i + '">people…</button></td>' +
       '<td class="ro small">' + g.members + '</td>' +
       '<td><button class="btn ghost sm" data-gx="' + esc(g.name) + '">✕</button></td></tr>' +
       '<tr id="g-ticks-' + i + '" style="display:none"><td colspan="6"><div class="ticks" ' +
         'style="max-height:190px" id="g-ticklist-' + i + '"></div></td></tr>' +
       '<tr id="g-tabs-' + i + '" style="display:none"><td colspan="6"><div class="row" ' +
-        'style="padding:6px 2px" id="g-tabbox-' + i + '"></div></td></tr>'
+        'style="padding:6px 2px" id="g-tabbox-' + i + '"></div></td></tr>' +
+      '<tr id="g-ppl-' + i + '" style="display:none"><td colspan="6"><div class="ticks" ' +
+        'style="max-height:230px" id="g-pplist-' + i + '"></div></td></tr>'
     ).join('') + '</tbody></table></div>';
 
   box.querySelectorAll('select[data-gp]').forEach(s => s.addEventListener('change', () => {
@@ -542,6 +551,34 @@ function drawGroups(){
       g.budget = $('gp-bud-' + i).value.trim();
       saveGroup(g);
     }));
+  });
+  box.querySelectorAll('button[data-gpp]').forEach(b => b.onclick = () => {
+    const i = +b.getAttribute('data-gpp'), row = $('g-ppl-' + i);
+    if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
+    row.style.display = '';
+    const g = GROUPS[i];
+    const inG = p => p.group1 === g.name || p.group2 === g.name;
+    $('g-pplist-' + i).innerHTML = USERS.length ? USERS.map(p =>
+      '<label><input type="checkbox" data-gm2="' + i + '" value="' + esc(p.email) + '"' +
+      (inG(p) ? ' checked' : '') + '><span><span class="nm">' + esc(p.user || p.email) +
+      '</span><span class="sub"> · ' + esc(p.email) +
+      (p.group1 || p.group2 ? ' · in: ' + esc([p.group1, p.group2].filter(Boolean).join(', ')) : '') +
+      '</span></span></label>').join('')
+      : '<div style="padding:10px" class="muted small">Nobody yet — add people below first.</div>';
+    $('g-pplist-' + i).querySelectorAll('input[data-gm2]').forEach(t =>
+      t.addEventListener('change', async () => {
+        const bodyMsg = t.checked ? {name: g.name, add: [t.value]} : {name: g.name, remove: [t.value]};
+        try{
+          const out = await api('/api/admin/groups/members', {method:'POST',
+            headers:{'Content-Type':'application/json'}, body: JSON.stringify(bodyMsg)});
+          say('✓ ' + (out.message || 'Saved.'), (out.refused && out.refused.length) ? 'info' : 'ok');
+          if(out.refused && out.refused.length) t.checked = false;
+          const keep = i;
+          await loadUsers(); await loadGroups();
+          const btn2 = document.querySelector('button[data-gpp="' + keep + '"]');
+          if(btn2) btn2.click();
+        }catch(e){ say(e.message, 'bad'); }
+      }));
   });
   box.querySelectorAll('button[data-gx]').forEach(b => b.onclick = async () => {
     const name = b.getAttribute('data-gx');

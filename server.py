@@ -762,7 +762,7 @@ USERS_PANEL = """
     return fetch('/api/admin/app-users',{method:'POST',credentials:'same-origin',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({groups:D.groups,grants:D.grants,
-        extra_people:D.extra_people||[],extra_locations:D.extra_locations||[]})}).then(load);
+        extra_people:D.extra_people||[]})}).then(load);
   }
   function draw(){
     var host=document.getElementById('ial-users'); if(!host||!D)return;
@@ -866,30 +866,7 @@ USERS_PANEL = """
         :'<tr><td colspan="6" style="color:#6b7280">Nobody added by hand.</td></tr>')
       +'</tbody></table></div>'
       +'<div style="margin-top:8px"><button class="ial-add" data-ial="padd">+ Add a user</button></div>'
-      +'<h3 style="margin:22px 0 4px;font-size:15px">Locations</h3>'
-      +'<p style="margin:0 0 8px;font-size:12px;color:#6b7280">The stores this catalog serves, from '
-      +esc(D.locations_dataset||'the users dataset')+'. Add one here when it opens before the next '
-      +'ETL run.</p>'
-      +'<div class="ial-wrap"><table><thead><tr><th>Location</th><th>Name</th><th>User</th>'
-      +'<th>Group 1</th><th>Group 2</th><th></th></tr></thead><tbody>'
-      +L.map(function(l,i){
-        return '<tr>'
-          +'<td>'+txt('ln',i,l.location,'99')+'</td>'
-          +'<td>'+txt('lm',i,l.location_name,'')+'</td>'
-          +'<td>'+txt('lu',i,l.user,'')+'</td>'
-          +'<td>'+txt('l1',i,l.group_1,'',"ial-g1")+'</td>'
-          +'<td>'+txt('l2',i,l.group_2,'',"ial-g2")+'</td>'
-          +'<td><button data-ial="ldrop" data-i="'+i+'">X</button></td></tr>';
-        }).join('')
-      +fileRows.map(function(l){
-        return '<tr style="color:#6b7280"><td>'+esc(l.location)+'</td><td>'+esc(l.location_name)
-          +'</td><td>'+esc(l.user)+'</td><td>'+esc(l.group_1)+'</td><td>'+esc(l.group_2)
-          +'</td><td style="font-size:11px">from the dataset</td></tr>';
-        }).join('')
-      +(!L.length&&!fileRows.length
-        ?'<tr><td colspan="6" style="color:#6b7280">No locations yet.</td></tr>':'')
-      +'</tbody></table></div>'
-      +'<div style="margin-top:8px"><button class="ial-add" data-ial="ladd">+ Add a location</button></div>';
+      ;
     host.appendChild(box);
   }
   function onChange(e){
@@ -897,7 +874,7 @@ USERS_PANEL = """
     if(!k||!D)return;
     if(k==='g1'||k==='g2'){ D.groups[k]=el.value; VALS={}; save(); return; }
     var PMAP={pe:'email',pu:'user',p1:'group_1',p2:'group_2',pa:'access'};
-    var LMAP={ln:'location',lm:'location_name',lu:'user',l1:'group_1',l2:'group_2'};
+    var LMAP={};
     var j=parseInt(el.getAttribute('data-i'),10);
     if(PMAP[k]){ if(!isNaN(j)&&(D.extra_people||[])[j]){
       D.extra_people[j][PMAP[k]]=el.value; save(); } return; }
@@ -947,13 +924,7 @@ USERS_PANEL = """
       if(!confirm('Remove '+pe+' from the hand-added users?'))return;
       D.extra_people.splice(di,1); save();
     }
-    else if(k==='ladd'){ D.extra_locations=(D.extra_locations||[]).concat(
-        [{location:'',location_name:'',user:'',group_1:'',group_2:''}]); draw(); }
-    else if(k==='ldrop'){
-      var le=(D.extra_locations[di]||{}).location||'this location';
-      if(!confirm('Remove '+le+' from the hand-added locations?'))return;
-      D.extra_locations.splice(di,1); save();
-    }
+
   }
   function load(){
     return fetch('/api/admin/app-users',{credentials:'same-origin'})

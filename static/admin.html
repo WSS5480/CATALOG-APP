@@ -98,6 +98,11 @@
   /* tick lists can live inside tables — the grid's wide-input styling must
      never reach their checkboxes */
   table.t td .ticks input{width:17px;min-width:17px;height:17px}
+  /* the People table is wide — keep the Save/✕ column pinned like Domo did */
+  #u-body table.t th:last-child, #u-body table.t td:last-child{
+    position:sticky;right:0;background:#fff;z-index:2;
+    box-shadow:-7px 0 7px -5px rgba(0,0,0,.14)}
+  #u-body table.t thead th:last-child{background:#f3f5f9}
   table.t td .ticks label{white-space:nowrap}
   table.t td input[id^="gp-bud-"]{width:auto}
   .ticks .nm{font-weight:600}
@@ -124,7 +129,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v26</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v27</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -440,10 +445,14 @@ function drawGroups(){
   }
   box.innerHTML =
     '<div class="scroll" style="max-height:280px"><table class="t"><thead><tr>' +
-    '<th>Group</th><th>Inside</th><th>Vendor access</th><th></th><th>People</th><th></th>' +
+    '<th>Group</th><th>Kind</th><th>Inside</th><th>Vendor access</th><th></th><th>People</th><th></th>' +
     '</tr></thead><tbody>' +
     GROUPS.map((g, i) =>
       '<tr><td><b>' + esc(g.name) + '</b></td>' +
+      '<td><select data-gk="' + i + '" style="padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">' +
+        '<option value="store"' + (g.kind !== 'district' ? ' selected' : '') + '>Store</option>' +
+        '<option value="district"' + (g.kind === 'district' ? ' selected' : '') + '>District</option>' +
+      '</select></td>' +
       '<td><select data-gp="' + i + '" style="padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">' +
         '<option value="">—</option>' +
         GROUPS.filter(x => x.name !== g.name).map(x =>
@@ -614,6 +623,53 @@ async function loadUsers(){
 
 const _selCss = 'padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px';
 
+const PAGES = [['catalog','Catalog'],['order','Order Form'],['pending','Pending Orders'],
+               ['approver','Approver'],['purchasing','Purchasing Admin'],['vendorpage','Vendor Page']];
+const ROLES = ['AUTO','ADMIN','PD','DM','STORE','VENDOR','NONE'];
+
+function tickList(cls, i, names, have, empty){
+  return '<div class="ticks" style="max-height:96px;min-width:150px">' +
+    (names.length ? names.map(n =>
+      '<label><input type="checkbox" class="' + cls + i + '" value="' + esc(n) + '"' +
+      (have.has(n) ? ' checked' : '') + '><span><span class="nm">' + esc(n) +
+      '</span></span></label>').join('')
+    : '<div class="muted small" style="padding:6px">' + empty + '</div>') + '</div>';
+}
+
+function pageTicks(cls, i, pp){
+  const explicit = PAGES.some(([k]) => k in pp);
+  const on = k => explicit ? (k === 'pending' ? (pp.pending || 'none') !== 'none' : !!pp[k]) : false;
+  return '<div style="min-width:135px">' + PAGES.map(([k, label]) =>
+    '<label class="small" style="display:block;cursor:pointer"><input type="checkbox" class="' +
+    cls + i + '" value="' + k + '"' + (on(k) ? ' checked' : '') + '> ' + label + '</label>')
+    .join('') +
+    '<div class="muted small" style="margin-top:2px">nothing ticked = from groups</div></div>';
+}
+
+function accessTicks(cls, i, pp){
+  const lv = {none:0, read:1, write:2, delete:3}[pp.pending] ?? -1;   // -1 = inherit
+  return '<div style="min-width:80px">' + [['read',1],['write',2],['delete',3]].map(([k, n]) =>
+    '<label class="small" style="display:block;cursor:pointer"><input type="checkbox" class="' +
+    cls + i + '" value="' + k + '"' + (lv >= n ? ' checked' : '') + '> ' + k + '</label>')
+    .join('') + '</div>';
+}
+
+function rowPerms(i){
+  const perms = {};
+  const pages = [...document.querySelectorAll('.upg' + i)];
+  const anyPage = pages.some(x => x.checked);
+  if(anyPage){
+    pages.forEach(x => { if(x.value !== 'pending') perms[x.value] = x.checked; });
+    if(!pages.find(x => x.value === 'pending').checked) perms.pending = 'none';
+  }
+  const acc = [...document.querySelectorAll('.uac' + i)].filter(x => x.checked).map(x => x.value);
+  if(acc.includes('delete')) perms.pending = 'delete';
+  else if(acc.includes('write')) perms.pending = 'write';
+  else if(acc.includes('read')) perms.pending = 'read';
+  else if(anyPage && pages.find(x => x.value === 'pending').checked) perms.pending = 'delete';
+  return perms;
+}
+
 function drawUsers(){
   const box = $('u-body'); if(!box) return;
   if(!USERS.length){
@@ -621,104 +677,67 @@ function drawUsers(){
       'yourself if you have not).</div>';
     return;
   }
-  const gsel = (i, slot, cur) => {
-    const names = GROUPS.map(g => g.name);
-    if(cur && names.indexOf(cur) < 0) names.push(cur);
-    return '<select data-us="' + i + '" data-slot="' + slot + '" style="' + _selCss + '">' +
-      '<option value="">—</option>' + names.map(n =>
-      '<option' + (n === cur ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select>';
-  };
+  const districts = GROUPS.filter(g => g.kind === 'district').map(g => g.name);
+  const stores = GROUPS.filter(g => g.kind !== 'district').map(g => g.name);
   box.innerHTML =
     '<div class="scroll"><table class="t"><thead><tr>' +
-    '<th>Person</th><th>Group 1</th><th>Group 2</th><th>Vendor access</th><th></th>' +
-    '<th>Spent / budget $</th><th></th></tr></thead><tbody>' +
+    '<th>Person</th><th>Role</th><th>Districts</th><th>Stores</th><th>Vendors</th>' +
+    '<th>Pages</th><th>Access</th><th></th></tr></thead><tbody>' +
     USERS.map((p, i) =>
-      '<tr><td><b>' + esc(p.user || '—') + '</b>' +
+      '<tr><td style="min-width:150px"><b>' + esc(p.user || '—') + '</b>' +
         (p.admin ? ' <span class="tag ok">admin</span>' : '') +
-        '<div class="muted small">' + esc(p.email) + '</div></td>' +
-      '<td>' + gsel(i, 'group1', p.group1) + '</td>' +
-      '<td>' + gsel(i, 'group2', p.group2) + '</td>' +
-      '<td><select data-uvm="' + i + '" style="' + _selCss + '">' +
+        '<div class="muted small">' + esc(p.email) + '</div>' +
+        '<div class="muted small">' + (p.last_signin ? esc(p.last_signin) : 'never signed in') + '</div>' +
+        '<div style="margin-top:4px"><input data-ubud="' + i + '" value="' + esc(p.budget || '') +
+        '" placeholder="budget $" title="Monthly budget — blank = none"' +
+        ' style="max-width:88px;padding:4px 6px;font-size:12px;border:1px solid var(--line);border-radius:7px">' +
+        (p.spent ? ' <span class="muted small">$' + (+p.spent).toLocaleString() + ' spent</span>' : '') +
+        '</div></td>' +
+      '<td><select data-urole="' + i + '" style="' + _selCss + '">' +
+        ROLES.map(r => '<option' + (r === (p.role || 'AUTO') ? ' selected' : '') + '>' + r + '</option>')
+        .join('') + '</select></td>' +
+      '<td>' + tickList('ud2-', i, districts.concat((p.districts || []).filter(n => !districts.includes(n))),
+                        new Set(p.districts || []), 'no district groups yet') + '</td>' +
+      '<td>' + tickList('us1-', i, stores.concat((p.stores || []).filter(n => !stores.includes(n))),
+                        new Set(p.stores || []), 'no store groups yet') + '</td>' +
+      '<td style="min-width:170px"><select data-uvm="' + i + '" style="' + _selCss + ';margin-bottom:3px">' +
         '<option value="all"' + (p.vendors_mode === 'all' ? ' selected' : '') + '>From groups</option>' +
         '<option value="only"' + (p.vendors_mode === 'only' ? ' selected' : '') + '>Only ticked</option>' +
         '<option value="except"' + (p.vendors_mode === 'except' ? ' selected' : '') + '>All except ticked</option>' +
-      '</select> <span class="muted small">' + esc(vendWord(p)) + '</span></td>' +
-      '<td class="row">' + (p.vendors_mode === 'all' ? '' :
-        '<button class="btn ghost sm" data-uvt="' + i + '">vendors…</button>') +
-        '<button class="btn ghost sm" data-utb="' + i + '">tabs…</button></td>' +
-      '<td><input data-ubud="' + i + '" value="' + esc(p.budget || '') + '" placeholder="none"' +
-        ' style="max-width:90px;padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">' +
-        (p.spent ? ' <span class="muted small">$' + (+p.spent).toLocaleString() + ' spent</span>' : '') + '</td>' +
-      '<td><button class="btn ghost sm" data-drop="' + esc(p.email) + '">✕</button></td></tr>' +
-      '<tr id="u-ticks-' + i + '" style="display:none"><td colspan="7"><div class="ticks" ' +
-        'style="max-height:190px" id="u-ticklist-' + i + '"></div></td></tr>' +
-      '<tr id="u-tabs-' + i + '" style="display:none"><td colspan="7"><div class="row" ' +
-        'style="padding:6px 2px" id="u-tabbox-' + i + '"></div></td></tr>'
+      '</select>' +
+      (p.vendors_mode === 'all'
+        ? '<div class="muted small">' + esc(vendWord(p)) + '</div>'
+        : tickList('uv2-', i, VENDORS.length ? VENDORS : (p.vendors || []),
+                   new Set(p.vendors || []), 'build the catalog first')) + '</td>' +
+      '<td>' + pageTicks('upg', i, p.perms || {}) + '</td>' +
+      '<td>' + accessTicks('uac', i, p.perms || {}) + '</td>' +
+      '<td style="white-space:nowrap"><button class="btn sm" data-usave="' + i + '">Save</button> ' +
+        '<button class="btn ghost sm" data-drop="' + esc(p.email) + '" title="Remove">✕</button></td></tr>'
     ).join('') + '</tbody></table></div>';
 
-  box.querySelectorAll('select[data-us]').forEach(s => s.addEventListener('change', () => {
-    const p = USERS[+s.getAttribute('data-us')];
-    p[s.getAttribute('data-slot')] = s.value;
-    saveUserRow(p);
-  }));
-  box.querySelectorAll('select[data-uvm]').forEach(s => s.addEventListener('change', () => {
-    const p = USERS[+s.getAttribute('data-uvm')];
-    p.vendors_mode = s.value;
-    saveUserRow(p, true);
-  }));
-  box.querySelectorAll('input[data-ubud]').forEach(inp => inp.addEventListener('change', () => {
-    const p = USERS[+inp.getAttribute('data-ubud')];
-    p.budget = inp.value.trim();
-    saveUserRow(p);
-  }));
-  box.querySelectorAll('button[data-uvt]').forEach(b => b.onclick = () => {
-    const i = +b.getAttribute('data-uvt'), row = $('u-ticks-' + i);
-    if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
-    closeRows(['u-ticks-','u-tabs-'], row.id);
-    row.style.display = '';
-    const p = USERS[i], have = new Set(p.vendors || []);
-    $('u-ticklist-' + i).innerHTML = (VENDORS.length ? VENDORS : [...have]).map(v =>
-      '<label><input type="checkbox" data-uv2="' + i + '" value="' + esc(v) + '"' +
-      (have.has(v) ? ' checked' : '') + '><span><span class="nm">' + esc(v) +
-      '</span></span></label>').join('') ||
-      '<div style="padding:10px" class="muted small">No vendors yet — build the catalog first.</div>';
-    $('u-ticklist-' + i).querySelectorAll('input[data-uv2]').forEach(t =>
-      t.addEventListener('change', () => {
-        p.vendors = [...$('u-ticklist-' + i).querySelectorAll('input[data-uv2]')]
-          .filter(x => x.checked).map(x => x.value);
+  const wire = (sel, fn) => box.querySelectorAll(sel).forEach(el =>
+    el.addEventListener('change', () => fn(el)));
+  wire('select[data-urole]', el => { const p = USERS[+el.getAttribute('data-urole')];
+    p.role = el.value; p.admin = el.value === 'ADMIN'; saveUserRow(p); });
+  wire('input[data-ubud]', el => { const p = USERS[+el.getAttribute('data-ubud')];
+    p.budget = el.value.trim(); saveUserRow(p); });
+  wire('select[data-uvm]', el => { const p = USERS[+el.getAttribute('data-uvm')];
+    p.vendors_mode = el.value; saveUserRow(p, true); });
+  USERS.forEach((p, i) => {
+    ['.ud2-', '.us1-', '.uv2-', '.upg', '.uac'].forEach(cls =>
+      box.querySelectorAll(cls + i).forEach(t => t.addEventListener('change', () => {
+        p.districts = [...box.querySelectorAll('.ud2-' + i)].filter(x => x.checked).map(x => x.value);
+        p.stores = [...box.querySelectorAll('.us1-' + i)].filter(x => x.checked).map(x => x.value);
+        if(p.vendors_mode !== 'all')
+          p.vendors = [...box.querySelectorAll('.uv2-' + i)].filter(x => x.checked).map(x => x.value);
+        p.perms = rowPerms(i);
         saveUserRow(p);
-      }));
+      })));
   });
-  box.querySelectorAll('button[data-utb]').forEach(b => b.onclick = () => {
-    const i = +b.getAttribute('data-utb'), row = $('u-tabs-' + i);
-    if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
-    closeRows(['u-ticks-','u-tabs-'], row.id);
-    row.style.display = '';
-    const p = USERS[i], pp = p.perms || {};
-    const sel = (id2, opts, cur) => '<select id="' + id2 + '" style="' + _selCss + '">' +
-      opts.map(o => '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' +
-      o[1] + '</option>').join('') + '</select>';
-    const yn = [['','From groups'],['yes','Yes'],['no','No']];
-    $('u-tabbox-' + i).innerHTML =
-      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Catalog</label>' +
-      sel('up-cat-' + i, yn, 'catalog' in pp ? (pp.catalog ? 'yes' : 'no') : '') +
-      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Order form</label>' +
-      sel('up-ord-' + i, yn, 'order' in pp ? (pp.order ? 'yes' : 'no') : '') +
-      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Pending orders</label>' +
-      sel('up-pen-' + i, [['','From groups'],['none','None'],['read','Read only'],
-        ['write','Read + write'],['delete','Full (delete too)']], pp.pending || '') +
-      '<label class="chk" style="margin-left:14px"><input type="checkbox" id="up-adm-' + i + '"' +
-        (p.admin ? ' checked' : '') + '> Administrator</label>';
-    ['up-cat-','up-ord-','up-pen-','up-adm-'].forEach(pfx =>
-      $(pfx + i).addEventListener('change', () => {
-        const perms = {};
-        if($('up-cat-' + i).value) perms.catalog = $('up-cat-' + i).value === 'yes';
-        if($('up-ord-' + i).value) perms.order = $('up-ord-' + i).value === 'yes';
-        if($('up-pen-' + i).value) perms.pending = $('up-pen-' + i).value;
-        p.perms = perms;
-        p.admin = $('up-adm-' + i).checked;
-        saveUserRow(p);
-      }));
+  box.querySelectorAll('button[data-usave]').forEach(b => b.onclick = () => {
+    const i = +b.getAttribute('data-usave'), p = USERS[i];
+    p.perms = rowPerms(i);
+    saveUserRow(p, true);
   });
   box.querySelectorAll('[data-drop]').forEach(b =>
     b.onclick = () => dropPerson(b.getAttribute('data-drop')));
@@ -730,7 +749,9 @@ function saveUserRow(p, redraw){
   _uSaveT[p.email] = setTimeout(async () => {
     try{
       await api('/api/admin/people', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({email: p.email, user: p.user, group1: p.group1, group2: p.group2,
+        body: JSON.stringify({email: p.email, user: p.user, role: p.role || 'AUTO',
+          stores: p.stores || [], districts: p.districts || [],
+          group1: p.group1, group2: p.group2,
           admin: p.admin, vendors_mode: p.vendors_mode, vendors: p.vendors || [],
           perms: p.perms || {}, budget: p.budget || ''})});
       say('✓ Saved ' + (p.user || p.email) + '.', 'ok');

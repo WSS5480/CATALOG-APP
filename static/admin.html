@@ -124,7 +124,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v25</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v26</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1037,7 +1037,14 @@ function bldFeedBox(src){
           '<input class="f" type="password" id="fd-atp-pass-' + esc(src.id) +
             '" placeholder="ATP password" value="' + esc(f.atp_password || '') + '" style="max-width:150px">' +
           inp('atp-customer', 'customer (blank = from parameters)', f.atp_customer, '200px') +
-          inp('atp-shipto', 'shipto (blank = from parameters)', f.atp_shipto, '180px');
+          inp('atp-shipto', 'shipto (blank = from parameters)', f.atp_shipto, '180px') +
+          '<div style="flex-basis:100%;margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
+            '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-frton-' + esc(src.id) + '"' +
+            (f.frt_on ? ' checked' : '') + '> <b>Also pull freight by store</b> — the same API asked once per ' +
+            'ship-to, keeping the freight fields (fob, freight, express, net). Skips ship-tos the account ' +
+            'can\'t quote.</label></div>' +
+          inp('frt-stores', 'Ship-to numbers, comma-separated — blank = store numbers from Users',
+              f.frt_stores, '420px');
   }else if(t === 'sftp'){
     cfg = inp('host', 'sftp.vendor.com', f.host, '190px') +
           inp('port', '22', f.port || 22, '70px') +
@@ -1134,6 +1141,8 @@ async function bldFeedSave(id){
     feed.atp_password = ($('fd-atp-pass-' + id) || {value:''}).value;
     feed.atp_customer = g('atp-customer');
     feed.atp_shipto = g('atp-shipto');
+    feed.frt_on = ($('fd-frton-' + id) || {checked:false}).checked;
+    feed.frt_stores = g('frt-stores');
   }
   if(t === 'sftp'){ feed.host = g('host'); feed.port = g('port') || 22; feed.user = g('user');
                     feed.password = ($('fd-pass-' + id) || {value:''}).value;

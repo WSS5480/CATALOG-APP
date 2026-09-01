@@ -791,12 +791,31 @@ USERS_PANEL = """
         return;
       }
       body.innerHTML=rows.map(function(g,i){
-        var chosen=g.values||[];
+        var chosen=(g.values||[]).map(String);
+        var n=chosen.length;
+        var word=n?(g.exclude?('all except '+n):(n===1?'1 selected':n+' selected')):'— any —';
         var pv=g.column
-          ? '<select multiple size="3" data-ial="values" data-i="'+i+'">'
+          ? '<details class="ial-ms"><summary style="cursor:pointer;border:1px solid #d1d5db;'
+            +'border-radius:7px;padding:4px 9px;font-size:13px;background:#fff;max-width:180px;'
+            +'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(word)+' ▾</summary>'
+            +'<div style="position:absolute;z-index:60;background:#fff;border:1px solid #d1d5db;'
+            +'border-radius:9px;padding:9px;box-shadow:0 10px 26px rgba(0,0,0,.25);'
+            +'max-height:300px;overflow:auto;min-width:220px">'
+            +'<input placeholder="filter" data-ial="vfilter" style="width:100%;margin:0 0 7px;'
+            +'border:1px solid #d1d5db;border-radius:6px;padding:5px 7px;font-size:12.5px">'
+            +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 7px">'
+            +'<button data-ial="vall" data-i="'+i+'" style="padding:2px 8px;font-size:11.5px">All</button>'
+            +'<button data-ial="vnone" data-i="'+i+'" style="padding:2px 8px;font-size:11.5px">None</button>'
+            +'<label style="display:flex;gap:5px;align-items:center;font-size:11.5px;cursor:pointer">'
+            +'<input type="checkbox" data-ial="vexc" data-i="'+i+'"'+(g.exclude?' checked':'')+'>'
+            +'all <b>except</b> ticked</label></div>'
             +(rv[i]||[]).map(function(v){
-              return '<option value="'+esc(v)+'"'+(chosen.indexOf(String(v))>=0?' selected':'')+'>'+esc(v)+'</option>';
-            }).join('')+'</select>'
+              return '<label style="display:flex;gap:7px;align-items:center;padding:3px 2px;'
+                +'font-size:12.5px;cursor:pointer;white-space:nowrap">'
+                +'<input type="checkbox" data-ial="vtick" data-i="'+i+'" value="'+esc(v)+'"'
+                +(chosen.indexOf(String(v))>=0?' checked':'')+'>'+esc(v)+'</label>';
+            }).join('')
+            +'</div></details>'
           : '<span style="color:#6b7280">every row</span>';
         return '<tr>'
           +'<td><select data-ial="group1" data-i="'+i+'">'+opts(D.group1_values,g.group1,'- any -')+'</select></td>'
@@ -886,8 +905,20 @@ USERS_PANEL = """
       D.extra_locations[j][LMAP[k]]=el.value; save(); } return; }
     var i=parseInt(el.getAttribute('data-i'),10);
     if(isNaN(i)||!D.grants[i])return;
-    if(k==='values'){
-      D.grants[i].values=Array.prototype.map.call(el.selectedOptions,function(o){return o.value;});
+    if(k==='vtick'){
+      var cur=(D.grants[i].values||[]).map(String);
+      if(el.checked){ if(cur.indexOf(el.value)<0)cur.push(el.value); }
+      else cur=cur.filter(function(v){return v!==el.value;});
+      D.grants[i].values=cur;
+    } else if(k==='vexc'){
+      D.grants[i].exclude=el.checked;
+    } else if(k==='vfilter'){
+      var q=(el.value||'').toLowerCase();
+      el.parentElement.querySelectorAll('label').forEach(function(l){
+        if(l.querySelector('[data-ial="vexc"]'))return;
+        l.style.display=(!q||l.textContent.toLowerCase().indexOf(q)>=0)?'flex':'none';
+      });
+      return;
     } else if(k==='group1'||k==='group2'||k==='user'||k==='column'){
       D.grants[i][k]=el.value;
       if(k==='column')D.grants[i].values=[];
@@ -897,14 +928,32 @@ USERS_PANEL = """
   function onClick(e){
     var el=e.target, k=el.getAttribute&&el.getAttribute('data-ial');
     if(!k||!D)return;
-    if(k==='add'){ D.grants.push({group1:'',group2:'',user:'',column:'',values:[]}); draw(); }
-    else if(k==='drop'){ D.grants.splice(parseInt(el.getAttribute('data-i'),10),1); save(); }
+    var di=parseInt(el.getAttribute('data-i'),10);
+    if(k==='add'){ D.grants.push({group1:'',group2:'',user:'',column:'',values:[],exclude:false}); draw(); }
+    else if(k==='drop'){
+      var g=D.grants[di]||{};
+      var who=[].concat(g.user||[],g.group2||[],g.group1||[]).filter(Boolean).join(', ')||'everyone in this app';
+      if(!confirm('Delete this grant?\n\n'+who+'\n\nThey lose this access the moment it is gone.'))return;
+      D.grants.splice(di,1); save();
+    }
+    else if(k==='vall'){ var g2=D.grants[di];
+      if(g2&&g2.column){ vals(D.catalog_dataset,g2.column).then(function(v){
+        g2.values=(v||[]).map(String); save(); }); } }
+    else if(k==='vnone'){ if(D.grants[di]){ D.grants[di].values=[]; save(); } }
     else if(k==='padd'){ D.extra_people=(D.extra_people||[]).concat(
         [{email:'',user:'',group_1:'',group_2:'',access:'member'}]); draw(); }
-    else if(k==='pdrop'){ D.extra_people.splice(parseInt(el.getAttribute('data-i'),10),1); save(); }
+    else if(k==='pdrop'){
+      var pe=(D.extra_people[di]||{}).email||'this person';
+      if(!confirm('Remove '+pe+' from the hand-added users?'))return;
+      D.extra_people.splice(di,1); save();
+    }
     else if(k==='ladd'){ D.extra_locations=(D.extra_locations||[]).concat(
         [{location:'',location_name:'',user:'',group_1:'',group_2:''}]); draw(); }
-    else if(k==='ldrop'){ D.extra_locations.splice(parseInt(el.getAttribute('data-i'),10),1); save(); }
+    else if(k==='ldrop'){
+      var le=(D.extra_locations[di]||{}).location||'this location';
+      if(!confirm('Remove '+le+' from the hand-added locations?'))return;
+      D.extra_locations.splice(di,1); save();
+    }
   }
   function load(){
     return fetch('/api/admin/app-users',{credentials:'same-origin'})

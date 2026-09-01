@@ -2103,7 +2103,8 @@ async def builder_state(request: Request):
     from sqlalchemy import text
     eng = _builder_engine()
     with eng.connect() as c:
-        rows = c.execute(text("select * from cat_sources where customer=:c order by added_at"),
+        rows = c.execute(text("select * from cat_sources where customer=:c "
+                              "order by added_at desc"),
                          {"c": cust}).mappings().all()
         built = c.execute(text("select * from cat_built where customer=:c"),
                           {"c": cust}).mappings().first()

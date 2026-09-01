@@ -213,6 +213,23 @@
           <span id="u-vword" class="muted small"></span>
         </div>
         <div id="u-vlist" style="display:none;margin-top:8px" class="ticks"></div>
+        <div class="row" style="margin-top:10px">
+          <label class="f" style="margin:0">Tabs</label>
+          <label class="f" style="margin:0;text-transform:none;font-weight:600">Catalog</label>
+          <select class="f" id="u-p-cat" style="max-width:130px">
+            <option value="">From groups</option><option value="yes">Yes</option><option value="no">No</option>
+          </select>
+          <label class="f" style="margin:0;text-transform:none;font-weight:600">Order form</label>
+          <select class="f" id="u-p-ord" style="max-width:130px">
+            <option value="">From groups</option><option value="yes">Yes</option><option value="no">No</option>
+          </select>
+          <label class="f" style="margin:0;text-transform:none;font-weight:600">Pending orders</label>
+          <select class="f" id="u-p-pen" style="max-width:170px">
+            <option value="">From groups</option><option value="none">None</option>
+            <option value="read">Read only</option><option value="write">Read + write</option>
+            <option value="delete">Full (delete too)</option>
+          </select>
+        </div>
         <div class="row" style="margin-top:12px">
           <button class="btn green" id="u-save" onclick="savePerson()">Save person</button>
           <button class="btn ghost" onclick="resetPersonForm()">Clear</button>
@@ -456,12 +473,15 @@ function drawGroups(){
         '<option value="only"' + (g.vendors_mode === 'only' ? ' selected' : '') + '>Only ticked</option>' +
         '<option value="except"' + (g.vendors_mode === 'except' ? ' selected' : '') + '>All except ticked</option>' +
       '</select> <span class="muted small">' + esc(gAccessWord(g)) + '</span></td>' +
-      '<td>' + (g.vendors_mode === 'all' ? '' :
-        '<button class="btn ghost sm" data-gt="' + i + '">vendors…</button>') + '</td>' +
+      '<td class="row">' + (g.vendors_mode === 'all' ? '' :
+        '<button class="btn ghost sm" data-gt="' + i + '">vendors…</button>') +
+        '<button class="btn ghost sm" data-gtb="' + i + '">tabs…</button></td>' +
       '<td class="ro small">' + g.members + '</td>' +
       '<td><button class="btn ghost sm" data-gx="' + esc(g.name) + '">✕</button></td></tr>' +
       '<tr id="g-ticks-' + i + '" style="display:none"><td colspan="6"><div class="ticks" ' +
-        'style="max-height:190px" id="g-ticklist-' + i + '"></div></td></tr>'
+        'style="max-height:190px" id="g-ticklist-' + i + '"></div></td></tr>' +
+      '<tr id="g-tabs-' + i + '" style="display:none"><td colspan="6"><div class="row" ' +
+        'style="padding:6px 2px" id="g-tabbox-' + i + '"></div></td></tr>'
     ).join('') + '</tbody></table></div>';
 
   box.querySelectorAll('select[data-gp]').forEach(s => s.addEventListener('change', () => {
@@ -485,6 +505,33 @@ function drawGroups(){
           .filter(x => x.checked).map(x => x.value);
         saveGroup(g);
       }));
+  });
+  box.querySelectorAll('button[data-gtb]').forEach(b => b.onclick = () => {
+    const i = +b.getAttribute('data-gtb'), row = $('g-tabs-' + i);
+    if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
+    row.style.display = '';
+    const g = GROUPS[i], pp = g.perms || {};
+    const sel = (id2, opts, cur) => '<select id="' + id2 + '" style="padding:5px 7px;font-size:13px;' +
+      'border:1px solid var(--line);border-radius:7px">' + opts.map(o =>
+      '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' + o[1] + '</option>')
+      .join('') + '</select>';
+    const yn = [['','Inherit'],['yes','Yes'],['no','No']];
+    $('g-tabbox-' + i).innerHTML =
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Catalog</label>' +
+      sel('gp-cat-' + i, yn, 'catalog' in pp ? (pp.catalog ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Order form</label>' +
+      sel('gp-ord-' + i, yn, 'order' in pp ? (pp.order ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Pending orders</label>' +
+      sel('gp-pen-' + i, [['','Inherit'],['none','None'],['read','Read only'],
+        ['write','Read + write'],['delete','Full (delete too)']], pp.pending || '');
+    ['gp-cat-','gp-ord-','gp-pen-'].forEach(pfx => $(pfx + i).addEventListener('change', () => {
+      const perms = {};
+      if($('gp-cat-' + i).value) perms.catalog = $('gp-cat-' + i).value === 'yes';
+      if($('gp-ord-' + i).value) perms.order = $('gp-ord-' + i).value === 'yes';
+      if($('gp-pen-' + i).value) perms.pending = $('gp-pen-' + i).value;
+      g.perms = perms;
+      saveGroup(g);
+    }));
   });
   box.querySelectorAll('button[data-gx]').forEach(b => b.onclick = async () => {
     const name = b.getAttribute('data-gx');
@@ -597,6 +644,10 @@ function fillPersonForm(p){
   groupOpts($('u-g2'), p ? (p.group2 || '') : '');
   $('u-admin').checked = p ? !!p.admin : false;
   $('u-vmode').value = p ? (p.vendors_mode || 'all') : 'all';
+  const pp = (p && p.perms) || {};
+  $('u-p-cat').value = 'catalog' in pp ? (pp.catalog ? 'yes' : 'no') : '';
+  $('u-p-ord').value = 'order' in pp ? (pp.order ? 'yes' : 'no') : '';
+  $('u-p-pen').value = pp.pending || '';
   $('u-vlist')._ticked = p ? (p.vendors || []) : [];
   $('u-form-title').textContent = p ? ('Edit — ' + p.email) : 'Add a person';
   $('u-save').textContent = p ? 'Save changes' : 'Save person';
@@ -615,9 +666,13 @@ async function savePerson(){
   const email = $('u-email').value.trim().toLowerCase();
   if(!email) return say('An email address is what a person signs in with — it cannot be blank.', 'bad');
   const ticked = [...document.querySelectorAll('.u-vt')].filter(i => i.checked).map(i => i.value);
+  const perms = {};
+  if($('u-p-cat').value) perms.catalog = $('u-p-cat').value === 'yes';
+  if($('u-p-ord').value) perms.order = $('u-p-ord').value === 'yes';
+  if($('u-p-pen').value) perms.pending = $('u-p-pen').value;
   const body = {email: email, user: $('u-user').value, group1: $('u-g1').value,
                 group2: $('u-g2').value, admin: $('u-admin').checked,
-                vendors_mode: $('u-vmode').value, vendors: ticked};
+                vendors_mode: $('u-vmode').value, vendors: ticked, perms: perms};
   const btn = $('u-save');
   btn.disabled = true;
   try{

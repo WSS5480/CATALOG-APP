@@ -124,7 +124,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v22</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v23</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1002,7 +1002,14 @@ function bldFeedBox(src){
         esc(q[0] || '') + '" style="max-width:200px">' +
       '<input class="f fd-qpv-' + esc(src.id) + '" placeholder="Value — e.g. 3989100" value="' +
         esc(q[1] || '') + '" style="max-width:240px"></div>').join(''));
+    const xurls = (f.urls || []).map(u =>
+      '<input class="f fd-xurl-' + esc(src.id) + '" placeholder="https://…/Prices — joined by item number"' +
+      ' value="' + esc(u || '') + '" style="max-width:380px">').join('');
     cfg = inp('url', 'https://vendor.com/api/prices (or a CSV/JSON file URL)', f.url, '380px') +
+          '<span id="fd-xurls-' + esc(src.id) + '" style="display:contents">' + xurls + '</span>' +
+          '<button class="btn ghost sm" onclick="bldUrlAdd(\'' + esc(src.id) + '\')" ' +
+            'title="Pull a second endpoint too — Prices, Freight, Quantity… Same credentials and ' +
+            'parameters; its columns are joined onto the first by item number.">＋ endpoint</button>' +
           inp('header', 'Header if it needs one, e.g. Ocp-Apim-Subscription-Key: …', f.header, '330px') +
           inp('auth-user', 'Basic auth user (optional)', f.auth_user, '180px') +
           '<input class="f" type="password" id="fd-auth-pass-' + esc(src.id) +
@@ -1072,6 +1079,16 @@ function bldFeedType(id, t){
   drawBuilder();
 }
 
+function bldUrlAdd(id){
+  const box = $('fd-xurls-' + id); if(!box) return;
+  const el = document.createElement('input');
+  el.className = 'f fd-xurl-' + id;
+  el.placeholder = 'https://…/Prices — joined by item number';
+  el.style.maxWidth = '380px';
+  box.appendChild(el);
+  el.focus();
+}
+
 function bldQpAdd(id){
   const box = $('fd-qps-' + id); if(!box) return;
   const d = document.createElement('div');
@@ -1088,6 +1105,8 @@ async function bldFeedSave(id){
   const feed = {type: t, every_hours: g('every') || 24};
   if(t === 'api'){
     feed.url = g('url'); feed.header = g('header');
+    feed.urls = [...document.querySelectorAll('.fd-xurl-' + id)]
+      .map(e => e.value.trim()).filter(Boolean);
     feed.auth_user = g('auth-user');
     feed.auth_pass = ($('fd-auth-pass-' + id) || {value:''}).value;
     feed.token_url = g('token-url');

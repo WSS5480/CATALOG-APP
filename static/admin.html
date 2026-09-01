@@ -127,7 +127,6 @@
   <button id="t-people"    class="on" onclick="showTab('people')">Passwords</button>
   <button id="t-users"              onclick="showTab('users')">Users</button>
   <button id="t-builder"            onclick="showTab('builder')">Builder</button>
-  <button id="t-locations"          onclick="showTab('locations')">User Data</button>
 </div>
 
 <div class="wrap">
@@ -174,9 +173,41 @@
   <section id="s-users" class="screen">
     <div class="card">
       <h3>Users</h3>
-      <p class="cs">Group columns, access grants, and the users and locations added by hand.
-        Grants are saved as you change them.</p>
-      <!-- the access panel mounts itself under this heading -->
+      <p class="cs">The people of this catalog, added one at a time. The same row feeds
+        everything: sign-in, the groups used for access, and the Passwords tab. Stored in this
+        app's own database — no ETL involved.</p>
+      <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;background:var(--panel)">
+        <h4 id="u-form-title" style="margin:0 0 10px;font-size:14.5px">Add a person</h4>
+        <div class="two" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
+          <div class="fg"><label class="f" for="u-email">Email</label>
+            <input class="f" id="u-email" placeholder="person@company.com"></div>
+          <div class="fg"><label class="f" for="u-user">User label</label>
+            <input class="f" id="u-user" placeholder="104 - MCALLEN"></div>
+          <div class="fg"><label class="f" for="u-g1">Group 1</label>
+            <input class="f" id="u-g1" placeholder="STORE"></div>
+          <div class="fg"><label class="f" for="u-g2">Group 2</label>
+            <input class="f" id="u-g2" placeholder="9206"></div>
+        </div>
+        <div class="row" style="margin-top:4px">
+          <label class="chk"><input type="checkbox" id="u-admin"> Administrator — sees and manages everything</label>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <label class="f" style="margin:0">Vendor access</label>
+          <select class="f" id="u-vmode" style="max-width:220px" onchange="uVendUI()">
+            <option value="all">All vendors</option>
+            <option value="only">Only the ticked vendors</option>
+            <option value="except">All EXCEPT the ticked vendors</option>
+          </select>
+          <span id="u-vword" class="muted small"></span>
+        </div>
+        <div id="u-vlist" style="display:none;margin-top:8px" class="ticks"></div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn green" id="u-save" onclick="savePerson()">Save person</button>
+          <button class="btn ghost" onclick="resetPersonForm()">Clear</button>
+          <span class="muted small">New people cannot sign in until you set their password on the Passwords tab.</span>
+        </div>
+      </div>
+      <div id="u-body" class="center">Loading…</div>
     </div>
   </section>
 
@@ -192,26 +223,6 @@
     </div>
   </section>
 
-  <!-- ═══════════ LOCATIONS ═══════════ -->
-  <section id="s-locations" class="screen">
-    <div class="card">
-      <h3>User data</h3>
-      <p class="cs" id="loc-intro">The rows of the users dataset — every person, their groups and
-        email. Saving writes them back and re-runs every flow that reads the dataset, so the
-        catalog is up to date straight away — no re-upload.</p>
-      <div id="loc-status" class="muted small" style="margin-bottom:10px"></div>
-      <div id="loc-body" class="center">Loading…</div>
-      <div class="row" style="margin-top:13px">
-        <button class="btn green" id="loc-save" onclick="saveRows()">Save &amp; update</button>
-        <button class="btn ghost" onclick="loadRows()">Reload</button>
-        <span id="loc-dirty" class="muted small"></span>
-      </div>
-      <div class="lock" id="loc-note">Rows added or removed here change the users dataset itself.
-        The next upload of the customer's users file replaces this data — people who must survive
-        every rebuild belong in "Users added by hand" on the Users tab.</div>
-    </div>
-  </section>
-
 </div>
 
 <script>
@@ -219,11 +230,7 @@ const $ = id => document.getElementById(id);
 
 /* Everything this page knows, kept in one place so a failed save can simply
    reload rather than trying to unpick a half-applied change. */
-let PEOPLE = null;     // /api/admin/my-people
-let ROWS = null;       // /api/admin/users/rows
-let EDITS = {};        // location id -> {column: value} — only what actually changed
-let DELETES = [];      // row keys marked for removal — sent on Save
-let ADDED = [];        // brand-new rows typed in — sent on Save
+let PEOPLE = null;     // /api/admin/people
 let PW_FOR = '';       // whose password the panel is open for
 
 const esc = s => String(s === null || s === undefined ? '' : s)
@@ -254,7 +261,7 @@ async function api(path, opts){
 }
 
 function showTab(name){
-  ['people','users','builder','locations'].forEach(n => {
+  ['people','users','builder'].forEach(n => {
     $('s-' + n).classList.toggle('on', n === name);
     $('t-' + n).classList.toggle('on', n === name);
   });
@@ -272,7 +279,7 @@ async function loadMe(){
   try{
     const me = await api('/api/auth/me');
     const s = me.scope || {};
-    $('whoami').textContent = s.email || '';
+    $('whoami').textContent = s.email || me.email || '';
     const owned = (me.catalogs || []).filter(c => c.owner).map(c => c.name);
     if(s.all){
       $('scopebar').className = 'scopebar wide';
@@ -297,54 +304,44 @@ async function loadMe(){
   }catch(e){}
 }
 
-/* ───────────────────────── people ───────────────────────── */
+/* ───────────────────────── people (passwords) ───────────────────────── */
 
 function pwTag(p){
-  if(p.disabled)                 return '<span class="tag no">Disabled</span>';
-  if(!p.has_password)            return '<span class="tag part">Never set</span>';
-  if(p.must_change)              return '<span class="tag part">Must change</span>';
+  if(p.pw === 'never')       return '<span class="tag part">Never set</span>';
+  if(p.pw === 'must_change') return '<span class="tag part">Must change</span>';
   return '<span class="tag ok">Set</span>';
 }
 
-const ROLE_LABEL = {store:'Store', district:'District Manager', purchasing:'Purchasing Director',
-                    owner:'Catalog Owner', admin:'Administrator'};
-
 async function loadPeople(){
   try{
-    PEOPLE = await api('/api/admin/my-people');
+    PEOPLE = await api('/api/admin/people');
   }catch(e){
     $('people-body').innerHTML = '<div class="center">' + esc(e.message) + '</div>';
     return;
   }
   const list = PEOPLE.people || [];
   if(!list.length){
-    $('people-body').innerHTML = '<div class="center">Nobody yet. People appear here as soon ' +
-      'as their location is part of a catalog you run.</div>';
+    $('people-body').innerHTML = '<div class="center">Nobody yet — add your people one at a ' +
+      'time on the Users tab, then set each password here.</div>';
     return;
   }
   $('people-body').innerHTML =
     '<div class="scroll"><table class="t"><thead><tr>' +
-      '<th>Email</th><th>Role</th><th>Reaches</th><th>Password</th><th>Last sign-in</th>' +
-      '<th style="width:210px">Actions</th></tr></thead><tbody>' +
+      '<th>Email</th><th>User</th><th>Group 1</th><th>Password</th><th>Last sign-in</th>' +
+      '<th style="width:230px">Actions</th></tr></thead><tbody>' +
     list.map(p => {
-      const where = p.location_names && p.location_names.length
-        ? p.location_names.join(', ') + (p.locations > p.location_names.length
-            ? ' +' + (p.locations - p.location_names.length) + ' more' : '')
-        : (p.districts && p.districts.length ? 'District ' + p.districts.join(', ')
-                                             : (p.locations ? p.locations + ' locations' : '—'));
-      const first = !p.has_password;
+      const first = p.pw === 'never';
       return '<tr>' +
-        '<td>' + esc(p.email) + '</td>' +
-        '<td>' + esc(ROLE_LABEL[p.role] || p.role) + '</td>' +
-        '<td class="ro">' + esc(where) + '</td>' +
+        '<td>' + esc(p.email) + (p.admin ? ' <span class="tag ok">admin</span>' : '') + '</td>' +
+        '<td class="ro">' + esc(p.user || '—') + '</td>' +
+        '<td class="ro">' + esc(p.group1 || '—') + '</td>' +
         '<td>' + pwTag(p) + '</td>' +
-        '<td class="ro small">' + esc(p.last_sign_in ? p.last_sign_in.slice(0,10) : 'never') + '</td>' +
+        '<td class="ro small">' + esc(p.last_signin || 'never') + '</td>' +
         '<td class="row">' +
           '<button class="btn ' + (first ? 'warn' : 'ghost') + ' sm" data-pw="' + esc(p.email) + '">' +
             (first ? 'Set first password' : 'Set password') + '</button>' +
-          (p.has_password
-            ? '<button class="btn ghost sm" data-force="' + esc(p.email) + '">Force reset</button>'
-            : '') +
+          (first ? '' :
+            '<button class="btn ghost sm" data-force="' + esc(p.email) + '">Force reset</button>') +
         '</td></tr>';
     }).join('') + '</tbody></table></div>';
 
@@ -371,11 +368,11 @@ async function savePassword(){
   const btn = $('pwSave');
   btn.disabled = true;
   try{
-    const out = await api('/api/admin/my-people/' + encodeURIComponent(PW_FOR) + '/password', {
+    const out = await api('/api/admin/people/password', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({password: a, must_change: $('pwForceNew').checked})
+      body: JSON.stringify({email: PW_FOR, password: a, must_change: $('pwForceNew').checked})
     });
-    say('✓ ' + PW_FOR + ' — ' + (out.message || 'password saved.'), 'ok');
+    say('✓ ' + (out.message || (PW_FOR + ' — password saved.')), 'ok');
     closePw();
     await loadPeople();
   }catch(e){
@@ -389,152 +386,131 @@ async function forceReset(email){
   if(!confirm('Force a reset for ' + email + '?\n\nTheir current password stops working ' +
               'immediately, and they cannot sign in until you give them a new one.')) return;
   try{
-    const out = await api('/api/admin/my-people/' + encodeURIComponent(email) + '/force-reset',
-                          {method:'POST'});
+    const out = await api('/api/admin/people/force-reset', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: email})});
     say('✓ ' + (out.message || (email + ' can no longer sign in until given a new password.')), 'ok');
     await loadPeople();
   }catch(e){ say(e.message, 'bad'); }
 }
 
-/* ───────────────────────── locations grid ───────────────────────── */
+/* ───────────────────────── users (add one at a time) ───────────────────────── */
 
-function colLabel(c){
-  const special={file_date:'Date Added', file_name:'File Name'};
-  if(special[String(c).toLowerCase()]) return special[String(c).toLowerCase()];
-  return String(c).split('_').filter(Boolean)
-    .map(w=>w.toLowerCase()==='id'?'ID':w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+let USERS = [];
+let VENDORS = [];
+let U_EDIT = '';       // email being edited, '' = adding new
+
+function vendSummary(p){
+  if(p.admin) return 'everything (admin)';
+  if(p.vendors_mode === 'only')   return p.vendors.length ? 'only: ' + p.vendors.join(', ') : 'NOTHING (none ticked)';
+  if(p.vendors_mode === 'except') return p.vendors.length ? 'all except: ' + p.vendors.join(', ') : 'all vendors';
+  return 'all vendors';
 }
-function todayStamp(){
-  const d=new Date(), p=n=>String(n).padStart(2,'0');
-  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '
-    +p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
-}
-async function loadRows(){
-  EDITS = {};
-  DELETES = [];
-  ADDED = [];
-  $('loc-dirty').textContent = '';
+
+async function loadUsers(){
   try{
-    ROWS = await api('/api/admin/users/rows');
+    const out = await api('/api/admin/people');
+    USERS = out.people || [];
+    try{ VENDORS = (await api('/api/admin/people/vendors')).vendors || []; }catch(e){ VENDORS = []; }
   }catch(e){
-    $('loc-body').innerHTML = '<div class="center">' + esc(e.message) + '</div>';
+    $('u-body').innerHTML = '<div class="center">' + esc(e.message) + '</div>';
     return;
   }
-  const cols = ROWS.columns || [], editable = new Set(ROWS.editable || []);
-  const lc = ROWS.location_column;
-  const rows = ROWS.rows || [];
-  $('loc-status').textContent =
-    rows.length + ' row' + (rows.length === 1 ? '' : 's') + ' from "' + ROWS.dataset + '" · ' +
-    (editable.size ? 'you may edit: ' + [...editable].join(', ') : 'nothing here is editable by you');
-
-  if(!rows.length){
-    $('loc-body').innerHTML = '<div class="center">No rows. Once locations are assigned to your ' +
-      'catalog they appear here.</div>';
+  uVendUI();
+  if(!USERS.length){
+    $('u-body').innerHTML = '<div class="center">Nobody yet. Add your first person above — ' +
+      'start with yourself, ticked as administrator.</div>';
     return;
   }
-  const canDel = !!ROWS.can_delete;
-  $('loc-body').innerHTML =
+  $('u-body').innerHTML =
     '<div class="scroll"><table class="t"><thead><tr>' +
-      cols.map(c => '<th>' + esc(colLabel(c)) + (editable.has(c) ? '' : ' <span style="opacity:.55">· read-only</span>') + '</th>').join('') +
-      (canDel ? '<th></th>' : '') +
-    '</tr></thead><tbody id="loc-rows">' +
-    rows.map((r, i) =>
-      '<tr>' + cols.map(c => {
-        const v = r[c] === null || r[c] === undefined ? '' : r[c];
-        if(!editable.has(c)) return '<td class="ro">' + esc(v) + '</td>';
-        return '<td><input value="' + esc(v) + '" data-i="' + i + '" data-c="' + esc(c) + '"></td>';
-      }).join('') +
-      (canDel ? '<td><button class="btn ghost sm" data-del="' + esc(String(r[lc]||'')) + '">✕</button></td>' : '') +
-      '</tr>'
-    ).join('') + '</tbody></table></div>' +
-    (ROWS.can_add
-      ? '<div class="row" style="margin-top:10px"><button class="btn ghost" id="loc-addrow">➕ Add a row</button>' +
-        '<span class="muted small">New rows get today\'s date in Date Added. Save &amp; update writes everything at once.</span></div>'
-      : '');
-
-  if(canDel) $('loc-body').querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
-    const key = b.getAttribute('data-del');
-    if(!key) return;
-    if(!confirm('Delete the row for "' + key + '"?\n\nIt is removed from the dataset when you press Save & update — and they lose sign-in and catalog access with it.')) return;
-    DELETES.push(key);
-    b.closest('tr').style.opacity = '.38';
-    b.disabled = true;
-    dirtyNote();
-  });
-  const addBtn = $('loc-addrow');
-  if(addBtn) addBtn.onclick = () => {
-    const tr = document.createElement('tr');
-    const j = ADDED.length;
-    ADDED.push({});
-    tr.innerHTML = cols.map(c => {
-      const isDate = String(c).toLowerCase() === 'file_date';
-      const v = isDate ? todayStamp() : '';
-      if(isDate) ADDED[j][c] = v;
-      return '<td><input value="' + esc(v) + '" placeholder="' + esc(colLabel(c)) + '" data-new="' + j + '" data-c="' + esc(c) + '"></td>';
-    }).join('') + (canDel ? '<td class="ro small">new</td>' : '');
-    $('loc-rows').appendChild(tr);
-    tr.querySelectorAll('input[data-new]').forEach(inp => inp.addEventListener('input', () => {
-      ADDED[j][inp.getAttribute('data-c')] = inp.value;
-      dirtyNote();
-    }));
-    tr.querySelector('input').focus();
-    dirtyNote();
-  };
-
-  $('loc-body').querySelectorAll('input[data-c]').forEach(inp => {
-    inp.addEventListener('input', () => {
-      const i = inp.getAttribute('data-i'), c = inp.getAttribute('data-c');
-      const key = String(rows[i][lc] || '').trim();
-      if(!key) return;
-      // Only genuinely changed cells are sent. Posting the whole grid back would
-      // rewrite rows nobody touched, and make a save look like an edit to
-      // everything in the audit trail.
-      const original = rows[i][c] === null || rows[i][c] === undefined ? '' : String(rows[i][c]);
-      EDITS[key] = EDITS[key] || {};
-      if(inp.value === original) delete EDITS[key][c];
-      else EDITS[key][c] = inp.value;
-      if(!Object.keys(EDITS[key]).length) delete EDITS[key];
-      dirtyNote();
-    });
-  });
-}
-function dirtyNote(){
-  const bits = [];
-  const n = Object.keys(EDITS).length;
-  if(n) bits.push(n + ' changed');
-  const a = ADDED.filter(r => Object.values(r).some(v => String(v||'').trim())).length;
-  if(a) bits.push(a + ' new');
-  if(DELETES.length) bits.push(DELETES.length + ' to delete');
-  $('loc-dirty').textContent = bits.join(' · ');
+      '<th>Email</th><th>User</th><th>Group 1</th><th>Group 2</th><th>Vendor access</th>' +
+      '<th style="width:130px"></th></tr></thead><tbody>' +
+    USERS.map(p => '<tr>' +
+      '<td>' + esc(p.email) + (p.admin ? ' <span class="tag ok">admin</span>' : '') + '</td>' +
+      '<td class="ro">' + esc(p.user || '—') + '</td>' +
+      '<td class="ro">' + esc(p.group1 || '—') + '</td>' +
+      '<td class="ro">' + esc(p.group2 || '—') + '</td>' +
+      '<td class="ro small">' + esc(vendSummary(p)) + '</td>' +
+      '<td class="row">' +
+        '<button class="btn ghost sm" data-edit="' + esc(p.email) + '">Edit</button>' +
+        '<button class="btn ghost sm" data-drop="' + esc(p.email) + '">✕</button>' +
+      '</td></tr>').join('') + '</tbody></table></div>';
+  $('u-body').querySelectorAll('[data-edit]').forEach(b =>
+    b.onclick = () => editPerson(b.getAttribute('data-edit')));
+  $('u-body').querySelectorAll('[data-drop]').forEach(b =>
+    b.onclick = () => dropPerson(b.getAttribute('data-drop')));
 }
 
-async function saveRows(){
-  const lc = ROWS.location_column;
-  const keys = Object.keys(EDITS);
-  const newRows = ADDED.filter(r => String(r[lc]||'').trim());
-  const half = ADDED.filter(r => !String(r[lc]||'').trim()
-                                 && Object.values(r).some(v => String(v||'').trim()));
-  if(half.length) return say('A new row needs its "' + colLabel(lc) + '" filled in before it can be saved.', 'bad');
-  if(!keys.length && !newRows.length && !DELETES.length) return say('Nothing has changed yet.', 'info');
-  const payload = keys.map(k => Object.assign({[lc]: k}, EDITS[k])).concat(newRows);
-  const btn = $('loc-save');
-  btn.disabled = true; btn.textContent = 'Saving…';
-  try{
-    const out = await api('/api/admin/users/rows', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({rows: payload, delete: DELETES})
-    });
-    let text = out.message || 'Saved.';
-    if(out.flows && out.flows.length) text += ' Re-ran: ' + out.flows.join(', ') + '.';
-    if(out.refused && out.refused.length)
-      text += ' Refused (not in a catalog you run): ' + out.refused.join(', ') + '.';
-    say('✓ ' + text, out.refused && out.refused.length ? 'info' : 'ok');
-    await loadRows();
-  }catch(e){
-    say(e.message, 'bad');
-  }finally{
-    btn.disabled = false; btn.textContent = 'Save & update';
+function uVendUI(){
+  const mode = $('u-vmode').value;
+  const box = $('u-vlist');
+  const word = $('u-vword');
+  if(mode === 'all'){ box.style.display = 'none'; word.textContent = 'Everyone sees every vendor.'; return; }
+  box.style.display = 'block';
+  word.textContent = mode === 'only' ? 'Tick the vendors they may see.'
+                                     : 'Tick the vendors to keep AWAY from them — new vendors stay visible.';
+  if(!VENDORS.length){
+    box.innerHTML = '<div style="padding:12px" class="muted small">No vendors yet — they appear ' +
+      'here once the catalog is built.</div>';
+    return;
   }
+  const have = new Set((box._ticked || []));
+  box.innerHTML = VENDORS.map(v =>
+    '<label><input type="checkbox" class="u-vt" value="' + esc(v) + '"' +
+    (have.has(v) ? ' checked' : '') + '><span><span class="nm">' + esc(v) + '</span></span></label>').join('');
+}
+
+function fillPersonForm(p){
+  $('u-email').value = p ? p.email : '';
+  $('u-email').disabled = !!p;
+  $('u-user').value = p ? (p.user || '') : '';
+  $('u-g1').value = p ? (p.group1 || '') : '';
+  $('u-g2').value = p ? (p.group2 || '') : '';
+  $('u-admin').checked = p ? !!p.admin : false;
+  $('u-vmode').value = p ? (p.vendors_mode || 'all') : 'all';
+  $('u-vlist')._ticked = p ? (p.vendors || []) : [];
+  $('u-form-title').textContent = p ? ('Edit — ' + p.email) : 'Add a person';
+  $('u-save').textContent = p ? 'Save changes' : 'Save person';
+  uVendUI();
+}
+function resetPersonForm(){ U_EDIT = ''; fillPersonForm(null); }
+
+function editPerson(email){
+  const p = USERS.find(x => x.email === email); if(!p) return;
+  U_EDIT = email;
+  fillPersonForm(p);
+  $('u-email').scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+async function savePerson(){
+  const email = $('u-email').value.trim().toLowerCase();
+  if(!email) return say('An email address is what a person signs in with — it cannot be blank.', 'bad');
+  const ticked = [...document.querySelectorAll('.u-vt')].filter(i => i.checked).map(i => i.value);
+  const body = {email: email, user: $('u-user').value, group1: $('u-g1').value,
+                group2: $('u-g2').value, admin: $('u-admin').checked,
+                vendors_mode: $('u-vmode').value, vendors: ticked};
+  const btn = $('u-save');
+  btn.disabled = true;
+  try{
+    const out = await api('/api/admin/people', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    say('✓ ' + (out.message || 'Saved.'), 'ok');
+    resetPersonForm();
+    await loadUsers();
+    await loadPeople();
+  }catch(e){ say(e.message, 'bad'); }
+  finally{ btn.disabled = false; }
+}
+
+async function dropPerson(email){
+  if(!confirm('Remove ' + email + '?\n\nThey lose sign-in and catalog access immediately.')) return;
+  try{
+    const out = await api('/api/admin/people/delete', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: email})});
+    say('✓ ' + (out.message || 'Removed.'), 'ok');
+    await loadUsers();
+    await loadPeople();
+  }catch(e){ say(e.message, 'bad'); }
 }
 
 /* ───────────────────────── the catalog builder ───────────────────────── */
@@ -785,370 +761,9 @@ async function bldFeedRun(btn, id){
 
 loadMe();
 loadPeople();
-loadRows();
+loadUsers();
 loadBuilder();
 </script>
 
-<style id="cat-users-css">
-#ial-users{padding:14px 0 18px}
-#ial-users table{width:100%;border-collapse:collapse;font-size:13px;min-width:620px}
-#ial-users th{text-align:left;padding:6px 8px;color:#5a6273;font-weight:700;font-size:12px}
-#ial-users td{padding:6px 8px;border-top:1px solid #e6e8ee;vertical-align:top}
-#ial-users select{max-width:170px;font-size:13px;padding:4px}
-#ial-users .ial-bar{display:flex;gap:14px;flex-wrap:wrap;align-items:end;margin-bottom:12px}
-#ial-users .ial-f{display:flex;flex-direction:column;gap:3px;font-size:12px;color:#5a6273}
-#ial-users button{padding:6px 12px;border:1px solid #d1d5db;border-radius:7px;background:#fff;cursor:pointer;font-size:13px}
-#ial-users .ial-add{background:#16294f;color:#fff;border-color:#16294f;font-weight:600}
-#ial-users .ial-wrap{overflow-x:auto}
-</style>
-<script id="cat-users-panel">
-(function(){
-  var D=null, VALS={};
-  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){
-    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
-  function human(s){return String(s||'').split('_').filter(Boolean)
-    .map(function(w){return w.toLowerCase()==='id'?'ID':w.charAt(0).toUpperCase()+w.slice(1);}).join(' ');}
-  function opts(list,cur,blank){
-    return '<option value="">'+esc(blank)+'</option>'+(list||[]).map(function(v){
-      return '<option value="'+esc(v)+'"'+(String(v)===String(cur||'')?' selected':'')+'>'+esc(v)+'</option>';
-    }).join('');
-  }
-  function toArr(v){ return Array.isArray(v)?v.map(String):(v?[String(v)]:[]); }
-  function msCell(i,field,items,chosen){
-    var sel=toArr(chosen);
-    var word=sel.length?(sel.length<=2?sel.join(', '):sel.length+' selected'):'— any —';
-    return '<details class="ial-ms"><summary style="cursor:pointer;border:1px solid #d1d5db;'
-      +'border-radius:7px;padding:4px 9px;font-size:13px;background:#fff;max-width:170px;'
-      +'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(word)+' ▾</summary>'
-      +'<div style="position:absolute;z-index:60;background:#fff;border:1px solid #d1d5db;'
-      +'border-radius:9px;padding:9px;box-shadow:0 10px 26px rgba(0,0,0,.25);'
-      +'max-height:280px;overflow:auto;min-width:210px">'
-      +((items||[]).length?(items||[]).map(function(v){
-        return '<label style="display:flex;gap:7px;align-items:center;padding:3px 2px;'
-          +'font-size:12.5px;cursor:pointer;white-space:nowrap">'
-          +'<input type="checkbox" data-ial="mtick" data-f="'+esc(field)+'" data-i="'+i+'" value="'+esc(v)+'"'
-          +(sel.indexOf(String(v))>=0?' checked':'')+'>'+esc(v)+'</label>';
-      }).join(''):'<span style="color:#6b7280;font-size:12px">nothing to choose</span>')
-      +'</div></details>';
-  }
-  function vals(ds,col){
-    var k=ds+'|'+col;
-    if(VALS[k])return Promise.resolve(VALS[k]);
-    if(!ds||!col)return Promise.resolve([]);
-    return fetch('/api/admin/app-values?dataset='+encodeURIComponent(ds)+'&column='+encodeURIComponent(col),
-      {credentials:'same-origin'}).then(function(r){return r.ok?r.json():{values:[]};})
-      .then(function(j){VALS[k]=j.values||[];return VALS[k];}).catch(function(){return [];});
-  }
-  var QT=null;
-  function saveQuiet(){
-    clearTimeout(QT);
-    QT=setTimeout(function(){
-      fetch('/api/admin/app-users',{method:'POST',credentials:'same-origin',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({groups:D.groups,grants:D.grants,
-          extra_people:D.extra_people||[]})}).then(function(r){
-        if(!r.ok){
-          return r.json().catch(function(){return {};}).then(function(b){
-            alert('NOT SAVED — the server refused this change:\n\n'
-              +(b.detail||('error '+r.status)));
-            return load();
-          });
-        }
-      });
-    },700);
-  }
-  function sumFor(el){
-    var d=el.closest('details'); if(!d)return;
-    var i=parseInt(el.getAttribute('data-i'),10);
-    var f=el.getAttribute('data-f')||'values';
-    var g=D.grants[i]||{};
-    var arr=(f==='values')?( (g.values||[]).map(String) ):toArr(g[f]);
-    var word=arr.length?(arr.length<=2?arr.join(', '):arr.length+' selected'):'— any —';
-    if(f==='values'&&g.exclude&&arr.length)word='all except '+(arr.length<=2?arr.join(', '):arr.length);
-    var su=d.querySelector('summary'); if(su)su.textContent=word+' ▾';
-  }
-  function save(){
-    return fetch('/api/admin/app-users',{method:'POST',credentials:'same-origin',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({groups:D.groups,grants:D.grants,
-        extra_people:D.extra_people||[]})}).then(function(r){
-      if(!r.ok){
-        return r.json().catch(function(){return {};}).then(function(b){
-          alert('NOT SAVED — the server refused this change:\n\n'
-            +(b.detail||('error '+r.status))
-            +'\n\nThe screen has been reloaded to what is actually stored.');
-          return load();
-        });
-      }
-      return load();
-    });
-  }
-  function draw(){
-    var host=document.getElementById('ial-users'); if(!host||!D)return;
-    var ucols=(D.user_columns||[]).map(function(c){return {v:c,t:human(c)};});
-    function colSel(id,cur){
-      return '<select data-ial="'+id+'"><option value="">- choose -</option>'
-        +ucols.map(function(c){
-          return '<option value="'+esc(c.v)+'"'+(c.v===cur?' selected':'')+'>'+esc(c.t)+'</option>';
-        }).join('')+'</select>';
-    }
-    host.innerHTML='<h3 style="margin:0 0 10px;font-size:15px">Access grants <span style="font-size:10px;color:#9aa3b5;font-weight:600">v3</span></h3>'
-      +'<div class="ial-bar">'
-      +'<label class="ial-f">Group 1 column'+colSel('g1',D.groups.g1||'')+'</label>'
-      +'<label class="ial-f">Group 2 column'+colSel('g2',D.groups.g2||'')+'</label></div>'
-      +'<div class="ial-wrap"><table><thead><tr><th>Group 1</th><th>Group 2</th><th>User</th>'
-      +'<th>Column</th><th>Rows</th><th></th></tr></thead><tbody data-ial="rows">'
-      +'<tr><td colspan="6">Loading...</td></tr></tbody></table></div>'
-      +'<div style="margin-top:10px"><button class="ial-add" data-ial="add">+ New grant access</button> '
-      +'<span style="font-size:12px;color:#6b7280">Fill only as far as you need - naming a user '
-      +'overrules their group.</span></div>';
-    var rows=D.grants||[];
-    Promise.all(rows.map(function(g){return vals(D.catalog_dataset,g.column);})).then(function(rv){
-      var body=host.querySelector('[data-ial="rows"]'); if(!body)return;
-      if(!rows.length){
-        body.innerHTML='<tr><td colspan="6" style="color:#6b7280">Nobody has access yet.</td></tr>';
-        return;
-      }
-      body.innerHTML=rows.map(function(g,i){
-        var chosen=(g.values||[]).map(String);
-        var n=chosen.length;
-        var word=n?(g.exclude?('all except '+n):(n===1?'1 selected':n+' selected')):'— any —';
-        var pv=g.column
-          ? '<details class="ial-ms"><summary style="cursor:pointer;border:1px solid #d1d5db;'
-            +'border-radius:7px;padding:4px 9px;font-size:13px;background:#fff;max-width:180px;'
-            +'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(word)+' ▾</summary>'
-            +'<div style="position:absolute;z-index:60;background:#fff;border:1px solid #d1d5db;'
-            +'border-radius:9px;padding:9px;box-shadow:0 10px 26px rgba(0,0,0,.25);'
-            +'max-height:300px;overflow:auto;min-width:220px">'
-            +'<input placeholder="filter" data-ial="vfilter" style="width:100%;margin:0 0 7px;'
-            +'border:1px solid #d1d5db;border-radius:6px;padding:5px 7px;font-size:12.5px">'
-            +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 7px">'
-            +'<button data-ial="vall" data-i="'+i+'" style="padding:2px 8px;font-size:11.5px">All</button>'
-            +'<button data-ial="vnone" data-i="'+i+'" style="padding:2px 8px;font-size:11.5px">None</button>'
-            +'<label style="display:flex;gap:5px;align-items:center;font-size:11.5px;cursor:pointer">'
-            +'<input type="checkbox" data-ial="vexc" data-i="'+i+'"'+(g.exclude?' checked':'')+'>'
-            +'all <b>except</b> ticked</label></div>'
-            +(rv[i]||[]).map(function(v){
-              return '<label style="display:flex;gap:7px;align-items:center;padding:3px 2px;'
-                +'font-size:12.5px;cursor:pointer;white-space:nowrap">'
-                +'<input type="checkbox" data-ial="vtick" data-i="'+i+'" value="'+esc(v)+'"'
-                +(chosen.indexOf(String(v))>=0?' checked':'')+'>'+esc(v)+'</label>';
-            }).join('')
-            +'</div></details>'
-          : '<span style="color:#6b7280">every row</span>';
-        return '<tr>'
-          +'<td>'+msCell(i,'group1',D.group1_values,g.group1)+'</td>'
-          +'<td>'+msCell(i,'group2',D.group2_values,g.group2)+'</td>'
-          +'<td>'+msCell(i,'user',D.people,g.user)+'</td>'
-          +'<td><select data-ial="column" data-i="'+i+'">'+opts(D.catalog_columns,g.column,'- any -')+'</select></td>'
-          +'<td>'+pv+'</td>'
-          +'<td><button data-ial="drop" data-i="'+i+'">X</button></td></tr>';
-      }).join('');
-    });
-    drawExtras(host);
-  }
-  // Typed-in people and stores. Same rows the ETL screen edits — one store,
-  // two doors — so whichever is open, the other shows it on its next load.
-  function dl(id,list){
-    return '<datalist id="'+id+'">'+(list||[]).map(function(v){
-      return '<option value="'+esc(v)+'"></option>';}).join('')+'</datalist>';
-  }
-  function txt(k,i,v,ph,list){
-    return '<input data-ial="'+k+'" data-i="'+i+'" value="'+esc(v||'')+'" placeholder="'+esc(ph||'')+'"'
-      +(list?(' list="'+list+'"'):'')+' style="width:100%;min-width:110px;padding:4px;'
-      +'border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
-  }
-  function drawExtras(host){
-    var P=D.extra_people||[], L=D.extra_locations||[], FILE=D.locations||[];
-    var mine={}; L.forEach(function(l){mine[String(l.location||'').toLowerCase()]=1;});
-    var fileRows=FILE.filter(function(l){return !mine[String(l.location||'').toLowerCase()];});
-    var box=document.createElement('div');
-    box.innerHTML=
-      dl('ial-g1',D.group1_values)+dl('ial-g2',D.group2_values)
-      +'<h3 style="margin:22px 0 4px;font-size:15px">Users added by hand</h3>'
-      +'<p style="margin:0 0 8px;font-size:12px;color:#6b7280">People who are not in '
-      +esc(D.users_dataset||'the users dataset')+'. Give them a group and the grants above reach '
-      +'them like anybody else.</p>'
-      +'<div class="ial-wrap"><table><thead><tr><th>Email</th><th>User</th><th>Group 1</th>'
-      +'<th>Group 2</th><th>Access</th><th></th></tr></thead><tbody>'
-      +(P.length?P.map(function(p,i){
-        return '<tr>'
-          +'<td>'+txt('pe',i,p.email,'name@company.com')+'</td>'
-          +'<td>'+txt('pu',i,p.user,'81 - ALAMO')+'</td>'
-          +'<td>'+txt('p1',i,p.group_1,'',"ial-g1")+'</td>'
-          +'<td>'+txt('p2',i,p.group_2,'',"ial-g2")+'</td>'
-          +'<td><select data-ial="pa" data-i="'+i+'">'
-            +'<option value="member"'+(p.access!=='admin'?' selected':'')+'>Member</option>'
-            +'<option value="admin"'+(p.access==='admin'?' selected':'')+'>Admin</option></select></td>'
-          +'<td><button data-ial="pdrop" data-i="'+i+'">X</button></td></tr>';
-        }).join('')
-        :'<tr><td colspan="6" style="color:#6b7280">Nobody added by hand.</td></tr>')
-      +'</tbody></table></div>'
-      +'<div style="margin-top:8px"><button class="ial-add" data-ial="padd">+ Add a user</button></div>'
-      ;
-    host.appendChild(box);
-  }
-  function onChange(e){
-    var el=e.target, k=el.getAttribute&&el.getAttribute('data-ial');
-    if(!k||!D)return;
-    if(k==='g1'||k==='g2'){ D.groups[k]=el.value; VALS={}; save(); return; }
-    var j=parseInt(el.getAttribute('data-i'),10);
-    var PMAP={pe:'email',pu:'user',p1:'group_1',p2:'group_2',pa:'access'};
-    var LMAP={};
-    if(PMAP[k]){ if(!isNaN(j)&&(D.extra_people||[])[j]){
-      D.extra_people[j][PMAP[k]]=el.value; save(); } return; }
-    if(LMAP[k]){ if(!isNaN(j)&&(D.extra_locations||[])[j]){
-      D.extra_locations[j][LMAP[k]]=el.value; save(); } return; }
-    var i=parseInt(el.getAttribute('data-i'),10);
-    if(isNaN(i)||!D.grants[i])return;
-    if(k==='mtick'){
-      var f=el.getAttribute('data-f');
-      if(!isNaN(j)&&D.grants[j]&&f){
-        var arr=toArr(D.grants[j][f]);
-        if(el.checked){ if(arr.indexOf(el.value)<0)arr.push(el.value); }
-        else arr=arr.filter(function(v){return v!==el.value;});
-        D.grants[j][f]=arr;
-        sumFor(el);
-        saveQuiet();
-      }
-      return;
-    }
-    if(k==='vtick'){
-      var cur=(D.grants[i].values||[]).map(String);
-      if(el.checked){ if(cur.indexOf(el.value)<0)cur.push(el.value); }
-      else cur=cur.filter(function(v){return v!==el.value;});
-      D.grants[i].values=cur;
-      sumFor(el);
-      saveQuiet();
-      return;
-    } else if(k==='vexc'){
-      D.grants[i].exclude=el.checked;
-      sumFor(el);
-      saveQuiet();
-      return;
-    } else if(k==='vfilter'){
-      var q=(el.value||'').toLowerCase();
-      el.parentElement.querySelectorAll('label').forEach(function(l){
-        if(l.querySelector('[data-ial="vexc"]'))return;
-        l.style.display=(!q||l.textContent.toLowerCase().indexOf(q)>=0)?'flex':'none';
-      });
-      return;
-    } else if(k==='group1'||k==='group2'||k==='user'||k==='column'){
-      D.grants[i][k]=el.value;
-      if(k==='column')D.grants[i].values=[];
-    } else return;
-    save();
-  }
-  function onClick(e){
-    var el=e.target, k=el.getAttribute&&el.getAttribute('data-ial');
-    if(!k||!D)return;
-    var di=parseInt(el.getAttribute('data-i'),10);
-    if(k==='add'){ D.grants.push({group1:'',group2:'',user:'',column:'',values:[],exclude:false}); draw(); }
-    else if(k==='drop'){
-      var g=D.grants[di]||{};
-      var who=[].concat(toArr(g.user),toArr(g.group2),toArr(g.group1)).filter(Boolean).join(', ')||'everyone in this app';
-      if(!confirm('Delete this grant?\n\n'+who+'\n\nThey lose this access the moment it is gone.'))return;
-      D.grants.splice(di,1); save();
-    }
-    else if(k==='vall'){ var g2=D.grants[di];
-      if(g2&&g2.column){ vals(D.catalog_dataset,g2.column).then(function(v){
-        g2.values=(v||[]).map(String); save(); }); } }
-    else if(k==='vnone'){ if(D.grants[di]){ D.grants[di].values=[]; save(); } }
-    else if(k==='padd'){ D.extra_people=(D.extra_people||[]).concat(
-        [{email:'',user:'',group_1:'',group_2:'',access:'member'}]); draw(); }
-    else if(k==='pdrop'){
-      var pe=(D.extra_people[di]||{}).email||'this person';
-      if(!confirm('Remove '+pe+' from the hand-added users?'))return;
-      D.extra_people.splice(di,1); save();
-    }
-
-  }
-  function load(){
-    return fetch('/api/admin/app-users',{credentials:'same-origin'})
-      .then(function(r){return r.ok?r.json():null;})
-      .then(function(j){ if(!j)return; D=j; D.groups=D.groups||{g1:'',g2:''}; D.grants=D.grants||[];
-        D.extra_people=D.extra_people||[]; D.extra_locations=D.extra_locations||[]; draw(); })
-      .catch(function(){});
-  }
-  function leaves(re){
-    var out=[], all=document.querySelectorAll('body *');
-    for(var i=0;i<all.length;i++){
-      var el=all[i];
-      if(el.children.length)continue;
-      var t=(el.textContent||'').replace(/\s+/g,' ').trim();
-      if(re.test(t))out.push(el);
-    }
-    return out;
-  }
-  function relabel(){
-    leaves(/^people\s*&\s*passwords$/i).forEach(function(el){ el.textContent='Passwords'; });
-    var ps=document.querySelectorAll('p');
-    for(var j=0;j<ps.length;j++){
-      if(ps[j].children.length)continue;
-      var s=ps[j].textContent||'';
-      if(/rows of the location dataset/i.test(s)){
-        ps[j].textContent=s.replace(/rows of the location dataset your catalog covers/i,
-          'people in the users dataset this catalog serves');
-      }
-    }
-  }
-  // The Role column used to be decided by WHICH email column named you. In
-  // the shape everyone is built to now there is one address column, so that
-  // question has one answer for everybody and the whole list read "Purchasing
-  // Director". Group 1 is what actually says what someone is, so it is what
-  // the column shows — sourced from the same list the table is drawn from.
-  var GROUPS=null;
-  function humanGroup(s){
-    return String(s||'').split('_').filter(Boolean)
-      .map(function(w){return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase();}).join(' ');
-  }
-  function paintRoles(){
-    if(!GROUPS)return;
-    var rows=document.querySelectorAll('tr');
-    for(var i=0;i<rows.length;i++){
-      var cells=rows[i].cells; if(!cells||cells.length<2)continue;
-      var em=(cells[0].textContent||'').trim().toLowerCase();
-      if(em.indexOf('@')<1)continue;
-      var g=GROUPS[em];
-      if(g&&(cells[1].textContent||'').trim()!==humanGroup(g))cells[1].textContent=humanGroup(g);
-    }
-  }
-  function loadRoles(){
-    return fetch('/api/admin/my-people',{credentials:'same-origin'})
-      .then(function(r){return r.ok?r.json():null;})
-      .then(function(j){
-        if(!j||!j.people)return;
-        GROUPS={};
-        j.people.forEach(function(p){ if(p.group)GROUPS[String(p.email).toLowerCase()]=p.group; });
-        paintRoles();
-      }).catch(function(){});
-  }
-  function mount(){
-    relabel();
-    loadRoles();
-    if(document.getElementById('ial-users'))return;
-    var anchor=null, hs=document.querySelectorAll('h1,h2,h3,h4');
-    for(var i=0;i<hs.length;i++){
-      var t=(hs[i].textContent||'').trim();
-      if(/^users$/i.test(t)){anchor=hs[i];break;}
-    }
-    if(!anchor)for(var j=0;j<hs.length;j++){
-      var t2=(hs[j].textContent||'').trim();
-      if(/^locations$/i.test(t2)){anchor=hs[j];break;}
-    }
-    var box=document.createElement('div');
-    box.id='ial-users';
-    box.innerHTML='<div style="color:#6b7280">Loading...</div>';
-    if(anchor&&anchor.parentNode)anchor.parentNode.insertBefore(box,anchor.nextSibling);
-    else document.body.appendChild(box);
-    document.addEventListener('change',onChange,true);
-    document.addEventListener('click',onClick,true);
-    load();
-  }
-  if(document.readyState!=='loading')mount(); else document.addEventListener('DOMContentLoaded',mount);
-  if(window.MutationObserver)new MutationObserver(function(){relabel();paintRoles();})
-    .observe(document.documentElement,{childList:true,subtree:true});
-})();
-</script>
 </body>
 </html>

@@ -553,7 +553,9 @@ async def orders_list(coll: str, request: Request):
     ready = await _orders_ready(request)
     if ready is None:
         return await etl_get(f"/api/app/collections/{coll}/documents/")
-    _who, cust = ready
+    who, cust = ready
+    if _pending_level(who.get("scope")) < 1:
+        raise HTTPException(403, "You do not have access to pending orders.")
     from sqlalchemy import text
     with _builder_engine().connect() as c:
         rows = c.execute(text("select id, content from cat_orders where coll=:o and customer=:c "
@@ -575,6 +577,8 @@ async def orders_create(coll: str, request: Request):
     if ready is None:
         return await etl_send("POST", f"/api/app/collections/{coll}/documents/", payload)
     who, cust = ready
+    if not (who.get("scope") or {}).get("perms", _PERM_DEFAULT).get("order", True):
+        raise HTTPException(403, "You do not have access to the order form.")
     content = (payload or {}).get("content")
     if not isinstance(content, dict):
         content = payload if isinstance(payload, dict) else {}
@@ -593,7 +597,9 @@ async def orders_update(coll: str, doc_id: str, request: Request):
     ready = await _orders_ready(request)
     if ready is None:
         return await etl_send("PUT", f"/api/app/collections/{coll}/documents/{doc_id}", payload)
-    _who, cust = ready
+    who, cust = ready
+    if _pending_level(who.get("scope")) < 2:
+        raise HTTPException(403, "You may look at pending orders, but not change them.")
     content = (payload or {}).get("content")
     if not isinstance(content, dict):
         content = payload if isinstance(payload, dict) else {}
@@ -612,7 +618,9 @@ async def orders_delete(coll: str, doc_id: str, request: Request):
     ready = await _orders_ready(request)
     if ready is None:
         return await etl_send("DELETE", f"/api/app/collections/{coll}/documents/{doc_id}")
-    _who, cust = ready
+    who, cust = ready
+    if _pending_level(who.get("scope")) < 3:
+        raise HTTPException(403, "You do not have delete access on pending orders.")
     from sqlalchemy import text
     with _builder_engine().begin() as c:
         c.execute(text("delete from cat_orders where id=:i and coll=:o and customer=:c"),
@@ -1478,11 +1486,38 @@ async def _may_administer(request) -> bool:
     return _scope_administers(await _me_scope(request))
 
 
-def _with_admin_launcher(body: bytes, may_administer: bool = False) -> bytes:
-    """Pin Sign out for everybody; add the Admin button only where it belongs."""
+def _tabs_block(sc: dict) -> bytes:
+    """Hide the tabs this person may not reach — decided by the server, baked
+    into the page as literal values, no extra request from the browser."""
+    pr = dict(_PERM_DEFAULT)
+    pr.update(_clean_perms((sc or {}).get("perms") or {}))
+    allowed = []
+    if pr.get("catalog", True):
+        allowed.append("catalog")
+    if pr.get("order", True):
+        allowed.append("order")
+    if _PENDING_LEVELS.get(str(pr.get("pending", "delete")).lower(), 3) >= 1:
+        allowed.append("pending")
+    if len(allowed) >= 3:
+        return b""
+    js = ("<script>(function(){var A=" + json.dumps(allowed) + ";"
+          "function fix(){['__dtabs','__mtabs'].forEach(function(id){"
+          "var bar=document.getElementById(id);if(!bar)return;"
+          "bar.querySelectorAll('button[data-v]').forEach(function(b){"
+          "if(A.indexOf(b.getAttribute('data-v'))<0)b.style.display='none';});});}"
+          "var n=0;var t=setInterval(function(){fix();if(++n>25)clearInterval(t);},400);"
+          "setTimeout(function(){try{if(window.__showView&&A.length&&A.indexOf('catalog')<0)"
+          "window.__showView(A[0]);}catch(e){}},2600);"
+          "})();</script>")
+    return js.encode()
+
+
+def _with_admin_launcher(body: bytes, may_administer: bool = False, sc: dict | None = None) -> bytes:
+    """Pin Sign out for everybody; add the Admin button only where it belongs;
+    trim the tab bar to what this person may reach."""
     if b'id="cat-signout-css"' in body:
         return body
-    block = SIGNOUT_BLOCK + (ADMIN_BUTTON if may_administer else b"")
+    block = SIGNOUT_BLOCK + _tabs_block(sc or {}) + (ADMIN_BUTTON if may_administer else b"")
     cut = body.lower().rfind(b"</body>")
     if cut == -1:
         return body + block
@@ -1532,7 +1567,7 @@ async def home(request: Request):
             status_code=404, media_type="text/html")
     with open(page, "rb") as fh:
         body = fh.read()
-    return Response(_with_admin_launcher(body, _scope_administers(sc)),
+    return Response(_with_admin_launcher(body, _scope_administers(sc), sc),
                     media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
@@ -1823,6 +1858,12 @@ def _builder_migrate(engine):
                 must_change boolean default false,
                 added_at timestamptz default now(),
                 last_signin text default '')"""))
+        for ddl in ("alter table cat_people add column if not exists perms text default '{}'",
+                    "alter table cat_groups add column if not exists perms text default '{}'"):
+            try:
+                c.execute(text(ddl))
+            except Exception:
+                pass
         c.execute(text("""
             create table if not exists cat_kv(
                 k text primary key,
@@ -1845,6 +1886,7 @@ def _builder_migrate(engine):
                 parent text default '',
                 vendors_mode text default 'all',
                 vendors text default '[]',
+                perms text default '{}',
                 primary key (customer, name))"""))
         # Per-vendor ordering details: where orders go, freight minimums.
         c.execute(text("""
@@ -2207,6 +2249,8 @@ async def _builder_rows_local(ident: str, request: Request):
             if len(_BSCOPE) > 500:
                 for k in [k for k, v in list(_BSCOPE.items()) if v[0] <= now]:
                     _BSCOPE.pop(k, None)
+        if not (sc.get("perms") or _PERM_DEFAULT).get("catalog", True):
+            return JSONResponse([])          # no Catalog tab for this person
         cust = _bslug(str(sc.get("customer") or "")) if str(sc.get("customer") or "").strip() else ""
         if not cust or cust == "x":
             cust = _builder_only_customer()
@@ -2338,6 +2382,36 @@ def _person(email: str):
         return None
 
 
+# What a person may reach in the storefront: the Catalog tab, the Order Form,
+# and Pending orders (none / read / write / delete-anything). Nothing set
+# anywhere means everything — you limit by setting less on a group or a person.
+_PERM_DEFAULT = {"catalog": True, "order": True, "pending": "delete"}
+_PENDING_LEVELS = {"none": 0, "read": 1, "write": 2, "delete": 3}
+
+
+def _clean_perms(d) -> dict:
+    out = {}
+    if not isinstance(d, dict):
+        return out
+    for k in ("catalog", "order"):
+        v = d.get(k)
+        if isinstance(v, bool):
+            out[k] = v
+        elif str(v).strip().lower() in ("yes", "true", "1"):
+            out[k] = True
+        elif str(v).strip().lower() in ("no", "false", "0"):
+            out[k] = False
+    v = str(d.get("pending") or "").strip().lower()
+    if v in _PENDING_LEVELS:
+        out["pending"] = v
+    return out
+
+
+def _pending_level(sc: dict) -> int:
+    pr = (sc or {}).get("perms") or {}
+    return _PENDING_LEVELS.get(str(pr.get("pending", "delete")).lower(), 3)
+
+
 def _group_row(cust: str, name: str):
     if not name:
         return None
@@ -2376,13 +2450,42 @@ def _effective_access(p, cust: str):
     return "all", []
 
 
+def _effective_perms(p, cust: str) -> dict:
+    """Tab reach, resolved the same way as vendor access: the person's own
+    explicit settings win key by key, then Group 2's chain, then Group 1's,
+    and anything still unset falls to wide open."""
+    chain = []
+    try:
+        chain.append(_clean_perms(json.loads(p["perms"] or "{}")))
+    except Exception:
+        chain.append({})
+    for gname in (str(p["group2"] or "").strip(), str(p["group1"] or "").strip()):
+        seen = set()
+        g = _group_row(cust, gname)
+        while g is not None and g["name"] not in seen and len(seen) < 12:
+            seen.add(g["name"])
+            try:
+                chain.append(_clean_perms(json.loads(g["perms"] or "{}")))
+            except Exception:
+                pass
+            g = _group_row(cust, str(g["parent"] or "").strip())
+    out = dict(_PERM_DEFAULT)
+    for k in ("catalog", "order", "pending"):
+        for d in chain:
+            if k in d:
+                out[k] = d[k]
+                break
+    return out
+
+
 def _person_scope(p) -> dict:
     cust = str(p["customer"] or "").strip() or _builder_only_customer()
     if p["admin"]:
-        return {"all": True, "customer": cust, "vendors_all": True, "vendors": []}
+        return {"all": True, "customer": cust, "vendors_all": True, "vendors": [],
+                "perms": dict(_PERM_DEFAULT)}
     mode, vens = _effective_access(p, cust)
     return {"all": False, "customer": cust, "vendors_all": mode == "all",
-            "vendors": vens, "vendors_mode": mode,
+            "vendors": vens, "vendors_mode": mode, "perms": _effective_perms(p, cust),
             "user": p["user_label"], "group_1": p["group1"], "group_2": p["group2"]}
 
 
@@ -2434,9 +2537,13 @@ async def people_list(request: Request):
             vens = json.loads(p["vendors"] or "[]")
         except Exception:
             vens = []
+        try:
+            prm = _clean_perms(json.loads(p["perms"] or "{}"))
+        except Exception:
+            prm = {}
         out.append({"email": p["email"], "user": p["user_label"],
                     "group1": p["group1"], "group2": p["group2"],
-                    "admin": bool(p["admin"]),
+                    "admin": bool(p["admin"]), "perms": prm,
                     "vendors_mode": str(p["vendors_mode"] or "all"), "vendors": vens,
                     "pw": ("must_change" if p["must_change"] else "set") if p["pw_hash"]
                           else "never",
@@ -2462,6 +2569,7 @@ async def people_save(request: Request):
             "g1": str(body.get("group1") or "").strip()[:120],
             "g2": str(body.get("group2") or "").strip()[:120],
             "a": admin, "vm": mode, "vs": json.dumps(vens),
+            "pm": json.dumps(_clean_perms(body.get("perms"))),
             "c": _builder_only_customer()}
     from sqlalchemy import text
     with _builder_engine().begin() as c:
@@ -2469,11 +2577,12 @@ async def people_save(request: Request):
                         {"e": email}).first()
         if row:
             c.execute(text("update cat_people set user_label=:u, group1=:g1, group2=:g2, "
-                           "admin=:a, vendors_mode=:vm, vendors=:vs where email=:e"), vals)
+                           "admin=:a, vendors_mode=:vm, vendors=:vs, perms=:pm "
+                           "where email=:e"), vals)
         else:
             c.execute(text("insert into cat_people(email,customer,user_label,group1,group2,"
-                           "admin,vendors_mode,vendors) values(:e,:c,:u,:g1,:g2,:a,:vm,:vs)"),
-                      vals)
+                           "admin,vendors_mode,vendors,perms) "
+                           "values(:e,:c,:u,:g1,:g2,:a,:vm,:vs,:pm)"), vals)
     return {"ok": True, "added": not bool(row),
             "message": ("Added " if not row else "Updated ") + email +
                        (". Set their password on the Passwords tab before they can sign in."
@@ -2643,9 +2752,13 @@ async def groups_list(request: Request):
             vens = json.loads(g["vendors"] or "[]")
         except Exception:
             vens = []
+        try:
+            prm = _clean_perms(json.loads(g["perms"] or "{}"))
+        except Exception:
+            prm = {}
         out.append({"name": g["name"], "parent": g["parent"] or "",
                     "vendors_mode": str(g["vendors_mode"] or "all"), "vendors": vens,
-                    "members": counts.get(g["name"], 0)})
+                    "perms": prm, "members": counts.get(g["name"], 0)})
     return {"ok": True, "groups": out}
 
 
@@ -2664,16 +2777,18 @@ async def groups_save(request: Request):
         raise HTTPException(400, "Vendor access must be all, only, or except.")
     vens = [str(v)[:120] for v in (body.get("vendors") or []) if str(v).strip()][:500]
     cust = _builder_only_customer() or "main"
+    pm = json.dumps(_clean_perms(body.get("perms")))
     from sqlalchemy import text
     with _builder_engine().begin() as c:
-        n = c.execute(text("update cat_groups set parent=:p, vendors_mode=:m, vendors=:v "
-                           "where customer=:c and name=:n"),
-                      {"p": parent, "m": mode, "v": json.dumps(vens),
+        n = c.execute(text("update cat_groups set parent=:p, vendors_mode=:m, vendors=:v, "
+                           "perms=:pm where customer=:c and name=:n"),
+                      {"p": parent, "m": mode, "v": json.dumps(vens), "pm": pm,
                        "c": cust, "n": name}).rowcount
         if not n:
-            c.execute(text("insert into cat_groups(customer,name,parent,vendors_mode,vendors) "
-                           "values(:c,:n,:p,:m,:v)"),
-                      {"c": cust, "n": name, "p": parent, "m": mode, "v": json.dumps(vens)})
+            c.execute(text("insert into cat_groups(customer,name,parent,vendors_mode,vendors,perms) "
+                           "values(:c,:n,:p,:m,:v,:pm)"),
+                      {"c": cust, "n": name, "p": parent, "m": mode,
+                       "v": json.dumps(vens), "pm": pm})
     return {"ok": True, "message": f"Saved group {name}."}
 
 

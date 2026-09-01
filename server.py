@@ -35,6 +35,7 @@ browser never sees them.
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -575,11 +576,27 @@ async def auth_signin(request: Request):
     signs in to their own app without knowing any of this happened.
     """
     body = await request.json()
-    which = (body.get("app") or request.cookies.get(APP_COOKIE, "") or "").strip()
-    data = await etl_send("POST", "/api/access/signin",
-                          {"email": body.get("email", ""), "password": body.get("password", ""),
-                           "app": which})
-    token = data.pop("token", "")
+    email = str(body.get("email") or "").strip().lower()
+    # This app's own people sign in HERE — no ETL involved. Only an email with
+    # no local row falls through to the ETL, and only while one is configured.
+    p = _person(email)
+    if p is not None:
+        if not p["pw_hash"]:
+            raise HTTPException(401, "No password is set for you yet — ask your administrator.")
+        if not _pw_check(str(body.get("password") or ""), p["pw_hash"]):
+            raise HTTPException(401, "That is not the password.")
+        from sqlalchemy import text as _t
+        with _builder_engine().begin() as c:
+            c.execute(_t("update cat_people set last_signin=:n where email=:e"),
+                      {"n": time.strftime("%Y-%m-%d"), "e": email})
+        data = {"ok": True, "email": email, "must_change": bool(p["must_change"])}
+        token = _local_token(email)
+    else:
+        which = (body.get("app") or request.cookies.get(APP_COOKIE, "") or "").strip()
+        data = await etl_send("POST", "/api/access/signin",
+                              {"email": body.get("email", ""),
+                               "password": body.get("password", ""), "app": which})
+        token = data.pop("token", "")
     resp = JSONResponse(data)
     resp.set_cookie(
         SESSION_COOKIE, token,
@@ -595,6 +612,22 @@ async def auth_signin(request: Request):
 @app.post("/api/auth/change-password")
 async def auth_change_password(request: Request):
     body = await request.json()
+    tok = request.cookies.get(SESSION_COOKIE, "").strip('"')
+    if tok.startswith("v1."):
+        email = _local_token_email(tok)
+        p = _person(email) if email else None
+        if p is None:
+            raise HTTPException(401, "Not signed in.")
+        if not p["pw_hash"] or not _pw_check(str(body.get("current") or ""), p["pw_hash"]):
+            raise HTTPException(401, "The current password is not right.")
+        new = str(body.get("new") or "")
+        if len(new) < 8:
+            raise HTTPException(400, "Passwords need at least 8 characters.")
+        from sqlalchemy import text as _t
+        with _builder_engine().begin() as c:
+            c.execute(_t("update cat_people set pw_hash=:h, must_change=false where email=:e"),
+                      {"h": _pw_make(new), "e": email})
+        return {"ok": True, "message": "Password changed."}
     return await etl_send("POST", "/api/access/change-password",
                           {"current": body.get("current", ""), "new": body.get("new", "")},
                           request=request)
@@ -604,6 +637,12 @@ async def auth_change_password(request: Request):
 async def auth_me(request: Request):
     if not request.cookies.get(SESSION_COOKIE):
         raise HTTPException(401, "Not signed in.")
+    who = await _whoami(request)
+    if who is None:
+        raise HTTPException(401, "Not signed in.")
+    if who.get("local"):
+        return {"email": who["email"], "admin": who["admin"],
+                "must_change": who["must_change"], "scope": who["scope"]}
     return await etl_get("/api/access/me", request=request)
 
 
@@ -1641,6 +1680,26 @@ def _builder_migrate(engine):
                 c.execute(text(ddl))
             except Exception:
                 pass
+        # The people of this catalog — sign-in, groups, vendor reach, passwords.
+        # This is what makes the app stand alone from the ETL.
+        c.execute(text("""
+            create table if not exists cat_people(
+                email text primary key,
+                customer text not null default '',
+                user_label text default '',
+                group1 text default '',
+                group2 text default '',
+                admin boolean default false,
+                vendors_mode text default 'all',
+                vendors text default '[]',
+                pw_hash text default '',
+                must_change boolean default false,
+                added_at timestamptz default now(),
+                last_signin text default '')"""))
+        c.execute(text("""
+            create table if not exists cat_kv(
+                k text primary key,
+                v text default '')"""))
 
 
 # The schema the catalog reads — the same names the storefront asks for.
@@ -1721,16 +1780,16 @@ def _builder_only_customer() -> str:
 
 
 async def _builder_admin(request: Request):
-    """Who is asking, and which customer's builder is this.
-
-    Sign-in still lives in ETL Space for now — the session is checked there,
-    and everything after that happens here, on this app's own store."""
-    me = await etl_get("/api/access/me", request=request)
-    sc = (me or {}).get("scope") or {}
-    if not _scope_administers(sc):
+    """Who is asking, and which customer's builder is this — answered by this
+    app's own people first, the ETL session only as the transition fallback."""
+    who = await _whoami(request)
+    if who is None:
+        raise HTTPException(401, "Not signed in.")
+    if not who["admin"]:
         raise HTTPException(403, "Only an administrator or the catalog owner can build the catalog.")
+    sc = who["scope"] or {}
     customer = str(sc.get("customer") or "").strip()
-    if not customer:
+    if not customer and not who.get("local"):
         try:
             my = await _my_datasets(request)
             customer = str((my or {}).get("customer") or "").strip()
@@ -1740,10 +1799,7 @@ async def _builder_admin(request: Request):
         only = _builder_only_customer()
         if only:
             return sc, only, only
-        customer = os.environ.get("CATALOG_CUSTOMER", "").strip()
-    if not customer:
-        raise HTTPException(400, "This session is not inside any one customer's catalog — open the "
-                                 "admin through the customer's own sign-in link.")
+        customer = os.environ.get("CATALOG_CUSTOMER", "").strip() or "main"
     return sc, _bslug(customer), customer
 
 
@@ -1974,8 +2030,10 @@ async def _builder_rows_local(ident: str, request: Request):
         if hit and hit[0] > now:
             sc = hit[1]
         else:
-            me = await etl_get("/api/access/me", request=request)
-            sc = (me or {}).get("scope") or {}
+            who = await _whoami(request)
+            if who is None:
+                return None
+            sc = who["scope"] or {}
             _BSCOPE[tok] = (now + 60, sc)
             if len(_BSCOPE) > 500:
                 for k in [k for k, v in list(_BSCOPE.items()) if v[0] <= now]:
@@ -1995,10 +2053,15 @@ async def _builder_rows_local(ident: str, request: Request):
             return None
         df = pd.read_sql_table(built["table_name"], eng)
         # Access still means something here: a person whose reach is a set of
-        # vendors sees exactly those vendors of the built catalog.
+        # vendors sees exactly those vendors of the built catalog — and "all
+        # except these" stays durable as new vendors arrive.
         if not sc.get("all") and not sc.get("vendors_all"):
             vend = {str(v).strip().lower() for v in (sc.get("vendors") or [])}
-            df = df[df["Vendor"].astype(str).str.strip().str.lower().isin(vend)] if vend else df.iloc[0:0]
+            col = df["Vendor"].astype(str).str.strip().str.lower()
+            if str(sc.get("vendors_mode") or "") == "except":
+                df = df[~col.isin(vend)] if vend else df
+            else:
+                df = df[col.isin(vend)] if vend else df.iloc[0:0]
         params = dict(request.query_params)
         want = [c.strip() for c in (params.get("groupby") or params.get("fields") or "").split(",")
                 if c.strip()]
@@ -2022,6 +2085,258 @@ async def _builder_rows_local(ident: str, request: Request):
         return None
     except Exception:
         return None
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# THE PEOPLE OF THIS CATALOG — standalone sign-in, users, passwords, reach.
+#
+# This is the detachment from the ETL. People are rows in this app's own
+# database, added one at a time in the admin. The same row feeds three things:
+#   sign-in    — email + password (hashed here, checked here, session minted here)
+#   grants     — group 1, group 2, user label, and which vendors they reach
+#   passwords  — the Passwords tab manages the hash on this row
+# While ETL_BASE_URL is still set, an email with no local row falls back to the
+# ETL, so nothing breaks mid-move. Remove that variable and the app stands alone.
+# ════════════════════════════════════════════════════════════════════════════
+
+def _people_on() -> bool:
+    return bool(os.environ.get("CATALOG_DATABASE_URL", "").strip())
+
+
+def _local_secret() -> bytes:
+    s = os.environ.get("SESSION_SECRET", "").strip()
+    if s:
+        return s.encode()
+    from sqlalchemy import text
+    eng = _builder_engine()
+    with eng.begin() as c:
+        row = c.execute(text("select v from cat_kv where k='session_secret'")).first()
+        if row and row[0]:
+            return str(row[0]).encode()
+        v = secrets.token_hex(32)
+        c.execute(text("insert into cat_kv(k,v) values('session_secret',:v)"), {"v": v})
+        return v.encode()
+
+
+def _local_token(email: str) -> str:
+    hours = int(os.environ.get("SESSION_HOURS", "12") or 12)
+    msg = f"{email.strip().lower()}|{int(time.time()) + hours * 3600}"
+    sig = hmac.new(_local_secret(), msg.encode(), hashlib.sha256).hexdigest()
+    # no '=' padding — an '=' in a cookie value gets the whole cookie quoted
+    return "v1." + base64.urlsafe_b64encode(msg.encode()).decode().rstrip("=") + "." + sig
+
+
+def _local_token_email(tok: str) -> str:
+    try:
+        tok = tok.strip('"')          # some clients hand a quoted cookie back
+        _v, b64, sig = tok.split(".", 2)
+        msg = base64.urlsafe_b64decode((b64 + "=" * (-len(b64) % 4)).encode()).decode()
+        if not hmac.compare_digest(
+                hmac.new(_local_secret(), msg.encode(), hashlib.sha256).hexdigest(), sig):
+            return ""
+        email, exp = msg.rsplit("|", 1)
+        if time.time() > float(exp):
+            return ""
+        return email
+    except Exception:
+        return ""
+
+
+def _pw_make(pw: str) -> str:
+    salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt.encode(), 120000).hex()
+    return f"pbkdf2${salt}${h}"
+
+
+def _pw_check(pw: str, stored: str) -> bool:
+    try:
+        _alg, salt, h = stored.split("$", 2)
+        cand = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt.encode(), 120000).hex()
+        return hmac.compare_digest(cand, h)
+    except Exception:
+        return False
+
+
+def _person(email: str):
+    if not _people_on():
+        return None
+    from sqlalchemy import text
+    try:
+        with _builder_engine().connect() as c:
+            return c.execute(text("select * from cat_people where email=:e"),
+                             {"e": str(email).strip().lower()}).mappings().first()
+    except Exception:
+        return None
+
+
+def _person_scope(p) -> dict:
+    cust = str(p["customer"] or "").strip() or _builder_only_customer()
+    if p["admin"]:
+        return {"all": True, "customer": cust, "vendors_all": True, "vendors": []}
+    mode = str(p["vendors_mode"] or "all")
+    try:
+        vens = json.loads(p["vendors"] or "[]")
+    except Exception:
+        vens = []
+    return {"all": False, "customer": cust, "vendors_all": mode == "all",
+            "vendors": vens, "vendors_mode": mode,
+            "user": p["user_label"], "group_1": p["group1"], "group_2": p["group2"]}
+
+
+async def _whoami(request: Request):
+    """One answer to 'who is asking' — this app's own people first, the ETL
+    session as the fallback while the move is still in progress."""
+    tok = request.cookies.get(SESSION_COOKIE, "").strip('"')
+    if not tok:
+        return None
+    if tok.startswith("v1."):
+        email = _local_token_email(tok)
+        p = _person(email) if email else None
+        if p is None:
+            return None
+        return {"email": email, "admin": bool(p["admin"]), "local": True,
+                "must_change": bool(p["must_change"]), "scope": _person_scope(p)}
+    if ETL_BASE:
+        try:
+            me = await etl_get("/api/access/me", request=request)
+            sc = (me or {}).get("scope") or {}
+            return {"email": str((me or {}).get("email") or ""), "local": False,
+                    "admin": _scope_administers(sc), "must_change": False, "scope": sc}
+        except HTTPException:
+            return None
+    return None
+
+
+async def _people_gate(request: Request):
+    who = await _whoami(request)
+    if who is None:
+        raise HTTPException(401, "Not signed in.")
+    if not who["admin"]:
+        raise HTTPException(403, "Only an administrator can manage people.")
+    return who
+
+
+@app.get("/api/admin/people")
+async def people_list(request: Request):
+    await _people_gate(request)
+    if not _people_on():
+        raise HTTPException(400, "The catalog's own database is not connected yet.")
+    from sqlalchemy import text
+    with _builder_engine().connect() as c:
+        rows = c.execute(text("select * from cat_people order by group1, user_label, email"))\
+                .mappings().all()
+    out = []
+    for p in rows:
+        try:
+            vens = json.loads(p["vendors"] or "[]")
+        except Exception:
+            vens = []
+        out.append({"email": p["email"], "user": p["user_label"],
+                    "group1": p["group1"], "group2": p["group2"],
+                    "admin": bool(p["admin"]),
+                    "vendors_mode": str(p["vendors_mode"] or "all"), "vendors": vens,
+                    "pw": ("must_change" if p["must_change"] else "set") if p["pw_hash"]
+                          else "never",
+                    "last_signin": p["last_signin"] or ""})
+    return {"ok": True, "people": out}
+
+
+@app.post("/api/admin/people")
+async def people_save(request: Request):
+    who = await _people_gate(request)
+    body = await request.json() or {}
+    email = str(body.get("email") or "").strip().lower()
+    if "@" not in email or "." not in email or len(email) > 200:
+        raise HTTPException(400, "That does not look like an email address.")
+    admin = bool(body.get("admin"))
+    if email == who["email"] and who.get("local") and not admin:
+        raise HTTPException(400, "You cannot take away your own administrator access.")
+    mode = str(body.get("vendors_mode") or "all").lower()
+    if mode not in ("all", "only", "except"):
+        raise HTTPException(400, "Vendor access must be all, only, or except.")
+    vens = [str(v)[:120] for v in (body.get("vendors") or []) if str(v).strip()][:500]
+    vals = {"e": email, "u": str(body.get("user") or "").strip()[:120],
+            "g1": str(body.get("group1") or "").strip()[:120],
+            "g2": str(body.get("group2") or "").strip()[:120],
+            "a": admin, "vm": mode, "vs": json.dumps(vens),
+            "c": _builder_only_customer()}
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        row = c.execute(text("select email from cat_people where email=:e"),
+                        {"e": email}).first()
+        if row:
+            c.execute(text("update cat_people set user_label=:u, group1=:g1, group2=:g2, "
+                           "admin=:a, vendors_mode=:vm, vendors=:vs where email=:e"), vals)
+        else:
+            c.execute(text("insert into cat_people(email,customer,user_label,group1,group2,"
+                           "admin,vendors_mode,vendors) values(:e,:c,:u,:g1,:g2,:a,:vm,:vs)"),
+                      vals)
+    return {"ok": True, "added": not bool(row),
+            "message": ("Added " if not row else "Updated ") + email +
+                       (". Set their password on the Passwords tab before they can sign in."
+                        if not row else ".")}
+
+
+@app.post("/api/admin/people/delete")
+async def people_delete(request: Request):
+    who = await _people_gate(request)
+    body = await request.json() or {}
+    email = str(body.get("email") or "").strip().lower()
+    if email == who["email"]:
+        raise HTTPException(400, "You cannot delete yourself.")
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("delete from cat_people where email=:e"), {"e": email})
+    return {"ok": True, "message": f"Removed {email}. They can no longer sign in."}
+
+
+@app.post("/api/admin/people/password")
+async def people_password(request: Request):
+    await _people_gate(request)
+    body = await request.json() or {}
+    email = str(body.get("email") or "").strip().lower()
+    pw = str(body.get("password") or "")
+    if len(pw) < 8:
+        raise HTTPException(400, "Passwords need at least 8 characters.")
+    if _person(email) is None:
+        raise HTTPException(404, "No such person — add them on the Users tab first.")
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("update cat_people set pw_hash=:h, must_change=:m where email=:e"),
+                  {"h": _pw_make(pw), "m": bool(body.get("must_change", True)), "e": email})
+    return {"ok": True, "message": f"Password set for {email}."}
+
+
+@app.post("/api/admin/people/force-reset")
+async def people_force_reset(request: Request):
+    await _people_gate(request)
+    body = await request.json() or {}
+    email = str(body.get("email") or "").strip().lower()
+    if _person(email) is None:
+        raise HTTPException(404, "No such person.")
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("update cat_people set pw_hash='', must_change=false where email=:e"),
+                  {"e": email})
+    return {"ok": True, "message": f"{email} can no longer sign in until a new password is set."}
+
+
+@app.get("/api/admin/people/vendors")
+async def people_vendors(request: Request):
+    """Every vendor in the built catalog — the tick list for vendor access."""
+    await _people_gate(request)
+    from sqlalchemy import text
+    vals = []
+    try:
+        eng = _builder_engine()
+        with eng.connect() as c:
+            built = c.execute(text("select table_name from cat_built limit 1")).first()
+            if built:
+                vals = sorted({str(r[0]).strip() for r in c.execute(text(
+                    f'select distinct "Vendor" from "{built[0]}"')) if str(r[0]).strip()})
+    except Exception:
+        vals = []
+    return {"ok": True, "vendors": vals[:2000]}
 
 
 # ════════════════════════════════════════════════════════════════════════════

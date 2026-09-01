@@ -3215,10 +3215,11 @@ def _feed_fetch_api(cfg: dict):
     if not url.lower().startswith(("http://", "https://")):
         raise ValueError("The URL must start with http:// or https://")
     headers = {}
-    h = str(cfg.get("header") or "").strip()
-    if h and ":" in h:
-        k, v = h.split(":", 1)
-        headers[k.strip()] = v.strip()
+    for part in [p for p in
+                 str(cfg.get("header") or "").replace("\n", ";").split(";") if p.strip()]:
+        if ":" in part:
+            k, v = part.split(":", 1)
+            headers[k.strip()] = v.strip()
     auth = None
     if str(cfg.get("auth_user") or "").strip():
         auth = (str(cfg.get("auth_user")).strip(), str(cfg.get("auth_pass") or ""))
@@ -3246,31 +3247,58 @@ def _feed_fetch_api(cfg: dict):
         headers.setdefault("Authorization", "Bearer " + tok)
     qparams = [(str(k), str(v)) for k, v in (cfg.get("qparams") or [])
                if str(k).strip()]
-    with httpx.Client(timeout=90, follow_redirects=True, auth=auth) as cl:
+    def _unwrap(payload):
+        if isinstance(payload, dict):           # common wrappers: {"data": [...]}
+            for key in ("data", "items", "rows", "results", "products"):
+                if isinstance(payload.get(key), list):
+                    return payload[key]
+        return payload
+
+    with httpx.Client(timeout=120, follow_redirects=True, auth=auth) as cl:
         r = cl.get(url, headers=headers, params=qparams or None)
         if r.status_code != 200:
             raise ValueError(f"The API answered {r.status_code}.")
         data = r.content
         ctype = r.headers.get("content-type", "")
-    name = url.rsplit("/", 1)[-1].split("?")[0] or "feed"
-    if "." not in name:
-        name += ".xlsx" if "sheet" in ctype else ".csv"
-    if "json" in ctype and not name.lower().endswith((".csv", ".xlsx", ".xls", ".xlsm")):
-        # A JSON API — a list of records becomes the table.
-        import io
-        import pandas as pd
-        parsed = json.loads(data.decode("utf-8", "replace"))
-        if isinstance(parsed, dict):            # common wrappers: {"data": [...]}
-            for key in ("data", "items", "rows", "results"):
-                if isinstance(parsed.get(key), list):
-                    parsed = parsed[key]
-                    break
-        if not isinstance(parsed, list) or not parsed:
-            raise ValueError("The API returned JSON, but not a list of records.")
-        df = pd.json_normalize(parsed)
-        buf = io.BytesIO()
-        df.to_csv(buf, index=False)
-        data, name = buf.getvalue(), "feed.csv"
+        base = url.rsplit("/", 1)[-1].split("?")[0] or "feed"
+        is_file = base.lower().endswith((".csv", ".xlsx", ".xls", ".xlsm"))
+        name = base if "." in base else base + (".xlsx" if "sheet" in ctype else ".csv")
+        if "json" in ctype and not is_file:
+            # A JSON API — a list of records becomes the table. When a limit
+            # parameter is set and a page comes back full, keep turning pages
+            # (Ashley-style pagination) until a short page says done.
+            import io
+            import pandas as pd
+            parsed = _unwrap(json.loads(data.decode("utf-8", "replace")))
+            if not isinstance(parsed, list) or not parsed:
+                raise ValueError("The API returned JSON, but not a list of records.")
+            records = list(parsed)
+            qd = {str(k).lower(): str(v) for k, v in qparams}
+            try:
+                limit_val = int(qd.get("limit") or 0)
+            except Exception:
+                limit_val = 0
+            if limit_val > 0 and len(parsed) >= limit_val and "page" not in qd:
+                page = 2
+                while page <= 200:
+                    r2 = cl.get(url, headers=headers,
+                                params=qparams + [("page", str(page))])
+                    if r2.status_code != 200:
+                        break
+                    try:
+                        more = _unwrap(json.loads(r2.content.decode("utf-8", "replace")))
+                    except Exception:
+                        break
+                    if not isinstance(more, list) or not more:
+                        break
+                    records.extend(more)
+                    if len(more) < limit_val:
+                        break
+                    page += 1
+            df = pd.json_normalize(records)
+            buf = io.BytesIO()
+            df.to_csv(buf, index=False)
+            data, name = buf.getvalue(), "feed.csv"
     return name, data
 
 

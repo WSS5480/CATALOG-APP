@@ -1514,6 +1514,35 @@ async def _may_administer(request) -> bool:
     return _scope_administers(await _me_scope(request))
 
 
+BUDGET_LINE_BLOCK = b"""
+<script>(function(){
+ var B=null;
+ function money(n){return '$'+(+n).toLocaleString(undefined,{maximumFractionDigits:0});}
+ function cartTotal(){ var el=document.getElementById('orderTotal'); if(!el) return 0;
+   var n=parseFloat(String(el.textContent||'').replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:n; }
+ function draw(){ if(!B||!B.length) return;
+   var fm=document.getElementById('freightMin'); if(!fm||!fm.parentNode) return;
+   var el=document.getElementById('budgetLine');
+   if(!el){ el=document.createElement('div'); el.id='budgetLine';
+     el.style.cssText='text-align:left;margin:6px 0;font-size:0.9rem;font-weight:bold;';
+     fm.parentNode.insertBefore(el, fm.nextSibling); }
+   var t=cartTotal();
+   el.innerHTML=B.map(function(b){
+     var after=b.spent+t; var over=after>b.budget;
+     return '<div style="color:'+(over?'#e53935':'#12925f')+'">Budget \u2014 '+b.name+': '+
+       money(b.spent)+' spent of '+money(b.budget)+
+       (t?' \u00b7 with this order: '+money(after):'')+
+       (over?' \u2014 OVER BUDGET (admin approval needed)':' \u2014 ok')+'</div>';
+   }).join('');
+ }
+ function load(){ fetch('/api/app/my-budget',{credentials:'same-origin'})
+   .then(function(r){return r.ok?r.json():null;})
+   .then(function(d){ B=(d&&d.budgets)||[]; draw(); }).catch(function(){}); }
+ load(); setInterval(load, 90000); setInterval(draw, 1200);
+})();</script>
+"""
+
+
 def _tabs_block(sc: dict) -> bytes:
     """Hide the tabs this person may not reach — decided by the server, baked
     into the page as literal values, no extra request from the browser."""
@@ -1546,6 +1575,8 @@ def _with_admin_launcher(body: bytes, may_administer: bool = False, sc: dict | N
     if b'id="cat-signout-css"' in body:
         return body
     block = SIGNOUT_BLOCK + _tabs_block(sc or {}) + (ADMIN_BUTTON if may_administer else b"")
+    if sc and not sc.get("all") and "perms" in sc:
+        block += BUDGET_LINE_BLOCK
     cut = body.lower().rfind(b"</body>")
     if cut == -1:
         return body + block
@@ -2849,6 +2880,42 @@ async def _aux_rows_local(ident: str, request: Request):
         return JSONResponse(json.loads(df.to_json(orient="records")))
     except Exception:
         return None
+
+
+@app.get("/api/app/my-budget")
+async def my_budget(request: Request):
+    """Where the signed-in person stands against their budgets this month —
+    the order form shows it next to the cart total."""
+    who = await _whoami(request)
+    if who is None:
+        raise HTTPException(401, "Not signed in.")
+    if not who.get("local") or who.get("admin") or not _people_on():
+        return {"budgets": []}
+    p = _person(str(who.get("email") or ""))
+    if p is None:
+        return {"budgets": []}
+    cust = str(p["customer"] or "").strip() or _builder_only_customer() or "main"
+    eng = _builder_engine()
+    spend = _month_spend(eng, cust)
+    out = []
+    pb = _money(p["budget"])
+    if pb is not None:
+        out.append({"name": p["user_label"] or "this location", "budget": pb,
+                    "spent": round(spend.get(str(p["email"]).lower(), 0.0), 2)})
+    my_groups = _person_group_names(cust, p["group2"], p["group1"])
+    if my_groups:
+        from sqlalchemy import text
+        with eng.connect() as c:
+            allp = c.execute(text("select email, group1, group2 from cat_people")).all()
+        chains = {str(e).lower(): _person_group_names(cust, g2, g1) for e, g1, g2 in allp}
+        for gname in sorted(my_groups):
+            g = _group_row(cust, gname)
+            gb = _money(g["budget"]) if g is not None else None
+            if gb is None:
+                continue
+            gspent = sum(v for em, v in spend.items() if gname in chains.get(em, set()))
+            out.append({"name": "group " + gname, "budget": gb, "spent": round(gspent, 2)})
+    return {"budgets": out}
 
 
 @app.get("/api/admin/groups")

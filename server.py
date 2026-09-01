@@ -32,7 +32,9 @@ at. Run as many copies as you like, each with different datasets:
 Nothing here talks to any BI platform; the credentials stay server-side so the
 browser never sees them.
 """
+import asyncio
 import base64
+import hashlib
 import json
 import os
 import secrets
@@ -1631,6 +1633,14 @@ def _builder_migrate(engine):
                 row_count integer default 0,
                 serving boolean default true,
                 built_at timestamptz default now())"""))
+        # Feeds (connectors) arrived after the first tables — add their columns
+        # to stores created before them.
+        for ddl in ("alter table cat_sources add column if not exists feed text default '{}'",
+                    "alter table cat_sources add column if not exists feed_status text default '{}'"):
+            try:
+                c.execute(text(ddl))
+            except Exception:
+                pass
 
 
 # The schema the catalog reads — the same names the storefront asks for.
@@ -1750,10 +1760,14 @@ async def builder_state(request: Request):
         sources.append({"id": r["id"], "name": r["name"], "filename": r["filename"],
                         "vendor": r["vendor_label"], "rows": r["row_count"],
                         "mapping": m, "columns": cols,
-                        "missing": _builder_missing(m, r["vendor_label"])})
+                        "missing": _builder_missing(m, r["vendor_label"]),
+                        "feed": _feed_public(_feed_of(r)),
+                        "feed_status": _feed_status_of(r)})
+    host, _p, user, pw = _email_env()
     return {"connected": True, "customer": label,
             "fields": [{"name": n, "required": r, "help": h} for n, r, h in BUILDER_FIELDS],
             "sources": sources,
+            "email_ready": bool(host and user and pw),
             "built": ({"rows": built["row_count"], "at": str(built["built_at"])[:19],
                        "serving": bool(built["serving"])} if built else None)}
 
@@ -1765,23 +1779,10 @@ async def builder_upload(request: Request):
     filename = str((body or {}).get("filename") or "upload.csv")
     vendor = str((body or {}).get("vendor") or "").strip()
     raw = base64.b64decode(str((body or {}).get("content_b64") or ""), validate=False)
-    if not raw:
-        raise HTTPException(400, "The file arrived empty.")
-    if len(raw) > 30 * 1024 * 1024:
-        raise HTTPException(400, "That file is over 30 MB — trim it or split it first.")
-    import io
-    import pandas as pd
     try:
-        if filename.lower().endswith((".xlsx", ".xlsm", ".xls")):
-            df = pd.read_excel(io.BytesIO(raw))
-        else:
-            df = pd.read_csv(io.BytesIO(raw), dtype=str, keep_default_na=False,
-                             encoding_errors="replace")
-    except Exception as e:
-        raise HTTPException(400, f"Could not read that file: {e}")
-    if df.empty or not len(df.columns):
-        raise HTTPException(400, "The file has no rows.")
-    df.columns = [str(c).strip() for c in df.columns]
+        df = _builder_read_frame(filename, raw)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     eng = _builder_engine()
     sid = secrets.token_hex(4)
     table = f"src_{cust}_{sid}"
@@ -1867,25 +1868,24 @@ async def builder_preview(request: Request, id: str = ""):
     return {"columns": list(out.columns), "rows": json.loads(out.to_json(orient="records"))}
 
 
-@app.post("/api/admin/builder/build")
-async def builder_build(request: Request):
-    sc, cust, _label = await _builder_admin(request)
+def _builder_do_build(eng, cust: str):
+    """Append every ready source into one catalog table. Raises ValueError with
+    a human sentence when it cannot. Keeps the current serving switch."""
     import pandas as pd
     from sqlalchemy import text
-    eng = _builder_engine()
     with eng.connect() as c:
         srcs = c.execute(text("select * from cat_sources where customer=:c order by added_at"),
                          {"c": cust}).mappings().all()
     if not srcs:
-        raise HTTPException(400, "No sources yet — upload at least one vendor file first.")
+        raise ValueError("No sources yet — upload at least one vendor file first.")
     blocked = []
     for r in srcs:
         miss = _builder_missing(json.loads(r["mapping"] or "{}"), r["vendor_label"])
         if miss:
             blocked.append(f"{r['name']}: {', '.join(miss)}")
     if blocked:
-        raise HTTPException(400, "Not built — these sources still have required fields with no "
-                                 "column: " + " · ".join(blocked[:4]))
+        raise ValueError("Not built — these sources still have required fields with no "
+                         "column: " + " · ".join(blocked[:4]))
     frames, per = [], []
     for r in srcs:
         df = pd.read_sql_table(r["table_name"], eng)
@@ -1909,20 +1909,24 @@ async def builder_build(request: Request):
         c.execute(text("delete from cat_built where customer=:c"), {"c": cust})
         c.execute(text("insert into cat_built(customer,table_name,row_count,serving) "
                        "values(:c,:t,:r,true)"), {"c": cust, "t": table, "r": int(len(allf))})
-    return {"ok": True, "rows": int(len(allf)), "sources": per,
-            "message": f"Built {len(allf)} rows from {len(per)} source"
+    return int(len(allf)), per
+
+
+@app.post("/api/admin/builder/build")
+async def builder_build(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    eng = _builder_engine()
+    try:
+        total, per = await asyncio.to_thread(_builder_do_build, eng, cust)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "rows": total, "sources": per,
+            "message": f"Built {total} rows from {len(per)} source"
                        f"{'' if len(per) == 1 else 's'}. The catalog is serving it now."}
 
 
-@app.post("/api/admin/builder/serving")
-async def builder_serving(request: Request):
-    sc, cust, _label = await _builder_admin(request)
-    body = await request.json()
-    from sqlalchemy import text
-    with _builder_engine().begin() as c:
-        c.execute(text("update cat_built set serving=:s where customer=:c"),
-                  {"s": bool((body or {}).get("serving")), "c": cust})
-    return {"ok": True}
+# (The serve/stop-serving switch is gone on purpose: once a catalog is built it
+#  IS the catalog. The serving column stays in the schema, always true.)
 
 
 # ── serving: the storefront reads the built catalog from HERE when one exists ──
@@ -1993,6 +1997,427 @@ async def _builder_rows_local(ident: str, request: Request):
         return None
     except Exception:
         return None
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# FEEDS — the connectors. How a source refreshes itself without a hand upload.
+#
+# Each source card can carry a feed: API (this app pulls a URL), SFTP (this app
+# signs into the vendor's server and takes the newest matching file), or EMAIL
+# (vendors mail the file to a mailbox this app checks; matched by sender).
+# A timer runs the due feeds; when a pull brings a genuinely new file, the
+# source's table is replaced, the mapping is re-checked, and the catalog is
+# rebuilt on the spot — the storefront updates with nobody touching anything.
+# ════════════════════════════════════════════════════════════════════════════
+
+_FEED_TYPES = ("manual", "api", "sftp", "email")
+_PW_KEPT = "•kept•"          # what a stored password looks like on the way OUT
+
+
+def _feed_of(row) -> dict:
+    try:
+        f = json.loads(row["feed"] or "{}")
+    except Exception:
+        f = {}
+    return f if isinstance(f, dict) else {}
+
+
+def _feed_status_of(row) -> dict:
+    try:
+        s = json.loads(row["feed_status"] or "{}")
+    except Exception:
+        s = {}
+    return s if isinstance(s, dict) else {}
+
+
+def _email_env():
+    return (os.environ.get("EMAIL_IMAP_HOST", "").strip(),
+            int(os.environ.get("EMAIL_IMAP_PORT", "993") or 993),
+            os.environ.get("EMAIL_IMAP_USER", "").strip(),
+            os.environ.get("EMAIL_IMAP_PASS", "").strip())
+
+
+def _builder_read_frame(filename: str, raw: bytes):
+    """Bytes → dataframe, the one way every connector and the upload box share."""
+    import io
+    import pandas as pd
+    if not raw:
+        raise ValueError("The file arrived empty.")
+    if len(raw) > 30 * 1024 * 1024:
+        raise ValueError("That file is over 30 MB — trim it or split it first.")
+    try:
+        if str(filename).lower().endswith((".xlsx", ".xlsm", ".xls")):
+            df = pd.read_excel(io.BytesIO(raw))
+        else:
+            df = pd.read_csv(io.BytesIO(raw), dtype=str, keep_default_na=False,
+                             encoding_errors="replace")
+    except Exception as e:
+        raise ValueError(f"Could not read that file: {e}")
+    if df.empty or not len(df.columns):
+        raise ValueError("The file has no rows.")
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+def _feed_fetch_api(cfg: dict):
+    url = str(cfg.get("url") or "").strip()
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError("The URL must start with http:// or https://")
+    headers = {}
+    h = str(cfg.get("header") or "").strip()
+    if h and ":" in h:
+        k, v = h.split(":", 1)
+        headers[k.strip()] = v.strip()
+    with httpx.Client(timeout=90, follow_redirects=True) as cl:
+        r = cl.get(url, headers=headers)
+        if r.status_code != 200:
+            raise ValueError(f"The API answered {r.status_code}.")
+        data = r.content
+        ctype = r.headers.get("content-type", "")
+    name = url.rsplit("/", 1)[-1].split("?")[0] or "feed"
+    if "." not in name:
+        name += ".xlsx" if "sheet" in ctype else ".csv"
+    if "json" in ctype and not name.lower().endswith((".csv", ".xlsx", ".xls", ".xlsm")):
+        # A JSON API — a list of records becomes the table.
+        import io
+        import pandas as pd
+        parsed = json.loads(data.decode("utf-8", "replace"))
+        if isinstance(parsed, dict):            # common wrappers: {"data": [...]}
+            for key in ("data", "items", "rows", "results"):
+                if isinstance(parsed.get(key), list):
+                    parsed = parsed[key]
+                    break
+        if not isinstance(parsed, list) or not parsed:
+            raise ValueError("The API returned JSON, but not a list of records.")
+        df = pd.json_normalize(parsed)
+        buf = io.BytesIO()
+        df.to_csv(buf, index=False)
+        data, name = buf.getvalue(), "feed.csv"
+    return name, data
+
+
+def _feed_fetch_sftp(cfg: dict):
+    import fnmatch
+    import io
+    import stat as statmod
+    try:
+        import paramiko
+    except ImportError:
+        raise ValueError("SFTP support is not installed on this service yet "
+                         "(requirements.txt needs paramiko).")
+    host = str(cfg.get("host") or "").strip()
+    if not host:
+        raise ValueError("SFTP needs a host.")
+    port = int(cfg.get("port") or 22)
+    user = str(cfg.get("user") or "").strip()
+    pw = str(cfg.get("password") or "")
+    path = str(cfg.get("path") or "/").strip() or "/"
+    pattern = str(cfg.get("pattern") or "*").strip() or "*"
+    t = paramiko.Transport((host, port))
+    try:
+        t.connect(username=user, password=pw)
+        sftp = paramiko.SFTPClient.from_transport(t)
+        try:
+            st = sftp.stat(path)
+            isdir = statmod.S_ISDIR(st.st_mode)
+        except IOError:
+            raise ValueError(f"No such path on the server: {path}")
+        if isdir:
+            best = None
+            for e in sftp.listdir_attr(path):
+                if statmod.S_ISDIR(e.st_mode):
+                    continue
+                if not fnmatch.fnmatch(e.filename, pattern):
+                    continue
+                if best is None or (e.st_mtime or 0) > (best.st_mtime or 0):
+                    best = e
+            if best is None:
+                raise ValueError(f"Nothing matching {pattern} in {path}.")
+            fname = best.filename
+            full = path.rstrip("/") + "/" + fname
+        else:
+            fname, full = path.rsplit("/", 1)[-1], path
+        buf = io.BytesIO()
+        sftp.getfo(full, buf)
+        return fname, buf.getvalue()
+    finally:
+        try:
+            t.close()
+        except Exception:
+            pass
+
+
+def _feed_fetch_email(cfg: dict):
+    host, port, user, pw = _email_env()
+    if not (host and user and pw):
+        raise ValueError("Connect a mailbox first: on this service's Environment page in Render, "
+                         "set EMAIL_IMAP_HOST, EMAIL_IMAP_USER and EMAIL_IMAP_PASS "
+                         "(and EMAIL_IMAP_PORT if it is not 993).")
+    frm = str(cfg.get("from_contains") or "").strip()
+    if not frm:
+        raise ValueError("Say what the sender's address contains, so the right mail is picked.")
+    subj = str(cfg.get("subject_contains") or "").strip()
+    import email as email_mod
+    import imaplib
+    M = imaplib.IMAP4_SSL(host, port)
+    try:
+        M.login(user, pw)
+        M.select("INBOX", readonly=True)
+        crit = f'FROM "{frm}"' + (f' SUBJECT "{subj}"' if subj else "")
+        typ, data = M.search(None, f'({crit})')
+        ids = (data[0] or b"").split()
+        if not ids:
+            raise ValueError("No mail from that sender yet.")
+        for mid in reversed(ids[-20:]):          # newest first, recent 20 only
+            typ, msgd = M.fetch(mid, "(RFC822)")
+            if typ != "OK" or not msgd or not msgd[0]:
+                continue
+            msg = email_mod.message_from_bytes(msgd[0][1])
+            for part in msg.walk():
+                fn = str(part.get_filename() or "")
+                if fn.lower().endswith((".csv", ".xlsx", ".xlsm", ".xls")):
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        return fn, payload
+        raise ValueError("Mail found, but no spreadsheet attachment on the recent ones.")
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+
+def _feed_alert(subject: str, body: str) -> bool:
+    """Mail the person who runs this catalog when a feed needs a human.
+    Uses SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/SMTP_FROM and ALERT_EMAIL from
+    the Environment page. Quietly does nothing until those are set."""
+    host = os.environ.get("SMTP_HOST", "").strip()
+    to = os.environ.get("ALERT_EMAIL", "").strip()
+    if not host or not to:
+        return False
+    try:
+        import smtplib
+        from email.message import EmailMessage
+        port = int(os.environ.get("SMTP_PORT", "587") or 587)
+        user = os.environ.get("SMTP_USER", "").strip()
+        pw = os.environ.get("SMTP_PASS", "")
+        frm = os.environ.get("SMTP_FROM", "").strip() or user or to
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"], msg["To"] = frm, to
+        msg.set_content(body)
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=20) as s:
+                if user:
+                    s.login(user, pw)
+                s.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=20) as s:
+                s.starttls()
+                if user:
+                    s.login(user, pw)
+                s.send_message(msg)
+        return True
+    except Exception:
+        return False
+
+
+def _feed_run_source(eng, row) -> dict:
+    """Fetch one source's feed and refresh its table. Always records a status,
+    and raises an alert when a file fails or stops matching the schema."""
+    from sqlalchemy import text
+    cfg = _feed_of(row)
+    kind = str(cfg.get("type") or "manual")
+    prev = _feed_status_of(row)
+    out = {"last_run": time.strftime("%Y-%m-%d %H:%M"), "last_ts": time.time(),
+           "ok": False, "changed": False, "note": ""}
+    try:
+        if kind == "api":
+            fname, raw = _feed_fetch_api(cfg)
+        elif kind == "sftp":
+            fname, raw = _feed_fetch_sftp(cfg)
+        elif kind == "email":
+            fname, raw = _feed_fetch_email(cfg)
+        else:
+            raise ValueError("This source has no feed.")
+        sha = hashlib.sha256(raw).hexdigest()
+        if prev.get("sha") == sha:
+            out.update(ok=True, sha=sha, note="Checked — same file as last time.")
+        else:
+            df = _builder_read_frame(fname, raw)
+            df.astype(str).to_sql(row["table_name"], eng, if_exists="replace",
+                                  index=False, chunksize=2000)
+            try:
+                m = json.loads(row["mapping"] or "{}")
+            except Exception:
+                m = {}
+            cols = {str(c) for c in df.columns}
+            m = {k: v for k, v in m.items() if v in cols}     # drop vanished columns
+            for k, v in _builder_automap(df.columns).items():  # recognise new ones
+                m.setdefault(k, v)
+            with eng.begin() as c:
+                c.execute(text("update cat_sources set filename=:f, row_count=:r, mapping=:m, "
+                               "updated_at=current_timestamp where id=:i"),
+                          {"f": str(fname)[:120], "r": int(len(df)),
+                           "m": json.dumps(m), "i": row["id"]})
+            miss = _builder_missing(m, row["vendor_label"])
+            if miss:
+                out.update(ok=False, changed=True, sha=sha, rows=int(len(df)), schema=True,
+                           note=f"Pulled {fname} ({len(df)} rows) but its columns no longer "
+                                f"cover: {', '.join(miss)}. Open the card and pick them.")
+                _feed_alert(f"Catalog feed needs attention: {row['name']}",
+                            f"The feed for \"{row['name']}\" pulled {fname} ({len(df)} rows), "
+                            f"but these required fields have no matching column any more: "
+                            f"{', '.join(miss)}.\n\nThe catalog was NOT rebuilt from it. "
+                            f"Open the admin's Builder tab and pick the columns.")
+            else:
+                out.update(ok=True, changed=True, sha=sha, rows=int(len(df)),
+                           note=f"Pulled {fname} — {len(df)} rows.")
+    except Exception as e:
+        out["note"] = str(e)[:300]
+        if prev.get("ok", True):        # tell a human once, not every retry
+            _feed_alert(f"Catalog feed failed: {row['name']}",
+                        f"The {kind} feed for \"{row['name']}\" failed:\n\n{out['note']}\n\n"
+                        f"The catalog keeps serving its last good build. The feed retries "
+                        f"on its schedule; this mail repeats only after it has recovered "
+                        f"and broken again.")
+    with eng.begin() as c:
+        c.execute(text("update cat_sources set feed_status=:s where id=:i"),
+                  {"s": json.dumps(out), "i": row["id"]})
+    return out
+
+
+def _feed_run_due(force_ids=None, customer=None) -> dict:
+    """Run every due feed (or exactly force_ids), then rebuild each customer
+    whose data actually changed — but only ones that have built at least once."""
+    from sqlalchemy import text
+    eng = _builder_engine()
+    with eng.connect() as c:
+        rows = c.execute(text("select * from cat_sources")).mappings().all()
+    ran, touched = [], set()
+    now = time.time()
+    for r in rows:
+        if customer is not None and r["customer"] != customer:
+            continue
+        cfg = _feed_of(r)
+        kind = str(cfg.get("type") or "manual")
+        if kind not in ("api", "sftp", "email"):
+            continue
+        if force_ids is not None:
+            if r["id"] not in force_ids:
+                continue
+        else:
+            every = max(1, min(int(cfg.get("every_hours") or 24), 168))
+            if now - float(_feed_status_of(r).get("last_ts") or 0) < every * 3600:
+                continue
+        out = _feed_run_source(eng, r)
+        ran.append({"id": r["id"], "name": r["name"], "ok": out.get("ok"),
+                    "changed": out.get("changed"), "rows": out.get("rows"),
+                    "note": out.get("note")})
+        if out.get("changed"):
+            touched.add(r["customer"])
+    rebuilt = {}
+    for cust in touched:
+        with eng.connect() as c:
+            if c.execute(text("select 1 from cat_built where customer=:c"),
+                         {"c": cust}).first() is None:
+                continue          # never built by hand yet — the admin goes first
+        try:
+            total, _per = _builder_do_build(eng, cust)
+            rebuilt[cust] = total
+        except Exception as e:
+            rebuilt[cust] = f"not rebuilt: {e}"
+            _feed_alert("Catalog not rebuilt",
+                        f"A feed brought new data for \"{cust}\", but the catalog could not "
+                        f"be rebuilt:\n\n{e}\n\nThe storefront keeps serving the last good "
+                        f"build until this is fixed in the admin's Builder tab.")
+    return {"ran": ran, "rebuilt": rebuilt}
+
+
+async def _feed_loop():
+    await asyncio.sleep(45)
+    while True:
+        try:
+            if os.environ.get("CATALOG_DATABASE_URL", "").strip():
+                await asyncio.to_thread(_feed_run_due)
+        except Exception:
+            pass
+        await asyncio.sleep(15 * 60)
+
+
+@app.on_event("startup")
+async def _feed_start():
+    asyncio.create_task(_feed_loop())
+
+
+def _feed_public(cfg: dict) -> dict:
+    out = dict(cfg or {})
+    if out.get("password"):
+        out["password"] = _PW_KEPT
+    return out
+
+
+@app.post("/api/admin/builder/feed")
+async def builder_feed_save(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json() or {}
+    sid = str(body.get("id") or "")
+    cfg = body.get("feed") or {}
+    if not isinstance(cfg, dict):
+        raise HTTPException(400, "Bad feed.")
+    kind = str(cfg.get("type") or "manual").lower()
+    if kind not in _FEED_TYPES:
+        raise HTTPException(400, "Feed type must be manual, api, sftp or email.")
+    from sqlalchemy import text
+    eng = _builder_engine()
+    with eng.begin() as c:
+        row = c.execute(text("select * from cat_sources where id=:i and customer=:c"),
+                        {"i": sid, "c": cust}).mappings().first()
+        if not row:
+            raise HTTPException(404, "No such source.")
+        old = _feed_of(row)
+        keep = {"type": kind}
+        if kind == "api":
+            keep["url"] = str(cfg.get("url") or "").strip()
+            keep["header"] = str(cfg.get("header") or "").strip()
+        elif kind == "sftp":
+            keep["host"] = str(cfg.get("host") or "").strip()
+            try:
+                keep["port"] = int(cfg.get("port") or 22)
+            except Exception:
+                keep["port"] = 22
+            keep["user"] = str(cfg.get("user") or "").strip()
+            pw = str(cfg.get("password") or "")
+            keep["password"] = old.get("password", "") if pw == _PW_KEPT else pw
+            keep["path"] = str(cfg.get("path") or "/").strip()
+            keep["pattern"] = str(cfg.get("pattern") or "*").strip()
+        elif kind == "email":
+            keep["from_contains"] = str(cfg.get("from_contains") or "").strip()
+            keep["subject_contains"] = str(cfg.get("subject_contains") or "").strip()
+        if kind != "manual":
+            try:
+                keep["every_hours"] = max(1, min(int(cfg.get("every_hours") or 24), 168))
+            except Exception:
+                keep["every_hours"] = 24
+        c.execute(text("update cat_sources set feed=:f where id=:i"),
+                  {"f": json.dumps({} if kind == "manual" else keep), "i": sid})
+    return {"ok": True}
+
+
+@app.post("/api/admin/builder/feed/run")
+async def builder_feed_run(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json() or {}
+    sid = str(body.get("id") or "")
+    res = await asyncio.to_thread(_feed_run_due, {sid}, cust)
+    if not res["ran"]:
+        raise HTTPException(400, "That source has no feed set up yet — pick one and save it first.")
+    one = res["ran"][0]
+    msg = one["note"] or ("Pulled." if one["ok"] else "Failed.")
+    if res["rebuilt"]:
+        for k, v in res["rebuilt"].items():
+            msg += f" Catalog rebuilt — {v} rows." if isinstance(v, int) else f" {v}"
+    return {"ok": bool(one["ok"]), "changed": bool(one.get("changed")), "message": msg}
 
 
 # The static-file mount goes LAST: a mount at "/" catches every path, so every

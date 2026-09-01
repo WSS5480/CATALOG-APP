@@ -692,6 +692,24 @@ loadCatalog();
       return '<option value="'+esc(v)+'"'+(String(v)===String(cur||'')?' selected':'')+'>'+esc(v)+'</option>';
     }).join('');
   }
+  function toArr(v){ return Array.isArray(v)?v.map(String):(v?[String(v)]:[]); }
+  function msCell(i,field,items,chosen){
+    var sel=toArr(chosen);
+    var word=sel.length?(sel.length<=2?sel.join(', '):sel.length+' selected'):'— any —';
+    return '<details class="ial-ms"><summary style="cursor:pointer;border:1px solid #d1d5db;'
+      +'border-radius:7px;padding:4px 9px;font-size:13px;background:#fff;max-width:170px;'
+      +'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(word)+' ▾</summary>'
+      +'<div style="position:absolute;z-index:60;background:#fff;border:1px solid #d1d5db;'
+      +'border-radius:9px;padding:9px;box-shadow:0 10px 26px rgba(0,0,0,.25);'
+      +'max-height:280px;overflow:auto;min-width:210px">'
+      +((items||[]).length?(items||[]).map(function(v){
+        return '<label style="display:flex;gap:7px;align-items:center;padding:3px 2px;'
+          +'font-size:12.5px;cursor:pointer;white-space:nowrap">'
+          +'<input type="checkbox" data-ial="mtick" data-f="'+esc(field)+'" data-i="'+i+'" value="'+esc(v)+'"'
+          +(sel.indexOf(String(v))>=0?' checked':'')+'>'+esc(v)+'</label>';
+      }).join(''):'<span style="color:#6b7280;font-size:12px">nothing to choose</span>')
+      +'</div></details>';
+  }
   function vals(ds,col){
     var k=ds+'|'+col;
     if(VALS[k])return Promise.resolve(VALS[k]);
@@ -704,7 +722,17 @@ loadCatalog();
     return fetch('/api/admin/app-users',{method:'POST',credentials:'same-origin',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({groups:D.groups,grants:D.grants,
-        extra_people:D.extra_people||[]})}).then(load);
+        extra_people:D.extra_people||[]})}).then(function(r){
+      if(!r.ok){
+        return r.json().catch(function(){return {};}).then(function(b){
+          alert('NOT SAVED — the server refused this change:\n\n'
+            +(b.detail||('error '+r.status))
+            +'\n\nThe screen has been reloaded to what is actually stored.');
+          return load();
+        });
+      }
+      return load();
+    });
   }
   function draw(){
     var host=document.getElementById('ial-users'); if(!host||!D)return;
@@ -760,9 +788,9 @@ loadCatalog();
             +'</div></details>'
           : '<span style="color:#6b7280">every row</span>';
         return '<tr>'
-          +'<td><select data-ial="group1" data-i="'+i+'">'+opts(D.group1_values,g.group1,'- any -')+'</select></td>'
-          +'<td><select data-ial="group2" data-i="'+i+'">'+opts(D.group2_values,g.group2,'- any -')+'</select></td>'
-          +'<td><select data-ial="user" data-i="'+i+'">'+opts(D.people,g.user,'- any -')+'</select></td>'
+          +'<td>'+msCell(i,'group1',D.group1_values,g.group1)+'</td>'
+          +'<td>'+msCell(i,'group2',D.group2_values,g.group2)+'</td>'
+          +'<td>'+msCell(i,'user',D.people,g.user)+'</td>'
           +'<td><select data-ial="column" data-i="'+i+'">'+opts(D.catalog_columns,g.column,'- any -')+'</select></td>'
           +'<td>'+pv+'</td>'
           +'<td><button data-ial="drop" data-i="'+i+'">X</button></td></tr>';
@@ -815,15 +843,26 @@ loadCatalog();
     var el=e.target, k=el.getAttribute&&el.getAttribute('data-ial');
     if(!k||!D)return;
     if(k==='g1'||k==='g2'){ D.groups[k]=el.value; VALS={}; save(); return; }
+    var j=parseInt(el.getAttribute('data-i'),10);
     var PMAP={pe:'email',pu:'user',p1:'group_1',p2:'group_2',pa:'access'};
     var LMAP={};
-    var j=parseInt(el.getAttribute('data-i'),10);
     if(PMAP[k]){ if(!isNaN(j)&&(D.extra_people||[])[j]){
       D.extra_people[j][PMAP[k]]=el.value; save(); } return; }
     if(LMAP[k]){ if(!isNaN(j)&&(D.extra_locations||[])[j]){
       D.extra_locations[j][LMAP[k]]=el.value; save(); } return; }
     var i=parseInt(el.getAttribute('data-i'),10);
     if(isNaN(i)||!D.grants[i])return;
+    if(k==='mtick'){
+      var f=el.getAttribute('data-f');
+      if(!isNaN(j)&&D.grants[j]&&f){
+        var arr=toArr(D.grants[j][f]);
+        if(el.checked){ if(arr.indexOf(el.value)<0)arr.push(el.value); }
+        else arr=arr.filter(function(v){return v!==el.value;});
+        D.grants[j][f]=arr;
+        save();
+      }
+      return;
+    }
     if(k==='vtick'){
       var cur=(D.grants[i].values||[]).map(String);
       if(el.checked){ if(cur.indexOf(el.value)<0)cur.push(el.value); }
@@ -851,7 +890,7 @@ loadCatalog();
     if(k==='add'){ D.grants.push({group1:'',group2:'',user:'',column:'',values:[],exclude:false}); draw(); }
     else if(k==='drop'){
       var g=D.grants[di]||{};
-      var who=[].concat(g.user||[],g.group2||[],g.group1||[]).filter(Boolean).join(', ')||'everyone in this app';
+      var who=[].concat(toArr(g.user),toArr(g.group2),toArr(g.group1)).filter(Boolean).join(', ')||'everyone in this app';
       if(!confirm('Delete this grant?\n\n'+who+'\n\nThey lose this access the moment it is gone.'))return;
       D.grants.splice(di,1); save();
     }

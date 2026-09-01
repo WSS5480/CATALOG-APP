@@ -125,7 +125,7 @@
 <div class="tabs">
   <button id="t-people"    class="on" onclick="showTab('people')">Passwords</button>
   <button id="t-users"              onclick="showTab('users')">Users</button>
-  <button id="t-locations"          onclick="showTab('locations')">Locations</button>
+  <button id="t-locations"          onclick="showTab('locations')">User Data</button>
   <button id="t-catalog"            onclick="showTab('catalog')">Catalog</button>
 </div>
 
@@ -136,9 +136,9 @@
   <section id="s-people" class="screen on">
     <div class="card">
       <h3>People &amp; passwords</h3>
-      <p class="cs">Everyone whose locations sit inside a catalog you run. Nobody is added by hand —
-        a location appears here the moment it lands in the location dataset, and cannot sign in
-        until you give it a first password.</p>
+      <p class="cs">Everyone in a catalog you run. A person appears here the moment they land in
+        the users dataset — or is added by hand on the Users tab — and cannot sign in until they
+        have a password.</p>
       <div id="people-body" class="center">Loading…</div>
 
       <div id="pwPanel" class="pwpanel">
@@ -182,10 +182,10 @@
   <!-- ═══════════ LOCATIONS ═══════════ -->
   <section id="s-locations" class="screen">
     <div class="card">
-      <h3>Locations</h3>
-      <p class="cs" id="loc-intro">The rows of the location dataset your catalog covers.
-        Saving writes them back and re-runs every flow that reads the dataset, so the catalog is
-        up to date straight away — no re-upload.</p>
+      <h3>User data</h3>
+      <p class="cs" id="loc-intro">The rows of the users dataset — every person, their groups and
+        email. Saving writes them back and re-runs every flow that reads the dataset, so the
+        catalog is up to date straight away — no re-upload.</p>
       <div id="loc-status" class="muted small" style="margin-bottom:10px"></div>
       <div id="loc-body" class="center">Loading…</div>
       <div class="row" style="margin-top:13px">
@@ -193,9 +193,9 @@
         <button class="btn ghost" onclick="loadRows()">Reload</button>
         <span id="loc-dirty" class="muted small"></span>
       </div>
-      <div class="lock" id="loc-note">Only the columns you are allowed to change are editable.
-        Everything else is shown so you can see the row you are editing, but is left to whoever
-        runs the ETL.</div>
+      <div class="lock" id="loc-note">Rows added or removed here change the users dataset itself.
+        The next upload of the customer's users file replaces this data — people who must survive
+        every rebuild belong in "Users added by hand" on the Users tab.</div>
     </div>
   </section>
 

@@ -3194,8 +3194,8 @@ def _builder_read_frame(filename: str, raw: bytes):
     import pandas as pd
     if not raw:
         raise ValueError("The file arrived empty.")
-    if len(raw) > 30 * 1024 * 1024:
-        raise ValueError("That file is over 30 MB — trim it or split it first.")
+    if len(raw) > 80 * 1024 * 1024:
+        raise ValueError("That file is over 80 MB — trim it or split it first.")
     try:
         if str(filename).lower().endswith((".xlsx", ".xlsm", ".xls")):
             df = pd.read_excel(io.BytesIO(raw))
@@ -3288,6 +3288,27 @@ def _feed_fetch_api(cfg: dict):
             # (Ashley-style pagination) until a short page says done.
             import io
             import pandas as pd
+
+            def _flat(rec):
+                """One record -> one flat row, without letting nested lists
+                explode into hundreds of columns (that is what crashes a small
+                instance). Scalars kept; one level of dict unpacked; anything
+                deeper becomes a compact JSON string."""
+                out = {}
+                for k, v in rec.items():
+                    k = str(k)
+                    if isinstance(v, (str, int, float, bool)) or v is None:
+                        out[k] = v
+                    elif isinstance(v, dict):
+                        for k2, v2 in v.items():
+                            if isinstance(v2, (str, int, float, bool)) or v2 is None:
+                                out[f"{k}.{k2}"] = v2
+                            else:
+                                out[f"{k}.{k2}"] = json.dumps(v2)[:300]
+                    else:
+                        out[k] = json.dumps(v)[:300]
+                return out
+
             raw_json = json.loads(data.decode("utf-8", "replace"))
             parsed = _unwrap(raw_json)
             if not isinstance(parsed, list) or not parsed:
@@ -3295,7 +3316,7 @@ def _feed_fetch_api(cfg: dict):
                          if isinstance(raw_json, dict) else type(raw_json).__name__)
                 raise ValueError("The API returned JSON, but no list of records was found "
                                  f"inside it (top-level keys: {shape}).")
-            records = list(parsed)
+            records = [_flat(r) for r in parsed if isinstance(r, dict)]
             qd = {str(k).lower(): str(v) for k, v in qparams}
             try:
                 limit_val = int(qd.get("limit") or 0)
@@ -3314,11 +3335,11 @@ def _feed_fetch_api(cfg: dict):
                         break
                     if not isinstance(more, list) or not more:
                         break
-                    records.extend(more)
-                    if len(more) < limit_val:
+                    records.extend(_flat(x) for x in more if isinstance(x, dict))
+                    if len(more) < limit_val or len(records) >= 150000:
                         break
                     page += 1
-            df = pd.json_normalize(records)
+            df = pd.DataFrame(records)
             buf = io.BytesIO()
             df.to_csv(buf, index=False)
             data, name = buf.getvalue(), "feed.csv"
@@ -3661,18 +3682,28 @@ async def builder_feed_save(request: Request):
 
 @app.post("/api/admin/builder/feed/run")
 async def builder_feed_run(request: Request):
+    """Kick the pull off in the background and answer at once — a big API can
+    take minutes, far past what a browser request survives. The card's status
+    line updates itself when the pull lands."""
     sc, cust, _label = await _builder_admin(request)
     body = await request.json() or {}
     sid = str(body.get("id") or "")
-    res = await asyncio.to_thread(_feed_run_due, {sid}, cust)
-    if not res["ran"]:
+    from sqlalchemy import text
+    with _builder_engine().connect() as c:
+        row = c.execute(text("select feed from cat_sources where id=:i and customer=:c"),
+                        {"i": sid, "c": cust}).first()
+    if row is None:
+        raise HTTPException(404, "No such source.")
+    try:
+        kind = str((json.loads(row[0] or "{}") or {}).get("type") or "manual")
+    except Exception:
+        kind = "manual"
+    if kind not in ("api", "sftp", "email"):
         raise HTTPException(400, "That source has no feed set up yet — pick one and save it first.")
-    one = res["ran"][0]
-    msg = one["note"] or ("Pulled." if one["ok"] else "Failed.")
-    if res["rebuilt"]:
-        for k, v in res["rebuilt"].items():
-            msg += f" Catalog rebuilt — {v} rows." if isinstance(v, int) else f" {v}"
-    return {"ok": bool(one["ok"]), "changed": bool(one.get("changed")), "message": msg}
+    asyncio.create_task(asyncio.to_thread(_feed_run_due, {sid}, cust))
+    return {"ok": True, "started": True,
+            "message": "Checking — running in the background. A big API can take a few "
+                       "minutes; the status line on the card updates when it finishes."}
 
 
 # The static-file mount goes LAST: a mount at "/" catches every path, so every

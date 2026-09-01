@@ -1702,6 +1702,24 @@ def _bslug(s: str) -> str:
     return out or "x"
 
 
+def _builder_only_customer() -> str:
+    """When the ETL no longer says which customer this is — its catalog app was
+    deleted, say — but this app's own store holds exactly one customer's
+    catalog, that one is the answer. The catalog outlives the ETL tie."""
+    try:
+        from sqlalchemy import text
+        eng = _builder_engine()
+        with eng.connect() as c:
+            custs = {r[0] for r in c.execute(text("select distinct customer from cat_sources"))}
+            custs |= {r[0] for r in c.execute(text("select distinct customer from cat_built"))}
+        custs = {c for c in custs if c}
+        if len(custs) == 1:
+            return next(iter(custs))
+    except Exception:
+        pass
+    return ""
+
+
 async def _builder_admin(request: Request):
     """Who is asking, and which customer's builder is this.
 
@@ -1718,6 +1736,11 @@ async def _builder_admin(request: Request):
             customer = str((my or {}).get("customer") or "").strip()
         except Exception:
             customer = ""
+    if not customer:
+        only = _builder_only_customer()
+        if only:
+            return sc, only, only
+        customer = os.environ.get("CATALOG_CUSTOMER", "").strip()
     if not customer:
         raise HTTPException(400, "This session is not inside any one customer's catalog — open the "
                                  "admin through the customer's own sign-in link.")
@@ -1957,8 +1980,10 @@ async def _builder_rows_local(ident: str, request: Request):
             if len(_BSCOPE) > 500:
                 for k in [k for k, v in list(_BSCOPE.items()) if v[0] <= now]:
                     _BSCOPE.pop(k, None)
-        cust = _bslug(str(sc.get("customer") or ""))
+        cust = _bslug(str(sc.get("customer") or "")) if str(sc.get("customer") or "").strip() else ""
         if not cust or cust == "x":
+            cust = _builder_only_customer()
+        if not cust:
             return None
         import pandas as pd
         from sqlalchemy import text

@@ -124,7 +124,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v19</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v20</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -843,7 +843,9 @@ function drawBuilder(){
               '<select class="f" style="padding:7px 9px;font-size:13.5px"' +
               ' onchange="bldMap(\'' + esc(src.id) + '\',\'' + esc(f.name) + '\',this.value)">' +
               '<option value="">— not in this file —</option>' +
-              src.columns.map(c => '<option' + (c === cur ? ' selected' : '') + '>' +
+              [...src.columns].sort((a, b) => String(a).toLowerCase()
+                  .localeCompare(String(b).toLowerCase()))
+                .map(c => '<option' + (c === cur ? ' selected' : '') + '>' +
                 esc(c) + '</option>').join('') + '</select></div>';
           }).join('') +
         '</div>' +

@@ -3243,6 +3243,153 @@ def _feed_merge_frames(frames):
     return base
 
 
+# ── Ashley ATP quantities: a SOAP service, asked 40 SKUs at a time ──────────
+_ATP_URL = "https://aws.ashleyfurniture.com/atpinquiryservice_aws/atpinquiry.asmx"
+_ATP_NS = "http://api.AshleyFurniture.com/AtpInquiryService_AWS/AtpInquiry"
+_ATP_DUNS = "052738531"
+
+
+def _atp_build_fidx(customer, shipto, duns, skus):
+    """The FIDX inventory-inquiry document one ATP call carries."""
+    import datetime as _dt
+    from xml.sax.saxutils import quoteattr
+    now = _dt.datetime.now()
+    items = "".join(
+        f'<itemInquiry lineItemNumber="{i}" responseType="CurrentQuantity">'
+        f'<itemId><itemIdentifier itemNumber={quoteattr(str(s))} '
+        f'itemNumberQualifier="SellerAssigned"/></itemId>'
+        f'<itemQty unitOfMeasure="Each" value="1"/></itemInquiry>'
+        for i, s in enumerate(skus, 1))
+    return ('<?xml version="1.0" encoding="UTF-8"?>'
+            '<fniia:inventoryInqAdv '
+            'xmlns:fniia="http://xml.FIDX.org/xml/schemas/fidxInvInqAdv_v1.3" '
+            'xmlns:fnParty="http://support.furnishnet.com/xml/schemas/fnParty_v1.4">'
+            f'<inquiry><document id="req_{now:%Y%m%d%H%M%S}" type="InventoryStatus" '
+            f'purpose="inquiry"><creationDate>{now:%Y-%m-%d}</creationDate>'
+            f'<creationTime>{now:%H:%M:%S}</creationTime></document>'
+            f'<potentialBuyer><fnParty:partyIdentifier partyIdentifierCode="{customer}" '
+            f'partyIdentifierQualifierCode="SenderAssigned"/></potentialBuyer>'
+            f'<potentialShipTo><fnParty:partyIdentifier partyIdentifierCode="{shipto}" '
+            f'partyIdentifierQualifierCode="SenderAssigned"/></potentialShipTo>'
+            f'<potentialSeller><fnParty:partyIdentifier partyIdentifierCode="{duns}" '
+            f'partyIdentifierQualifierCode="DUNS"/></potentialSeller>'
+            f'</inquiry><items>{items}</items></fniia:inventoryInqAdv>')
+
+
+def _atp_parse_advice(advice_xml):
+    """The advice document back -> one row per SKU: qty, lead time, exception."""
+    import xml.etree.ElementTree as ET
+    def ln(e):
+        return e.tag.split("}")[-1]
+    rows = []
+    root = ET.fromstring(advice_xml)
+    for adv in (e for e in root.iter() if ln(e) == "itemAdvice"):
+        sku = next((i.get("itemNumber") for i in adv.iter()
+                    if ln(i) == "itemIdentifier"), None)
+        qty = lead = exc = None
+        for av in (e for e in adv.iter() if ln(e) == "itemAvailability"):
+            if av.get("availability") == "current":
+                qty = next((q.get("value") for q in av.iter()
+                            if ln(q) == "availQty"), qty)
+                ds = [e for e in av.iter() if ln(e) == "systemReferenceDescription"]
+                vs = [e for e in av.iter() if ln(e) == "systemReferenceValue"]
+                for d, v in zip(ds, vs):
+                    if (d.text or "") == "LoadLeadTime":
+                        lead = v.text
+                    elif (d.text or "") == "EXCEPTION":
+                        exc = v.text
+                if qty is not None:
+                    break
+        rows.append({"sku": sku, "qty_available": qty,
+                     "lead_time_days": lead, "exception": exc})
+    return rows
+
+
+def _feed_atp_join(cfg: dict, df, progress=None):
+    """When the card says "also pull quantities": walk every SKU the main pull
+    brought through the ATP service in batches, and join qty + lead time on."""
+    if not cfg.get("atp_on"):
+        return df
+    import time as _time
+    import pandas as pd
+    import xml.etree.ElementTree as ET
+    from xml.sax.saxutils import escape as _xesc
+    qd = {str(k).lower(): str(v) for k, v in (cfg.get("qparams") or [])}
+    url = str(cfg.get("atp_url") or "").strip() or _ATP_URL
+    ext = str(cfg.get("atp_external_id") or "").strip()
+    key = str(cfg.get("atp_keycode") or "")
+    usr = str(cfg.get("atp_user") or "").strip()
+    pw = str(cfg.get("atp_password") or "")
+    customer = str(cfg.get("atp_customer") or "").strip() or qd.get("customer", "")
+    shipto = str(cfg.get("atp_shipto") or "").strip() or qd.get("shipto", "")
+    duns = str(cfg.get("atp_duns") or "").strip() or _ATP_DUNS
+    try:
+        batch = max(1, min(int(cfg.get("atp_batch") or 40), 200))
+    except Exception:
+        batch = 40
+    if not (ext and key and usr and pw):
+        raise ValueError("Quantities are switched on, but the ATP External ID, KeyCode, "
+                         "user or password box is empty.")
+    low = {str(c).lower(): str(c) for c in df.columns}
+    skucol = next((low[c] for c in ("sku", "itemnumber", "item_number", "itemno",
+                                    "item", "modelnum") if c in low), None)
+    if not skucol:
+        raise ValueError("Quantities need a SKU column in the pulled data — none was found.")
+    skus = [s for s in df[skucol].astype(str).str.strip().unique().tolist()
+            if s and s.lower() != "nan"]
+    headers = {"Content-Type": "text/xml; charset=utf-8",
+               "SOAPAction": f'"{_ATP_NS}/ATPRequest"'}
+    rows, total = [], (len(skus) + batch - 1) // batch
+    with httpx.Client(timeout=90, follow_redirects=True) as cl:
+        for bi, i in enumerate(range(0, len(skus), batch), 1):
+            fidx = _atp_build_fidx(customer, shipto, duns, skus[i:i + batch])
+            env = ('<?xml version="1.0" encoding="utf-8"?>'
+                   '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+                   f'<soap:Body><ATPRequest xmlns="{_ATP_NS}">'
+                   f'<ExternalID>{_xesc(ext)}</ExternalID><KeyCode>{_xesc(key)}</KeyCode>'
+                   f'<sUser>{_xesc(usr)}</sUser><sPassword>{_xesc(pw)}</sPassword>'
+                   f'<sXml>{_xesc(fidx)}</sXml></ATPRequest></soap:Body></soap:Envelope>')
+            last_err, r = "", None
+            for attempt in range(4):
+                try:
+                    r = cl.post(url, content=env.encode("utf-8"), headers=headers)
+                    if r.status_code == 200:
+                        break
+                    last_err = f"answered {r.status_code}"
+                except Exception as e:
+                    last_err = (str(e) or type(e).__name__)[:120]
+                r = None
+                _time.sleep(2 * (attempt + 1))
+            if r is None:
+                raise ValueError(f"The quantity service kept failing on batch {bi} of "
+                                 f"{total}: {last_err}")
+            try:
+                sr = ET.fromstring(r.content)
+                res = next((e.text for e in sr.iter()
+                            if e.tag.split('}')[-1] == "ATPRequestResult"), None)
+                if res is None:
+                    res = next((e.text for e in sr.iter()
+                                if e.tag.split('}')[-1].endswith("Result")), None)
+            except Exception:
+                res = None
+            if res and res.strip().startswith("<"):
+                try:
+                    rows.extend(_atp_parse_advice(res))
+                except Exception:
+                    pass
+            if progress:
+                progress(bi, len(rows), f"quantities (of {total} parts)")
+            try:
+                _time.sleep(max(0.0, min(float(cfg.get("atp_sleep") or 1.0), 10.0)))
+            except Exception:
+                _time.sleep(1.0)
+    if not rows:
+        raise ValueError("The quantity service answered, but no availability came back — "
+                         "check the ATP External ID, KeyCode, user and password.")
+    qdf = pd.DataFrame(rows).drop_duplicates(subset=["sku"])
+    return _feed_merge_frames([df, qdf])
+
+
 def _feed_fetch_api(cfg: dict, progress=None):
     urls = [str(cfg.get("url") or "").strip()]
     urls += [str(u or "").strip() for u in (cfg.get("urls") or [])]
@@ -3427,24 +3574,25 @@ def _feed_fetch_api(cfg: dict, progress=None):
     with httpx.Client(timeout=tmo, follow_redirects=True, auth=auth) as cl:
         if len(urls) == 1:
             name, data, df = _pull_one(cl, urls[0])
-            if df is None:
+            if df is None and not cfg.get("atp_on"):
                 return name, data
-            buf = io.BytesIO()
-            df.to_csv(buf, index=False)
-            return "feed.csv", buf.getvalue()
-        # Several endpoints (products + prices + freight + quantities…):
-        # pull each with the same credentials and parameters, then join them
-        # into one wide table on the item column they share.
-        frames = []
-        for i, u in enumerate(urls, 1):
-            tag = f"feed {i} of {len(urls)}"
-            name, data, df = _pull_one(cl, u, tag)
-            frames.append(df if df is not None else _builder_read_frame(name, data))
-            data = df = None
-    merged = _feed_merge_frames(frames)
-    frames = None
+            if df is None:
+                df = _builder_read_frame(name, data)
+        else:
+            # Several endpoints (products + prices + freight…): pull each with
+            # the same credentials and parameters, then join them into one
+            # wide table on the item column they share.
+            frames = []
+            for i, u in enumerate(urls, 1):
+                tag = f"feed {i} of {len(urls)}"
+                name, data, df = _pull_one(cl, u, tag)
+                frames.append(df if df is not None else _builder_read_frame(name, data))
+                data = df = None
+            df = _feed_merge_frames(frames)
+            frames = None
+    df = _feed_atp_join(cfg, df, progress)
     buf = io.BytesIO()
-    merged.to_csv(buf, index=False)
+    df.to_csv(buf, index=False)
     return "feed.csv", buf.getvalue()
 
 
@@ -3760,7 +3908,7 @@ async def _feed_start():
 
 def _feed_public(cfg: dict) -> dict:
     out = dict(cfg or {})
-    for k in ("password", "auth_pass", "client_secret"):
+    for k in ("password", "auth_pass", "client_secret", "atp_keycode", "atp_password"):
         if out.get(k):
             out[k] = _PW_KEPT
     return out
@@ -3802,6 +3950,20 @@ async def builder_feed_save(request: Request):
             keep["client_id"] = str(cfg.get("client_id") or "").strip()
             cs = str(cfg.get("client_secret") or "")
             keep["client_secret"] = old.get("client_secret", "") if cs == _PW_KEPT else cs
+            keep["atp_on"] = bool(cfg.get("atp_on"))
+            keep["atp_url"] = str(cfg.get("atp_url") or "").strip()
+            keep["atp_external_id"] = str(cfg.get("atp_external_id") or "").strip()
+            keep["atp_user"] = str(cfg.get("atp_user") or "").strip()
+            keep["atp_customer"] = str(cfg.get("atp_customer") or "").strip()
+            keep["atp_shipto"] = str(cfg.get("atp_shipto") or "").strip()
+            kc = str(cfg.get("atp_keycode") or "")
+            keep["atp_keycode"] = old.get("atp_keycode", "") if kc == _PW_KEPT else kc
+            ap2 = str(cfg.get("atp_password") or "")
+            keep["atp_password"] = old.get("atp_password", "") if ap2 == _PW_KEPT else ap2
+            try:
+                keep["atp_batch"] = max(1, min(int(cfg.get("atp_batch") or 40), 200))
+            except Exception:
+                keep["atp_batch"] = 40
         elif kind == "sftp":
             keep["host"] = str(cfg.get("host") or "").strip()
             try:

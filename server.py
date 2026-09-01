@@ -2105,11 +2105,14 @@ async def builder_state(request: Request):
     sources = []
     for r in rows:
         m = json.loads(r["mapping"] or "{}")
-        with eng.connect() as c:
-            cols = [x[0] for x in c.execute(text(
-                "select column_name from information_schema.columns "
-                "where table_name=:t order by ordinal_position"), {"t": r["table_name"]})]
+        try:
+            from sqlalchemy import inspect as _inspect
+            cols = [col["name"] for col in _inspect(eng).get_columns(r["table_name"])]
+        except Exception:
+            cols = []
         sources.append({"id": r["id"], "name": r["name"], "filename": r["filename"],
+                        "pending": (int(r["row_count"] or 0) == 0
+                                    and not str(r["filename"] or "").strip()),
                         "vendor": r["vendor_label"], "rows": r["row_count"],
                         "mapping": m, "columns": cols,
                         "missing": _builder_missing(m, r["vendor_label"]),
@@ -2122,6 +2125,28 @@ async def builder_state(request: Request):
             "email_ready": bool(host and user and pw),
             "built": ({"rows": built["row_count"], "at": str(built["built_at"])[:19],
                        "serving": bool(built["serving"])} if built else None)}
+
+
+@app.post("/api/admin/builder/create")
+async def builder_create(request: Request):
+    """A source with no file yet — its feed (API, SFTP or email) brings the
+    first one. Until then it waits, and builds skip it."""
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json() or {}
+    name = str(body.get("name") or "").strip()[:80]
+    if not name:
+        raise HTTPException(400, "Give the source a name — usually the vendor's.")
+    vendor = str(body.get("vendor") or name).strip()[:80]
+    eng = _builder_engine()
+    sid = secrets.token_hex(4)
+    from sqlalchemy import text
+    with eng.begin() as c:
+        c.execute(text("insert into cat_sources(id,customer,name,filename,vendor_label,"
+                       "table_name,mapping,row_count) values(:i,:c,:n,'',:v,:t,'{}',0)"),
+                  {"i": sid, "c": cust, "n": name, "v": vendor, "t": f"src_{cust}_{sid}"})
+    return {"ok": True, "id": sid,
+            "message": f"{name} created. Set its feed on the card and press Check now — "
+                       f"the first file it pulls fills the source."}
 
 
 @app.post("/api/admin/builder/upload")
@@ -2230,6 +2255,11 @@ def _builder_do_build(eng, cust: str):
                          {"c": cust}).mappings().all()
     if not srcs:
         raise ValueError("No sources yet — upload at least one vendor file first.")
+    srcs = [r for r in srcs
+            if int(r["row_count"] or 0) > 0 or str(r["filename"] or "").strip()]
+    if not srcs:
+        raise ValueError("Every source is still waiting for its feed's first pull — "
+                         "press Check now on a card, or upload a file.")
     blocked = []
     for r in srcs:
         miss = _builder_missing(json.loads(r["mapping"] or "{}"), r["vendor_label"])

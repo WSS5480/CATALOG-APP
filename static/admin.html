@@ -128,7 +128,6 @@
   <button id="t-users"              onclick="showTab('users')">Users</button>
   <button id="t-builder"            onclick="showTab('builder')">Builder</button>
   <button id="t-locations"          onclick="showTab('locations')">User Data</button>
-  <button id="t-catalog"            onclick="showTab('catalog')">Catalog</button>
 </div>
 
 <div class="wrap">
@@ -212,18 +211,6 @@
     </div>
   </section>
 
-  <!-- ═══════════ CATALOG ═══════════ -->
-  <section id="s-catalog" class="screen">
-    <div class="card">
-      <h3>Your catalog</h3>
-      <p class="cs">Which locations reach this catalog, and what they see inside it.</p>
-      <div id="cat-pick" class="fg" style="display:none">
-        <label class="f" for="cat-name">Catalog</label>
-        <select class="f" id="cat-name" onchange="pickCatalog(this.value)"></select>
-      </div>
-      <div id="cat-body" class="center">Loading…</div>
-    </div>
-  </section>
 </div>
 
 <script>
@@ -231,14 +218,12 @@ const $ = id => document.getElementById(id);
 
 /* Everything this page knows, kept in one place so a failed save can simply
    reload rather than trying to unpick a half-applied change. */
-let CAT = null;        // /api/admin/my-catalog
 let PEOPLE = null;     // /api/admin/my-people
 let ROWS = null;       // /api/admin/users/rows
 let EDITS = {};        // location id -> {column: value} — only what actually changed
 let DELETES = [];      // row keys marked for removal — sent on Save
 let ADDED = [];        // brand-new rows typed in — sent on Save
 let PW_FOR = '';       // whose password the panel is open for
-let CURRENT = '';      // the catalog being edited
 
 const esc = s => String(s === null || s === undefined ? '' : s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -268,7 +253,7 @@ async function api(path, opts){
 }
 
 function showTab(name){
-  ['people','users','builder','locations','catalog'].forEach(n => {
+  ['people','users','builder','locations'].forEach(n => {
     $('s-' + n).classList.toggle('on', n === name);
     $('t-' + n).classList.toggle('on', n === name);
   });
@@ -551,128 +536,6 @@ async function saveRows(){
   }
 }
 
-/* ───────────────────────── the catalog itself ───────────────────────── */
-
-async function loadCatalog(){
-  try{
-    CAT = await api('/api/admin/my-catalog');
-  }catch(e){
-    $('cat-body').innerHTML = '<div class="center">' + esc(e.message) + '</div>';
-    return;
-  }
-  const names = (CAT.catalogs || []).map(c => c.name);
-  if(!names.length){
-    $('cat-body').innerHTML = '<div class="center">No catalog is assigned to you yet.</div>';
-    return;
-  }
-  if(names.length > 1){
-    $('cat-pick').style.display = 'block';
-    $('cat-name').innerHTML = names.map(n => '<option>' + esc(n) + '</option>').join('');
-  }
-  pickCatalog(CURRENT && names.indexOf(CURRENT) > -1 ? CURRENT : names[0]);
-}
-
-function pickCatalog(name){
-  CURRENT = name;
-  const c = (CAT.catalogs || []).find(x => x.name === name);
-  if(!c) return;
-  const f = c.filters || {};
-  const assignable = CAT.assignable;      // null means an administrator — no limit
-  const chosen = new Set((c.locations || []).map(String));
-  const places = CAT.locations || [];
-  const may = assignable === null ? null : new Set(assignable.map(String));
-
-  const list = (v) => Array.isArray(v) ? v.join(', ') : (v || '');
-
-  $('cat-body').innerHTML =
-    '<h4 style="margin:18px 0 4px;font-size:14.5px">Locations that reach this catalog</h4>' +
-    '<p class="cs">Tick a location and its people appear on the People tab. Leave every box ' +
-      'clear and the catalog is open to everyone who can sign in.</p>' +
-    '<div class="ticks" id="cat-locs">' +
-      (places.length ? places.map(p => {
-        const id = String(p.id);
-        const allowed = may === null || may.has(id);
-        return '<label class="' + (allowed ? '' : 'off') + '">' +
-          '<input type="checkbox" value="' + esc(id) + '"' +
-            (chosen.has(id) ? ' checked' : '') + (allowed ? '' : ' disabled') + '>' +
-          '<span><span class="nm">' + esc(p.name || id) + '</span>' +
-          '<span class="sub"> · ' + esc(id) + (p.district ? ' · district ' + esc(p.district) : '') +
-          (allowed ? '' : ' · not yours to assign') + '</span></span></label>';
-      }).join('') : '<div style="padding:14px" class="muted">No locations in the dataset yet.</div>') +
-    '</div>' +
-    (may === null ? '' :
-      '<div class="lock">You can tick the locations whose row names you as the catalog owner. ' +
-      'A location you do not own is shown but cannot be added — assigning it would hand you its ' +
-      'people’s passwords, which is not something an owner can grant themselves. Ask an ' +
-      'administrator to add it, or put your address in that row’s catalog owner column.</div>') +
-
-    '<h4 style="margin:24px 0 4px;font-size:14.5px">What those locations see inside it</h4>' +
-    '<p class="cs">These narrow the catalog for your own people. They can only ever show less, ' +
-      'never more — entitlement is applied first, and this on top of it.</p>' +
-    '<div class="two">' +
-      '<div class="fg"><label class="f" for="f-price-col">Price column these read</label>' +
-        '<input class="f" id="f-price-col" value="' + esc(f.price_column || '') + '" placeholder="promo_cost"></div>' +
-      '<div class="fg"><label class="f" for="f-qty-col">Quantity column</label>' +
-        '<input class="f" id="f-qty-col" value="' + esc(f.qty_column || '') + '" placeholder="qty_available"></div>' +
-      '<div class="fg"><label class="f" for="f-min">Hide anything cheaper than</label>' +
-        '<input class="f" id="f-min" type="number" step="0.01" value="' + esc(f.min_price === null || f.min_price === undefined ? '' : f.min_price) + '"></div>' +
-      '<div class="fg"><label class="f" for="f-max">Hide anything dearer than</label>' +
-        '<input class="f" id="f-max" type="number" step="0.01" value="' + esc(f.max_price === null || f.max_price === undefined ? '' : f.max_price) + '"></div>' +
-    '</div>' +
-    '<div class="fg"><label class="f" for="f-vendors">Only these vendors <span style="text-transform:none;font-weight:600">(comma separated, blank for all)</span></label>' +
-      '<input class="f" id="f-vendors" value="' + esc(list(f.only_vendors)) + '" placeholder="VENDOR 1, VENDOR 2"></div>' +
-    '<div class="fg"><label class="f" for="f-cats">Hide these categories</label>' +
-      '<input class="f" id="f-cats" value="' + esc(list(f.hide_categories)) + '"></div>' +
-    '<div class="fg"><label class="f" for="f-subs">Hide these sub-categories</label>' +
-      '<input class="f" id="f-subs" value="' + esc(list(f.hide_sub_categories)) + '"></div>' +
-    '<div class="fg"><label class="f" for="f-models">Hide these items, by model number</label>' +
-      '<input class="f" id="f-models" value="' + esc(list(f.hide_models)) + '"></div>' +
-    '<label class="chk" style="margin-bottom:14px"><input type="checkbox" id="f-stock"' +
-      (f.in_stock_only ? ' checked' : '') + '> Only show items that are in stock</label>' +
-    '<div class="fg"><label class="f" for="f-note">Note to yourself <span style="text-transform:none;font-weight:600">(never shown to shoppers)</span></label>' +
-      '<textarea class="f" id="f-note" rows="2">' + esc(f.hidden_note || '') + '</textarea></div>' +
-    '<div class="row"><button class="btn green" id="cat-save" onclick="saveCatalog()">Save catalog</button>' +
-      '<button class="btn ghost" onclick="loadCatalog()">Reload</button></div>';
-}
-
-const splitList = s => (s || '').split(',').map(x => x.trim()).filter(Boolean);
-const numOrNull = s => (s === '' || s === null || s === undefined) ? null : Number(s);
-
-async function saveCatalog(){
-  const locs = [...$('cat-locs').querySelectorAll('input[type=checkbox]')]
-    .filter(i => i.checked && !i.disabled).map(i => i.value);
-  const body = {
-    locations: locs,
-    filters: {
-      price_column: $('f-price-col').value.trim(),
-      qty_column: $('f-qty-col').value.trim(),
-      min_price: numOrNull($('f-min').value.trim()),
-      max_price: numOrNull($('f-max').value.trim()),
-      only_vendors: splitList($('f-vendors').value),
-      hide_categories: splitList($('f-cats').value),
-      hide_sub_categories: splitList($('f-subs').value),
-      hide_models: splitList($('f-models').value),
-      in_stock_only: $('f-stock').checked,
-      hidden_note: $('f-note').value
-    }
-  };
-  const btn = $('cat-save');
-  btn.disabled = true; btn.textContent = 'Saving…';
-  try{
-    const out = await api('/api/admin/my-catalog/' + encodeURIComponent(CURRENT), {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(body)
-    });
-    say('✓ ' + (out.message || 'Saved.'), out.refused && out.refused.length ? 'info' : 'ok');
-    await loadCatalog();
-    await loadPeople();      // the people list follows the locations
-  }catch(e){
-    say(e.message, 'bad');
-  }finally{
-    btn.disabled = false; btn.textContent = 'Save catalog';
-  }
-}
-
 /* ───────────────────────── the catalog builder ───────────────────────── */
 
 let BLD = null;
@@ -833,7 +696,6 @@ async function bldServe(on){
 loadMe();
 loadPeople();
 loadRows();
-loadCatalog();
 loadBuilder();
 </script>
 

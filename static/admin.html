@@ -211,6 +211,8 @@ let CAT = null;        // /api/admin/my-catalog
 let PEOPLE = null;     // /api/admin/my-people
 let ROWS = null;       // /api/admin/users/rows
 let EDITS = {};        // location id -> {column: value} — only what actually changed
+let DELETES = [];      // row keys marked for removal — sent on Save
+let ADDED = [];        // brand-new rows typed in — sent on Save
 let PW_FOR = '';       // whose password the panel is open for
 let CURRENT = '';      // the catalog being edited
 
@@ -386,8 +388,21 @@ async function forceReset(email){
 
 /* ───────────────────────── locations grid ───────────────────────── */
 
+function colLabel(c){
+  const special={file_date:'Date Added', file_name:'File Name'};
+  if(special[String(c).toLowerCase()]) return special[String(c).toLowerCase()];
+  return String(c).split('_').filter(Boolean)
+    .map(w=>w.toLowerCase()==='id'?'ID':w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+}
+function todayStamp(){
+  const d=new Date(), p=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '
+    +p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+}
 async function loadRows(){
   EDITS = {};
+  DELETES = [];
+  ADDED = [];
   $('loc-dirty').textContent = '';
   try{
     ROWS = await api('/api/admin/users/rows');
@@ -407,17 +422,54 @@ async function loadRows(){
       'catalog they appear here.</div>';
     return;
   }
+  const canDel = !!ROWS.can_delete;
   $('loc-body').innerHTML =
     '<div class="scroll"><table class="t"><thead><tr>' +
-      cols.map(c => '<th>' + esc(c) + (editable.has(c) ? '' : ' <span style="opacity:.55">· read-only</span>') + '</th>').join('') +
-    '</tr></thead><tbody>' +
+      cols.map(c => '<th>' + esc(colLabel(c)) + (editable.has(c) ? '' : ' <span style="opacity:.55">· read-only</span>') + '</th>').join('') +
+      (canDel ? '<th></th>' : '') +
+    '</tr></thead><tbody id="loc-rows">' +
     rows.map((r, i) =>
       '<tr>' + cols.map(c => {
         const v = r[c] === null || r[c] === undefined ? '' : r[c];
         if(!editable.has(c)) return '<td class="ro">' + esc(v) + '</td>';
         return '<td><input value="' + esc(v) + '" data-i="' + i + '" data-c="' + esc(c) + '"></td>';
-      }).join('') + '</tr>'
-    ).join('') + '</tbody></table></div>';
+      }).join('') +
+      (canDel ? '<td><button class="btn ghost sm" data-del="' + esc(String(r[lc]||'')) + '">✕</button></td>' : '') +
+      '</tr>'
+    ).join('') + '</tbody></table></div>' +
+    (ROWS.can_add
+      ? '<div class="row" style="margin-top:10px"><button class="btn ghost" id="loc-addrow">➕ Add a row</button>' +
+        '<span class="muted small">New rows get today\'s date in Date Added. Save &amp; update writes everything at once.</span></div>'
+      : '');
+
+  if(canDel) $('loc-body').querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+    const key = b.getAttribute('data-del');
+    if(!key) return;
+    if(!confirm('Delete the row for "' + key + '"?\n\nIt is removed from the dataset when you press Save & update — and they lose sign-in and catalog access with it.')) return;
+    DELETES.push(key);
+    b.closest('tr').style.opacity = '.38';
+    b.disabled = true;
+    dirtyNote();
+  });
+  const addBtn = $('loc-addrow');
+  if(addBtn) addBtn.onclick = () => {
+    const tr = document.createElement('tr');
+    const j = ADDED.length;
+    ADDED.push({});
+    tr.innerHTML = cols.map(c => {
+      const isDate = String(c).toLowerCase() === 'file_date';
+      const v = isDate ? todayStamp() : '';
+      if(isDate) ADDED[j][c] = v;
+      return '<td><input value="' + esc(v) + '" placeholder="' + esc(colLabel(c)) + '" data-new="' + j + '" data-c="' + esc(c) + '"></td>';
+    }).join('') + (canDel ? '<td class="ro small">new</td>' : '');
+    $('loc-rows').appendChild(tr);
+    tr.querySelectorAll('input[data-new]').forEach(inp => inp.addEventListener('input', () => {
+      ADDED[j][inp.getAttribute('data-c')] = inp.value;
+      dirtyNote();
+    }));
+    tr.querySelector('input').focus();
+    dirtyNote();
+  };
 
   $('loc-body').querySelectorAll('input[data-c]').forEach(inp => {
     inp.addEventListener('input', () => {
@@ -432,23 +484,35 @@ async function loadRows(){
       if(inp.value === original) delete EDITS[key][c];
       else EDITS[key][c] = inp.value;
       if(!Object.keys(EDITS[key]).length) delete EDITS[key];
-      const n = Object.keys(EDITS).length;
-      $('loc-dirty').textContent = n ? (n + ' row' + (n === 1 ? '' : 's') + ' changed') : '';
+      dirtyNote();
     });
   });
 }
+function dirtyNote(){
+  const bits = [];
+  const n = Object.keys(EDITS).length;
+  if(n) bits.push(n + ' changed');
+  const a = ADDED.filter(r => Object.values(r).some(v => String(v||'').trim())).length;
+  if(a) bits.push(a + ' new');
+  if(DELETES.length) bits.push(DELETES.length + ' to delete');
+  $('loc-dirty').textContent = bits.join(' · ');
+}
 
 async function saveRows(){
-  const keys = Object.keys(EDITS);
-  if(!keys.length) return say('Nothing has changed yet.', 'info');
   const lc = ROWS.location_column;
-  const payload = keys.map(k => Object.assign({[lc]: k}, EDITS[k]));
+  const keys = Object.keys(EDITS);
+  const newRows = ADDED.filter(r => String(r[lc]||'').trim());
+  const half = ADDED.filter(r => !String(r[lc]||'').trim()
+                                 && Object.values(r).some(v => String(v||'').trim()));
+  if(half.length) return say('A new row needs its "' + colLabel(lc) + '" filled in before it can be saved.', 'bad');
+  if(!keys.length && !newRows.length && !DELETES.length) return say('Nothing has changed yet.', 'info');
+  const payload = keys.map(k => Object.assign({[lc]: k}, EDITS[k])).concat(newRows);
   const btn = $('loc-save');
   btn.disabled = true; btn.textContent = 'Saving…';
   try{
     const out = await api('/api/admin/users/rows', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({rows: payload})
+      body: JSON.stringify({rows: payload, delete: DELETES})
     });
     let text = out.message || 'Saved.';
     if(out.flows && out.flows.length) text += ' Re-ran: ' + out.flows.join(', ') + '.';

@@ -895,27 +895,32 @@ ADMIN_GUIDE = b"""
 </style>
 <div id="cat-guide">
   <h3>Locking this down before real stores use it</h3>
-  <p>In order. Each one is something you can do from this page.</p>
+  <p>In order. Everything here happens on this page &mdash; users, passwords, groups and
+    budgets all live in this app&#39;s own database.</p>
   <ol>
-    <li><b>Send people their own link, not this address.</b> Each customer has a sign-in
-      link ending <code>/a/&hellip;</code>. It is what makes an email and password belong to
-      that customer and to nobody else &mdash; the same address at another customer is a
-      different person entirely.</li>
+    <li><b>Send everyone to one address:</b> <code>/login</code> on this site. Their email and
+      the password you set is all they need &mdash; there are no per-customer links any more.</li>
     <li><b>Give every person a password.</b> Anyone showing <i>never set</i> cannot sign in.
-      Set one and tell them what it is; it is stored as a one-way hash, so nobody &mdash;
-      including you &mdash; can read it back.</li>
+      Set one on the Passwords tab and tell them what it is; it is stored as a one-way hash,
+      so nobody &mdash; including you &mdash; can read it back.</li>
     <li><b>Leave &quot;must change&quot; ticked.</b> They choose their own on first sign-in,
       and the one you told them stops working.</li>
-    <li><b>Force reset the moment somebody leaves.</b> It takes their password away at once.
-      Removing them from the location list does the same thing and is better, because there
-      is then no account left to forget about.</li>
-    <li><b>Check what a person gets before you trust it.</b> Use <i>Check a person</i> in
-      ETL Space rather than signing in as them.</li>
+    <li><b>Force reset the moment somebody leaves</b> &mdash; or better, press &#10005; on
+      their row on the Users tab: sign-in, catalog access and ordering all end at once, and
+      no account is left to forget about.</li>
+    <li><b>Give access to groups, not people.</b> Vendor reach, tabs and budgets set on a
+      group cover everyone in it and cascade into groups inside it; a person&#39;s own row
+      is only for exceptions.</li>
+    <li><b>Keep your own way back in.</b> <code>BOOTSTRAP_EMAIL</code> and
+      <code>BOOTSTRAP_PASSWORD</code> on the service&#39;s Environment page in Render always
+      sign in as an administrator &mdash; your answer to a forgotten admin password. Change
+      them there whenever you like.</li>
   </ol>
-  <div class="note"><b>These are not the only locks.</b> The service-level ones &mdash; a
-    password on ETL Space itself, admin endpoints requiring a real session, and the connector
-    token &mdash; live in ETL Space under <b>Apps &rarr; Before real stores use this</b>, which
-    checks them against the running system and tells you which are still open.</div>
+  <div class="note"><b>Two locks live outside this page,</b> both on the Environment page in
+    Render: <code>SESSION_SECRET</code> (any long random string, so sessions survive a
+    redeploy and only your server can mint them) and the <code>SMTP_*</code> +
+    <code>ALERT_EMAIL</code> variables, which turn on the emails that warn you when a feed
+    breaks or a file stops matching the schema.</div>
 </div>
 """
 
@@ -2117,6 +2122,7 @@ async def builder_state(request: Request):
                         "mapping": m, "columns": cols,
                         "missing": _builder_missing(m, r["vendor_label"]),
                         "feed": _feed_public(_feed_of(r)),
+                        "feed_addr": _feed_address(str(r["id"])),
                         "feed_status": _feed_status_of(r)})
     host, _p, user, pw = _email_env()
     return {"connected": True, "customer": label,
@@ -3291,27 +3297,42 @@ def _feed_fetch_sftp(cfg: dict):
             pass
 
 
-def _feed_fetch_email(cfg: dict):
+def _feed_address(sid: str) -> str:
+    """This source's own inbound address — plus-addressing on the connected
+    mailbox, so vendors@anywhere can send straight to one source."""
+    user = os.environ.get("EMAIL_IMAP_USER", "").strip()
+    if not user or "@" not in user or not sid:
+        return ""
+    local, dom = user.split("@", 1)
+    return f"{local}+cat{sid}@{dom}"
+
+
+def _feed_fetch_email(cfg: dict, sid: str = ""):
     host, port, user, pw = _email_env()
     if not (host and user and pw):
         raise ValueError("Connect a mailbox first: on this service's Environment page in Render, "
                          "set EMAIL_IMAP_HOST, EMAIL_IMAP_USER and EMAIL_IMAP_PASS "
                          "(and EMAIL_IMAP_PORT if it is not 993).")
     frm = str(cfg.get("from_contains") or "").strip()
-    if not frm:
-        raise ValueError("Say what the sender's address contains, so the right mail is picked.")
     subj = str(cfg.get("subject_contains") or "").strip()
+    addr = _feed_address(sid)
+    if frm:
+        crit = f'FROM "{frm}"' + (f' SUBJECT "{subj}"' if subj else "")
+    elif addr:
+        crit = f'TO "{addr}"' + (f' SUBJECT "{subj}"' if subj else "")
+    else:
+        raise ValueError("Say what the sender's address contains, so the right mail is picked.")
     import email as email_mod
     import imaplib
     M = imaplib.IMAP4_SSL(host, port)
     try:
         M.login(user, pw)
         M.select("INBOX", readonly=True)
-        crit = f'FROM "{frm}"' + (f' SUBJECT "{subj}"' if subj else "")
         typ, data = M.search(None, f'({crit})')
         ids = (data[0] or b"").split()
         if not ids:
-            raise ValueError("No mail from that sender yet.")
+            raise ValueError(("No mail from that sender yet." if frm else
+                              f"Nothing sent to {addr} yet."))
         for mid in reversed(ids[-20:]):          # newest first, recent 20 only
             typ, msgd = M.fetch(mid, "(RFC822)")
             if typ != "OK" or not msgd or not msgd[0]:
@@ -3381,7 +3402,7 @@ def _feed_run_source(eng, row) -> dict:
         elif kind == "sftp":
             fname, raw = _feed_fetch_sftp(cfg)
         elif kind == "email":
-            fname, raw = _feed_fetch_email(cfg)
+            fname, raw = _feed_fetch_email(cfg, str(row["id"]))
         else:
             raise ValueError("This source has no feed.")
         sha = hashlib.sha256(raw).hexdigest()

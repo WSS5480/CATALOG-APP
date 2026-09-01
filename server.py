@@ -3222,6 +3222,28 @@ def _feed_fetch_api(cfg: dict):
     auth = None
     if str(cfg.get("auth_user") or "").strip():
         auth = (str(cfg.get("auth_user")).strip(), str(cfg.get("auth_pass") or ""))
+    # OAuth client-credentials: trade the client id + secret for a short-lived
+    # token first, then call the API with it. Tried both common styles.
+    tok_url = str(cfg.get("token_url") or "").strip()
+    cid = str(cfg.get("client_id") or "").strip()
+    if tok_url and cid:
+        csec = str(cfg.get("client_secret") or "")
+        with httpx.Client(timeout=60, follow_redirects=True) as tc:
+            tr = tc.post(tok_url, data={"grant_type": "client_credentials",
+                                        "client_id": cid, "client_secret": csec})
+            if tr.status_code >= 400:
+                tr = tc.post(tok_url, data={"grant_type": "client_credentials"},
+                             auth=(cid, csec))
+        if tr.status_code >= 400:
+            raise ValueError(f"The token service answered {tr.status_code} — check the "
+                             f"token URL, client ID and client secret.")
+        try:
+            tok = str(tr.json().get("access_token") or "")
+        except Exception:
+            tok = ""
+        if not tok:
+            raise ValueError("The token service answered, but returned no access_token.")
+        headers.setdefault("Authorization", "Bearer " + tok)
     qparams = [(str(k), str(v)) for k, v in (cfg.get("qparams") or [])
                if str(k).strip()]
     with httpx.Client(timeout=90, follow_redirects=True, auth=auth) as cl:
@@ -3523,7 +3545,7 @@ async def _feed_start():
 
 def _feed_public(cfg: dict) -> dict:
     out = dict(cfg or {})
-    for k in ("password", "auth_pass"):
+    for k in ("password", "auth_pass", "client_secret"):
         if out.get(k):
             out[k] = _PW_KEPT
     return out
@@ -3558,6 +3580,10 @@ async def builder_feed_save(request: Request):
             keep["qparams"] = [[str(k)[:80], str(v)[:300]]
                                for k, v in (cfg.get("qparams") or [])
                                if str(k).strip()][:20]
+            keep["token_url"] = str(cfg.get("token_url") or "").strip()
+            keep["client_id"] = str(cfg.get("client_id") or "").strip()
+            cs = str(cfg.get("client_secret") or "")
+            keep["client_secret"] = old.get("client_secret", "") if cs == _PW_KEPT else cs
         elif kind == "sftp":
             keep["host"] = str(cfg.get("host") or "").strip()
             try:

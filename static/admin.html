@@ -118,7 +118,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v8</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v9</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -195,59 +195,16 @@
       </div>
 
       <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;background:var(--panel)">
-        <h4 id="u-form-title" style="margin:0 0 10px;font-size:14.5px">Add a person</h4>
-        <div class="two" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
-          <div class="fg"><label class="f" for="u-email">Email</label>
-            <input class="f" id="u-email" placeholder="person@company.com"></div>
-          <div class="fg"><label class="f" for="u-user">User label</label>
-            <input class="f" id="u-user" placeholder="104 - MCALLEN"></div>
-          <div class="fg"><label class="f" for="u-g1">Group 1</label>
-            <select class="f" id="u-g1"></select></div>
-          <div class="fg"><label class="f" for="u-g2">Group 2</label>
-            <select class="f" id="u-g2"></select></div>
+        <h4 style="margin:0 0 6px;font-size:14.5px">People</h4>
+        <p class="cs" style="margin-bottom:10px">One row per person, edited in place — groups,
+          vendor access, tabs and budget, exactly like the group rows above. New people start
+          with no groups and no password: tick them into groups here or above, and set the
+          password on the Passwords tab.</p>
+        <div class="row" style="margin-bottom:10px">
+          <input class="f" id="u-new-email" placeholder="person@company.com" style="max-width:250px">
+          <input class="f" id="u-new-label" placeholder="User label — 104 - MCALLEN" style="max-width:230px">
+          <button class="btn sm" onclick="addPersonQuick()">＋ Add person</button>
         </div>
-        <div class="row" style="margin-top:4px">
-          <label class="chk"><input type="checkbox" id="u-admin"> Administrator — sees and manages everything</label>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <label class="f" style="margin:0">Vendor access</label>
-          <select class="f" id="u-vmode" style="max-width:220px" onchange="uVendUI()">
-            <option value="all">From their groups (default)</option>
-            <option value="only">Only the ticked vendors</option>
-            <option value="except">All EXCEPT the ticked vendors</option>
-          </select>
-          <span id="u-vword" class="muted small"></span>
-        </div>
-        <div id="u-vlist" style="display:none;margin-top:8px" class="ticks"></div>
-        <div class="row" style="margin-top:10px">
-          <label class="f" style="margin:0">Tabs</label>
-          <label class="f" style="margin:0;text-transform:none;font-weight:600">Catalog</label>
-          <select class="f" id="u-p-cat" style="max-width:130px">
-            <option value="">From groups</option><option value="yes">Yes</option><option value="no">No</option>
-          </select>
-          <label class="f" style="margin:0;text-transform:none;font-weight:600">Order form</label>
-          <select class="f" id="u-p-ord" style="max-width:130px">
-            <option value="">From groups</option><option value="yes">Yes</option><option value="no">No</option>
-          </select>
-          <label class="f" style="margin:0;text-transform:none;font-weight:600">Pending orders</label>
-          <select class="f" id="u-p-pen" style="max-width:170px">
-            <option value="">From groups</option><option value="none">None</option>
-            <option value="read">Read only</option><option value="write">Read + write</option>
-            <option value="delete">Full (delete too)</option>
-          </select>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <label class="f" style="margin:0">Monthly budget $</label>
-          <input class="f" id="u-budget" placeholder="5000 (blank = none)" style="max-width:160px">
-          <span class="muted small">Orders past it are flagged over budget in Pending, and only an
-            administrator can approve them.</span>
-        </div>
-        <div class="row" style="margin-top:12px">
-          <button class="btn green" id="u-save" onclick="savePerson()">Save person</button>
-          <button class="btn ghost" onclick="resetPersonForm()">Clear</button>
-          <span class="muted small">New people cannot sign in until you set their password on the Passwords tab.</span>
-        </div>
-      </div>
       <div id="u-body" class="center">Loading…</div>
     </div>
   </section>
@@ -436,13 +393,19 @@ async function forceReset(email){
 
 /* ───────────────────────── users (add one at a time) ───────────────────────── */
 
+function closeRows(prefixes, keepId){
+  prefixes.forEach(pfx => document.querySelectorAll('tr[id^="' + pfx + '"]').forEach(r => {
+    if(r.id !== keepId) r.style.display = 'none';
+  }));
+}
+
 let GROUPS = [];
 
 async function loadGroups(){
   try{ GROUPS = (await api('/api/admin/groups')).groups || []; }
   catch(e){ GROUPS = []; }
   drawGroups();
-  fillGroupSelects();
+  if(typeof drawUsers === 'function' && USERS.length) drawUsers();
 }
 
 function groupOpts(sel, current){
@@ -508,6 +471,7 @@ function drawGroups(){
   box.querySelectorAll('button[data-gt]').forEach(b => b.onclick = () => {
     const i = +b.getAttribute('data-gt'), row = $('g-ticks-' + i);
     if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
+    closeRows(['g-ticks-','g-tabs-','g-ppl-'], row.id);
     row.style.display = '';
     const g = GROUPS[i], have = new Set(g.vendors || []);
     $('g-ticklist-' + i).innerHTML = (VENDORS.length ? VENDORS : [...have]).map(v =>
@@ -524,6 +488,7 @@ function drawGroups(){
   box.querySelectorAll('button[data-gtb]').forEach(b => b.onclick = () => {
     const i = +b.getAttribute('data-gtb'), row = $('g-tabs-' + i);
     if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
+    closeRows(['g-ticks-','g-tabs-','g-ppl-'], row.id);
     row.style.display = '';
     const g = GROUPS[i], pp = g.perms || {};
     const sel = (id2, opts, cur) => '<select id="' + id2 + '" style="padding:5px 7px;font-size:13px;' +
@@ -555,6 +520,7 @@ function drawGroups(){
   box.querySelectorAll('button[data-gpp]').forEach(b => b.onclick = () => {
     const i = +b.getAttribute('data-gpp'), row = $('g-ppl-' + i);
     if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
+    closeRows(['g-ticks-','g-tabs-','g-ppl-'], row.id);
     row.style.display = '';
     const g = GROUPS[i];
     const inG = p => p.group1 === g.name || p.group2 === g.name;
@@ -621,11 +587,11 @@ let USERS = [];
 let VENDORS = [];
 let U_EDIT = '';       // email being edited, '' = adding new
 
-function vendSummary(p){
+function vendWord(p){
   if(p.admin) return 'everything (admin)';
-  if(p.vendors_mode === 'only')   return p.vendors.length ? 'only: ' + p.vendors.join(', ') : 'NOTHING (none ticked)';
+  if(p.vendors_mode === 'only')   return p.vendors.length ? 'only: ' + p.vendors.join(', ') : 'NOTHING ticked';
   if(p.vendors_mode === 'except') return p.vendors.length ? 'all except: ' + p.vendors.join(', ') : 'all vendors';
-  return 'from their groups';
+  return 'from groups';
 }
 
 async function loadUsers(){
@@ -637,103 +603,149 @@ async function loadUsers(){
     $('u-body').innerHTML = '<div class="center">' + esc(e.message) + '</div>';
     return;
   }
-  uVendUI();
-  fillGroupSelects();
+  drawUsers();
+}
+
+const _selCss = 'padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px';
+
+function drawUsers(){
+  const box = $('u-body'); if(!box) return;
   if(!USERS.length){
-    $('u-body').innerHTML = '<div class="center">Nobody yet. Add your first person above — ' +
-      'start with yourself, ticked as administrator.</div>';
+    box.innerHTML = '<div class="center">Nobody yet — add your first person above (start with ' +
+      'yourself if you have not).</div>';
     return;
   }
-  $('u-body').innerHTML =
+  const gsel = (i, slot, cur) => {
+    const names = GROUPS.map(g => g.name);
+    if(cur && names.indexOf(cur) < 0) names.push(cur);
+    return '<select data-us="' + i + '" data-slot="' + slot + '" style="' + _selCss + '">' +
+      '<option value="">—</option>' + names.map(n =>
+      '<option' + (n === cur ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select>';
+  };
+  box.innerHTML =
     '<div class="scroll"><table class="t"><thead><tr>' +
-      '<th>Email</th><th>User</th><th>Group 1</th><th>Group 2</th><th>Vendor access</th><th>Spent / budget</th>' +
-      '<th style="width:130px"></th></tr></thead><tbody>' +
-    USERS.map(p => '<tr>' +
-      '<td>' + esc(p.email) + (p.admin ? ' <span class="tag ok">admin</span>' : '') + '</td>' +
-      '<td class="ro">' + esc(p.user || '—') + '</td>' +
-      '<td class="ro">' + esc(p.group1 || '—') + '</td>' +
-      '<td class="ro">' + esc(p.group2 || '—') + '</td>' +
-      '<td class="ro small">' + esc(vendSummary(p)) + '</td>' +
-      '<td class="ro small">' + (p.budget ? ('$' + (+p.spent).toLocaleString() + ' / $' + (+String(p.budget).replace(/[^0-9.]/g,'')).toLocaleString()) : (p.spent ? '$' + (+p.spent).toLocaleString() : '—')) + '</td>' +
-      '<td class="row">' +
-        '<button class="btn ghost sm" data-edit="' + esc(p.email) + '">Edit</button>' +
-        '<button class="btn ghost sm" data-drop="' + esc(p.email) + '">✕</button>' +
-      '</td></tr>').join('') + '</tbody></table></div>';
-  $('u-body').querySelectorAll('[data-edit]').forEach(b =>
-    b.onclick = () => editPerson(b.getAttribute('data-edit')));
-  $('u-body').querySelectorAll('[data-drop]').forEach(b =>
+    '<th>Person</th><th>Group 1</th><th>Group 2</th><th>Vendor access</th><th></th>' +
+    '<th>Spent / budget $</th><th></th></tr></thead><tbody>' +
+    USERS.map((p, i) =>
+      '<tr><td><b>' + esc(p.user || '—') + '</b>' +
+        (p.admin ? ' <span class="tag ok">admin</span>' : '') +
+        '<div class="muted small">' + esc(p.email) + '</div></td>' +
+      '<td>' + gsel(i, 'group1', p.group1) + '</td>' +
+      '<td>' + gsel(i, 'group2', p.group2) + '</td>' +
+      '<td><select data-uvm="' + i + '" style="' + _selCss + '">' +
+        '<option value="all"' + (p.vendors_mode === 'all' ? ' selected' : '') + '>From groups</option>' +
+        '<option value="only"' + (p.vendors_mode === 'only' ? ' selected' : '') + '>Only ticked</option>' +
+        '<option value="except"' + (p.vendors_mode === 'except' ? ' selected' : '') + '>All except ticked</option>' +
+      '</select> <span class="muted small">' + esc(vendWord(p)) + '</span></td>' +
+      '<td class="row">' + (p.vendors_mode === 'all' ? '' :
+        '<button class="btn ghost sm" data-uvt="' + i + '">vendors…</button>') +
+        '<button class="btn ghost sm" data-utb="' + i + '">tabs…</button></td>' +
+      '<td><input data-ubud="' + i + '" value="' + esc(p.budget || '') + '" placeholder="none"' +
+        ' style="max-width:90px;padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">' +
+        (p.spent ? ' <span class="muted small">$' + (+p.spent).toLocaleString() + ' spent</span>' : '') + '</td>' +
+      '<td><button class="btn ghost sm" data-drop="' + esc(p.email) + '">✕</button></td></tr>' +
+      '<tr id="u-ticks-' + i + '" style="display:none"><td colspan="7"><div class="ticks" ' +
+        'style="max-height:190px" id="u-ticklist-' + i + '"></div></td></tr>' +
+      '<tr id="u-tabs-' + i + '" style="display:none"><td colspan="7"><div class="row" ' +
+        'style="padding:6px 2px" id="u-tabbox-' + i + '"></div></td></tr>'
+    ).join('') + '</tbody></table></div>';
+
+  box.querySelectorAll('select[data-us]').forEach(s => s.addEventListener('change', () => {
+    const p = USERS[+s.getAttribute('data-us')];
+    p[s.getAttribute('data-slot')] = s.value;
+    saveUserRow(p);
+  }));
+  box.querySelectorAll('select[data-uvm]').forEach(s => s.addEventListener('change', () => {
+    const p = USERS[+s.getAttribute('data-uvm')];
+    p.vendors_mode = s.value;
+    saveUserRow(p, true);
+  }));
+  box.querySelectorAll('input[data-ubud]').forEach(inp => inp.addEventListener('change', () => {
+    const p = USERS[+inp.getAttribute('data-ubud')];
+    p.budget = inp.value.trim();
+    saveUserRow(p);
+  }));
+  box.querySelectorAll('button[data-uvt]').forEach(b => b.onclick = () => {
+    const i = +b.getAttribute('data-uvt'), row = $('u-ticks-' + i);
+    if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
+    closeRows(['u-ticks-','u-tabs-'], row.id);
+    row.style.display = '';
+    const p = USERS[i], have = new Set(p.vendors || []);
+    $('u-ticklist-' + i).innerHTML = (VENDORS.length ? VENDORS : [...have]).map(v =>
+      '<label><input type="checkbox" data-uv2="' + i + '" value="' + esc(v) + '"' +
+      (have.has(v) ? ' checked' : '') + '><span><span class="nm">' + esc(v) +
+      '</span></span></label>').join('') ||
+      '<div style="padding:10px" class="muted small">No vendors yet — build the catalog first.</div>';
+    $('u-ticklist-' + i).querySelectorAll('input[data-uv2]').forEach(t =>
+      t.addEventListener('change', () => {
+        p.vendors = [...$('u-ticklist-' + i).querySelectorAll('input[data-uv2]')]
+          .filter(x => x.checked).map(x => x.value);
+        saveUserRow(p);
+      }));
+  });
+  box.querySelectorAll('button[data-utb]').forEach(b => b.onclick = () => {
+    const i = +b.getAttribute('data-utb'), row = $('u-tabs-' + i);
+    if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
+    closeRows(['u-ticks-','u-tabs-'], row.id);
+    row.style.display = '';
+    const p = USERS[i], pp = p.perms || {};
+    const sel = (id2, opts, cur) => '<select id="' + id2 + '" style="' + _selCss + '">' +
+      opts.map(o => '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' +
+      o[1] + '</option>').join('') + '</select>';
+    const yn = [['','From groups'],['yes','Yes'],['no','No']];
+    $('u-tabbox-' + i).innerHTML =
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Catalog</label>' +
+      sel('up-cat-' + i, yn, 'catalog' in pp ? (pp.catalog ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Order form</label>' +
+      sel('up-ord-' + i, yn, 'order' in pp ? (pp.order ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Pending orders</label>' +
+      sel('up-pen-' + i, [['','From groups'],['none','None'],['read','Read only'],
+        ['write','Read + write'],['delete','Full (delete too)']], pp.pending || '') +
+      '<label class="chk" style="margin-left:14px"><input type="checkbox" id="up-adm-' + i + '"' +
+        (p.admin ? ' checked' : '') + '> Administrator</label>';
+    ['up-cat-','up-ord-','up-pen-','up-adm-'].forEach(pfx =>
+      $(pfx + i).addEventListener('change', () => {
+        const perms = {};
+        if($('up-cat-' + i).value) perms.catalog = $('up-cat-' + i).value === 'yes';
+        if($('up-ord-' + i).value) perms.order = $('up-ord-' + i).value === 'yes';
+        if($('up-pen-' + i).value) perms.pending = $('up-pen-' + i).value;
+        p.perms = perms;
+        p.admin = $('up-adm-' + i).checked;
+        saveUserRow(p);
+      }));
+  });
+  box.querySelectorAll('[data-drop]').forEach(b =>
     b.onclick = () => dropPerson(b.getAttribute('data-drop')));
 }
 
-function uVendUI(){
-  const mode = $('u-vmode').value;
-  const box = $('u-vlist');
-  const word = $('u-vword');
-  if(mode === 'all'){ box.style.display = 'none'; word.textContent = 'Everyone sees every vendor.'; return; }
-  box.style.display = 'block';
-  word.textContent = mode === 'only' ? 'Tick the vendors they may see.'
-                                     : 'Tick the vendors to keep AWAY from them — new vendors stay visible.';
-  if(!VENDORS.length){
-    box.innerHTML = '<div style="padding:12px" class="muted small">No vendors yet — they appear ' +
-      'here once the catalog is built.</div>';
-    return;
-  }
-  const have = new Set((box._ticked || []));
-  box.innerHTML = VENDORS.map(v =>
-    '<label><input type="checkbox" class="u-vt" value="' + esc(v) + '"' +
-    (have.has(v) ? ' checked' : '') + '><span><span class="nm">' + esc(v) + '</span></span></label>').join('');
+let _uSaveT = {};
+function saveUserRow(p, redraw){
+  clearTimeout(_uSaveT[p.email]);
+  _uSaveT[p.email] = setTimeout(async () => {
+    try{
+      await api('/api/admin/people', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({email: p.email, user: p.user, group1: p.group1, group2: p.group2,
+          admin: p.admin, vendors_mode: p.vendors_mode, vendors: p.vendors || [],
+          perms: p.perms || {}, budget: p.budget || ''})});
+      say('✓ Saved ' + (p.user || p.email) + '.', 'ok');
+      if(redraw) drawUsers();
+      loadGroups();
+      loadPeople();
+    }catch(e){ say(e.message, 'bad'); }
+  }, 350);
 }
 
-function fillPersonForm(p){
-  $('u-email').value = p ? p.email : '';
-  $('u-email').disabled = !!p;
-  $('u-user').value = p ? (p.user || '') : '';
-  groupOpts($('u-g1'), p ? (p.group1 || '') : '');
-  groupOpts($('u-g2'), p ? (p.group2 || '') : '');
-  $('u-admin').checked = p ? !!p.admin : false;
-  $('u-vmode').value = p ? (p.vendors_mode || 'all') : 'all';
-  const pp = (p && p.perms) || {};
-  $('u-p-cat').value = 'catalog' in pp ? (pp.catalog ? 'yes' : 'no') : '';
-  $('u-p-ord').value = 'order' in pp ? (pp.order ? 'yes' : 'no') : '';
-  $('u-p-pen').value = pp.pending || '';
-  $('u-budget').value = p ? (p.budget || '') : '';
-  $('u-vlist')._ticked = p ? (p.vendors || []) : [];
-  $('u-form-title').textContent = p ? ('Edit — ' + p.email) : 'Add a person';
-  $('u-save').textContent = p ? 'Save changes' : 'Save person';
-  uVendUI();
-}
-function resetPersonForm(){ U_EDIT = ''; fillPersonForm(null); }
-
-function editPerson(email){
-  const p = USERS.find(x => x.email === email); if(!p) return;
-  U_EDIT = email;
-  fillPersonForm(p);
-  $('u-email').scrollIntoView({behavior:'smooth', block:'center'});
-}
-
-async function savePerson(){
-  const email = $('u-email').value.trim().toLowerCase();
+async function addPersonQuick(){
+  const email = $('u-new-email').value.trim().toLowerCase();
   if(!email) return say('An email address is what a person signs in with — it cannot be blank.', 'bad');
-  const ticked = [...document.querySelectorAll('.u-vt')].filter(i => i.checked).map(i => i.value);
-  const perms = {};
-  if($('u-p-cat').value) perms.catalog = $('u-p-cat').value === 'yes';
-  if($('u-p-ord').value) perms.order = $('u-p-ord').value === 'yes';
-  if($('u-p-pen').value) perms.pending = $('u-p-pen').value;
-  const body = {email: email, user: $('u-user').value, group1: $('u-g1').value,
-                group2: $('u-g2').value, admin: $('u-admin').checked,
-                vendors_mode: $('u-vmode').value, vendors: ticked, perms: perms,
-                budget: $('u-budget').value};
-  const btn = $('u-save');
-  btn.disabled = true;
   try{
     const out = await api('/api/admin/people', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-    say('✓ ' + (out.message || 'Saved.'), 'ok');
-    resetPersonForm();
-    await loadUsers();
-    await loadPeople();
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({email: email, user: $('u-new-label').value.trim()})});
+    say('✓ ' + (out.message || 'Added.'), 'ok');
+    $('u-new-email').value = ''; $('u-new-label').value = '';
+    await loadUsers(); await loadPeople(); await loadGroups();
   }catch(e){ say(e.message, 'bad'); }
-  finally{ btn.disabled = false; }
 }
 
 async function dropPerson(email){
@@ -742,8 +754,7 @@ async function dropPerson(email){
     const out = await api('/api/admin/people/delete', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: email})});
     say('✓ ' + (out.message || 'Removed.'), 'ok');
-    await loadUsers();
-    await loadPeople();
+    await loadUsers(); await loadPeople(); await loadGroups();
   }catch(e){ say(e.message, 'bad'); }
 }
 

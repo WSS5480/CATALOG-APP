@@ -1880,10 +1880,13 @@ def _builder_engine():
 
 
 def _builder_migrate(engine):
+    """Create and upgrade the store. Every statement runs in its OWN
+    transaction: on Postgres one failed statement poisons a shared
+    transaction, and on a brand-new database that used to mean no tables
+    were created at all."""
     from sqlalchemy import text
-    with engine.begin() as c:
-        c.execute(text("""
-            create table if not exists cat_sources(
+    statements = [
+        """create table if not exists cat_sources(
                 id text primary key,
                 customer text not null,
                 name text not null,
@@ -1892,27 +1895,15 @@ def _builder_migrate(engine):
                 table_name text not null,
                 mapping text default '{}',
                 row_count integer default 0,
-                added_at timestamptz default now(),
-                updated_at timestamptz default now())"""))
-        c.execute(text("""
-            create table if not exists cat_built(
+                added_at timestamp default current_timestamp,
+                updated_at timestamp default current_timestamp)""",
+        """create table if not exists cat_built(
                 customer text primary key,
                 table_name text not null,
                 row_count integer default 0,
                 serving boolean default true,
-                built_at timestamptz default now())"""))
-        # Feeds (connectors) arrived after the first tables — add their columns
-        # to stores created before them.
-        for ddl in ("alter table cat_sources add column if not exists feed text default '{}'",
-                    "alter table cat_sources add column if not exists feed_status text default '{}'"):
-            try:
-                c.execute(text(ddl))
-            except Exception:
-                pass
-        # The people of this catalog — sign-in, groups, vendor reach, passwords.
-        # This is what makes the app stand alone from the ETL.
-        c.execute(text("""
-            create table if not exists cat_people(
+                built_at timestamp default current_timestamp)""",
+        """create table if not exists cat_people(
                 email text primary key,
                 customer text not null default '',
                 user_label text default '',
@@ -1923,33 +1914,21 @@ def _builder_migrate(engine):
                 vendors text default '[]',
                 pw_hash text default '',
                 must_change boolean default false,
-                added_at timestamptz default now(),
-                last_signin text default '')"""))
-        for ddl in ("alter table cat_people add column if not exists perms text default '{}'",
-                    "alter table cat_groups add column if not exists perms text default '{}'",
-                    "alter table cat_people add column if not exists budget text default ''",
-                    "alter table cat_groups add column if not exists budget text default ''"):
-            try:
-                c.execute(text(ddl))
-            except Exception:
-                pass
-        c.execute(text("""
-            create table if not exists cat_kv(
+                added_at timestamp default current_timestamp,
+                last_signin text default '',
+                perms text default '{}',
+                budget text default '')""",
+        """create table if not exists cat_kv(
                 k text primary key,
-                v text default '')"""))
-        # Orders live at home too — the storefront's order form writes here.
-        c.execute(text("""
-            create table if not exists cat_orders(
+                v text default '')""",
+        """create table if not exists cat_orders(
                 id text primary key,
                 coll text not null default '',
                 customer text not null default '',
                 content text not null default '{}',
-                created_at timestamptz default now(),
-                updated_at timestamptz default now())"""))
-        # Groups are first-class: each carries vendor access, people inherit it,
-        # and a group inside a group (parent) cascades its access down.
-        c.execute(text("""
-            create table if not exists cat_groups(
+                created_at timestamp default current_timestamp,
+                updated_at timestamp default current_timestamp)""",
+        """create table if not exists cat_groups(
                 customer text not null default '',
                 name text not null,
                 parent text default '',
@@ -1957,10 +1936,8 @@ def _builder_migrate(engine):
                 vendors text default '[]',
                 perms text default '{}',
                 budget text default '',
-                primary key (customer, name))"""))
-        # Per-vendor ordering details: where orders go, freight minimums.
-        c.execute(text("""
-            create table if not exists cat_vendorinfo(
+                primary key (customer, name))""",
+        """create table if not exists cat_vendorinfo(
                 customer text not null default '',
                 vendor text not null,
                 order_email text default '',
@@ -1968,7 +1945,21 @@ def _builder_migrate(engine):
                 freight_min_by_cat text default '',
                 freight_min_by_brand text default '',
                 freight_qty_or_cost text default '',
-                primary key (customer, vendor))"""))
+                primary key (customer, vendor))""",
+        # upgrades for stores created before these columns existed
+        "alter table cat_sources add column if not exists feed text default '{}'",
+        "alter table cat_sources add column if not exists feed_status text default '{}'",
+        "alter table cat_people add column if not exists perms text default '{}'",
+        "alter table cat_people add column if not exists budget text default ''",
+        "alter table cat_groups add column if not exists perms text default '{}'",
+        "alter table cat_groups add column if not exists budget text default ''",
+    ]
+    for ddl in statements:
+        try:
+            with engine.begin() as c:
+                c.execute(text(ddl))
+        except Exception:
+            pass
 
 
 # The schema the catalog reads — the same names the storefront asks for.

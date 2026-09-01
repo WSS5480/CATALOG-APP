@@ -973,7 +973,6 @@ USERS_PANEL = """
     return out;
   }
   function relabel(){
-    leaves(/^locations$/i).forEach(function(el){ el.textContent='Users'; });
     leaves(/^people\s*&\s*passwords$/i).forEach(function(el){ el.textContent='Passwords'; });
     var ps=document.querySelectorAll('p');
     for(var j=0;j<ps.length;j++){
@@ -1023,7 +1022,11 @@ USERS_PANEL = """
     var anchor=null, hs=document.querySelectorAll('h1,h2,h3,h4');
     for(var i=0;i<hs.length;i++){
       var t=(hs[i].textContent||'').trim();
-      if(/^(users|locations)$/i.test(t)){anchor=hs[i];break;}
+      if(/^users$/i.test(t)){anchor=hs[i];break;}
+    }
+    if(!anchor)for(var j=0;j<hs.length;j++){
+      var t2=(hs[j].textContent||'').trim();
+      if(/^locations$/i.test(t2)){anchor=hs[j];break;}
     }
     var box=document.createElement('div');
     box.id='ial-users';

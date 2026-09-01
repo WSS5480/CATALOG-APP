@@ -442,6 +442,28 @@ async def rows(ident: str, request: Request):
 async def freshness(request: Request, catalog: str = "", profile: str = ""):
     """When each dataset behind this app was last written, straight from ETL
     Space — so "is this screen stale?" has an answer you can read."""
+    # A built catalog is served from THIS app — so its freshness comes from
+    # here too, not from whatever old dataset the ETL still remembers.
+    try:
+        if os.environ.get("CATALOG_DATABASE_URL", "").strip():
+            who = await _whoami(request)
+            sc = (who or {}).get("scope") or {}
+            cust = _bslug(str(sc.get("customer") or "")) if str(sc.get("customer") or "").strip() else ""
+            if not cust or cust == "x":
+                cust = _builder_only_customer()
+            if cust:
+                from sqlalchemy import text as _t
+                with _builder_engine().connect() as c:
+                    b = c.execute(_t("select * from cat_built where customer=:c and serving"),
+                                  {"c": cust}).mappings().first()
+                if b:
+                    info = {"dataset": "your built catalog", "rows": b["row_count"],
+                            "updated_at": str(b["built_at"])[:19],
+                            "updated_by": "Catalog Builder", "update_mode": "builder",
+                            "source": "this app's own database"}
+                    return {"datasets": {"catalog": info}, "roles": {"catalog": info}}
+    except Exception:
+        pass
     prof = (profile or catalog or CATALOG_PROFILE or "").strip()
     sets = DATASETS
     my = await _my_datasets(request)
@@ -1362,13 +1384,13 @@ async def _me_scope(request) -> dict:
     that matters re-checks its caller anyway, so being wrong here costs a
     shortcut or a redirect, never access.
     """
-    if request is None or not request.cookies.get(SESSION_COOKIE) or not ETL_BASE:
+    if request is None or not request.cookies.get(SESSION_COOKIE):
         return {}
     try:
-        me = await etl_get("/api/access/me", request=request)
+        who = await _whoami(request)
     except Exception:
         return {}
-    return (me or {}).get("scope") or {}
+    return (who or {}).get("scope") or {} if who else {}
 
 
 def _scope_administers(sc: dict) -> bool:

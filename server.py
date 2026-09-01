@@ -3295,16 +3295,32 @@ def _feed_fetch_api(cfg: dict, progress=None):
                 instance). Scalars kept; one level of dict unpacked; anything
                 deeper becomes a compact JSON string."""
                 out = {}
+
+                def put_dict(prefix, d):
+                    for k2, v2 in d.items():
+                        if isinstance(v2, (str, int, float, bool)) or v2 is None:
+                            out[f"{prefix}.{k2}"] = v2
+                        elif isinstance(v2, dict):
+                            for k3, v3 in v2.items():
+                                if isinstance(v3, (str, int, float, bool)) or v3 is None:
+                                    out[f"{prefix}.{k2}.{k3}"] = v3
+                                else:
+                                    out[f"{prefix}.{k2}.{k3}"] = json.dumps(v3)[:300]
+                        else:
+                            out[f"{prefix}.{k2}"] = json.dumps(v2)[:300]
+
                 for k, v in rec.items():
                     k = str(k)
                     if isinstance(v, (str, int, float, bool)) or v is None:
                         out[k] = v
                     elif isinstance(v, dict):
-                        for k2, v2 in v.items():
-                            if isinstance(v2, (str, int, float, bool)) or v2 is None:
-                                out[f"{k}.{k2}"] = v2
-                            else:
-                                out[f"{k}.{k2}"] = json.dumps(v2)[:300]
+                        put_dict(k, v)
+                    elif isinstance(v, list) and v and isinstance(v[0], dict):
+                        # a list of objects: unpack the first one into columns
+                        # (price lists, image lists) and keep the rest compact
+                        put_dict(k, v[0])
+                        if len(v) > 1:
+                            out[k] = json.dumps(v)[:300]
                     else:
                         out[k] = json.dumps(v)[:300]
                 return out

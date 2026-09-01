@@ -118,7 +118,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v11</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v12</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -982,8 +982,22 @@ function bldFeedBox(src){
     '" style="max-width:' + (w || '220px') + '">';
   let cfg = '';
   if(t === 'api'){
-    cfg = inp('url', 'https://vendor.com/pricefile.csv (or a JSON list)', f.url, '360px') +
-          inp('header', 'Header if it needs one, e.g. Authorization: Bearer …', f.header, '320px');
+    const qrows = ((f.qparams && f.qparams.length ? f.qparams : [['','']]).map(q =>
+      '<div class="row" style="margin-top:5px;flex-basis:100%">' +
+      '<input class="f fd-qpk-' + esc(src.id) + '" placeholder="Key — e.g. Customer" value="' +
+        esc(q[0] || '') + '" style="max-width:200px">' +
+      '<input class="f fd-qpv-' + esc(src.id) + '" placeholder="Value — e.g. 3989100" value="' +
+        esc(q[1] || '') + '" style="max-width:240px"></div>').join(''));
+    cfg = inp('url', 'https://vendor.com/api/prices (or a CSV/JSON file URL)', f.url, '380px') +
+          inp('header', 'Header if it needs one, e.g. Ocp-Apim-Subscription-Key: …', f.header, '330px') +
+          inp('auth-user', 'Basic auth user (optional)', f.auth_user, '180px') +
+          '<input class="f" type="password" id="fd-auth-pass-' + esc(src.id) +
+            '" placeholder="Basic auth password" value="' + esc(f.auth_pass || '') +
+            '" style="max-width:180px">' +
+          '<div style="flex-basis:100%"><span class="muted small">Query parameters — sent with ' +
+            'every pull, like Domo\'s key/value rows:</span></div>' +
+          '<div id="fd-qps-' + esc(src.id) + '" style="flex-basis:100%">' + qrows + '</div>' +
+          '<button class="btn ghost sm" onclick="bldQpAdd(\'' + esc(src.id) + '\')">＋ parameter</button>';
   }else if(t === 'sftp'){
     cfg = inp('host', 'sftp.vendor.com', f.host, '190px') +
           inp('port', '22', f.port || 22, '70px') +
@@ -1037,12 +1051,28 @@ function bldFeedType(id, t){
   drawBuilder();
 }
 
+function bldQpAdd(id){
+  const box = $('fd-qps-' + id); if(!box) return;
+  const d = document.createElement('div');
+  d.className = 'row'; d.style.cssText = 'margin-top:5px;flex-basis:100%';
+  d.innerHTML = '<input class="f fd-qpk-' + id + '" placeholder="Key" style="max-width:200px">' +
+                '<input class="f fd-qpv-' + id + '" placeholder="Value" style="max-width:240px">';
+  box.appendChild(d);
+}
+
 async function bldFeedSave(id){
   const src = (BLD.sources || []).find(s => s.id === id); if(!src) return;
   const g = k => { const el = $('fd-' + k + '-' + id); return el ? el.value.trim() : ''; };
   const t = (src.feed && src.feed.type) || 'manual';
   const feed = {type: t, every_hours: g('every') || 24};
-  if(t === 'api'){ feed.url = g('url'); feed.header = g('header'); }
+  if(t === 'api'){
+    feed.url = g('url'); feed.header = g('header');
+    feed.auth_user = g('auth-user');
+    feed.auth_pass = ($('fd-auth-pass-' + id) || {value:''}).value;
+    const ks = [...document.querySelectorAll('.fd-qpk-' + id)].map(e => e.value.trim());
+    const vs = [...document.querySelectorAll('.fd-qpv-' + id)].map(e => e.value.trim());
+    feed.qparams = ks.map((k, j) => [k, vs[j] || '']).filter(p => p[0]);
+  }
   if(t === 'sftp'){ feed.host = g('host'); feed.port = g('port') || 22; feed.user = g('user');
                     feed.password = ($('fd-pass-' + id) || {value:''}).value;
                     feed.path = g('path'); feed.pattern = g('pattern'); }

@@ -1824,6 +1824,18 @@ def _builder_only_customer() -> str:
         custs = {c for c in custs if c}
         if len(custs) == 1:
             return next(iter(custs))
+        if len(custs) > 1:
+            # Several lives of this catalog linger (old demo keys from before a
+            # cleanup). The one built most recently is the live one.
+            with eng.connect() as c:
+                row = c.execute(text("select customer from cat_built "
+                                     "order by built_at desc limit 1")).first()
+                if row and row[0]:
+                    return row[0]
+                row = c.execute(text("select customer from cat_sources "
+                                     "order by added_at desc limit 1")).first()
+                if row and row[0]:
+                    return row[0]
     except Exception:
         pass
     return ""

@@ -230,6 +230,12 @@
             <option value="delete">Full (delete too)</option>
           </select>
         </div>
+        <div class="row" style="margin-top:10px">
+          <label class="f" style="margin:0">Monthly budget $</label>
+          <input class="f" id="u-budget" placeholder="5000 (blank = none)" style="max-width:160px">
+          <span class="muted small">Orders past it are flagged over budget in Pending, and only an
+            administrator can approve them.</span>
+        </div>
         <div class="row" style="margin-top:12px">
           <button class="btn green" id="u-save" onclick="savePerson()">Save person</button>
           <button class="btn ghost" onclick="resetPersonForm()">Clear</button>
@@ -523,13 +529,17 @@ function drawGroups(){
       sel('gp-ord-' + i, yn, 'order' in pp ? (pp.order ? 'yes' : 'no') : '') +
       '<label class="f" style="margin:0;text-transform:none;font-weight:600">Pending orders</label>' +
       sel('gp-pen-' + i, [['','Inherit'],['none','None'],['read','Read only'],
-        ['write','Read + write'],['delete','Full (delete too)']], pp.pending || '');
-    ['gp-cat-','gp-ord-','gp-pen-'].forEach(pfx => $(pfx + i).addEventListener('change', () => {
+        ['write','Read + write'],['delete','Full (delete too)']], pp.pending || '') +
+      '<label class="f" style="margin:0 0 0 12px;text-transform:none;font-weight:600">Monthly budget $</label>' +
+      '<input id="gp-bud-' + i + '" placeholder="50000 (blank = none)" value="' + esc(g.budget || '') + '"' +
+      ' style="max-width:140px;padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">';
+    ['gp-cat-','gp-ord-','gp-pen-','gp-bud-'].forEach(pfx => $(pfx + i).addEventListener('change', () => {
       const perms = {};
       if($('gp-cat-' + i).value) perms.catalog = $('gp-cat-' + i).value === 'yes';
       if($('gp-ord-' + i).value) perms.order = $('gp-ord-' + i).value === 'yes';
       if($('gp-pen-' + i).value) perms.pending = $('gp-pen-' + i).value;
       g.perms = perms;
+      g.budget = $('gp-bud-' + i).value.trim();
       saveGroup(g);
     }));
   });
@@ -599,7 +609,7 @@ async function loadUsers(){
   }
   $('u-body').innerHTML =
     '<div class="scroll"><table class="t"><thead><tr>' +
-      '<th>Email</th><th>User</th><th>Group 1</th><th>Group 2</th><th>Vendor access</th>' +
+      '<th>Email</th><th>User</th><th>Group 1</th><th>Group 2</th><th>Vendor access</th><th>Spent / budget</th>' +
       '<th style="width:130px"></th></tr></thead><tbody>' +
     USERS.map(p => '<tr>' +
       '<td>' + esc(p.email) + (p.admin ? ' <span class="tag ok">admin</span>' : '') + '</td>' +
@@ -607,6 +617,7 @@ async function loadUsers(){
       '<td class="ro">' + esc(p.group1 || '—') + '</td>' +
       '<td class="ro">' + esc(p.group2 || '—') + '</td>' +
       '<td class="ro small">' + esc(vendSummary(p)) + '</td>' +
+      '<td class="ro small">' + (p.budget ? ('$' + (+p.spent).toLocaleString() + ' / $' + (+String(p.budget).replace(/[^0-9.]/g,'')).toLocaleString()) : (p.spent ? '$' + (+p.spent).toLocaleString() : '—')) + '</td>' +
       '<td class="row">' +
         '<button class="btn ghost sm" data-edit="' + esc(p.email) + '">Edit</button>' +
         '<button class="btn ghost sm" data-drop="' + esc(p.email) + '">✕</button>' +
@@ -648,6 +659,7 @@ function fillPersonForm(p){
   $('u-p-cat').value = 'catalog' in pp ? (pp.catalog ? 'yes' : 'no') : '';
   $('u-p-ord').value = 'order' in pp ? (pp.order ? 'yes' : 'no') : '';
   $('u-p-pen').value = pp.pending || '';
+  $('u-budget').value = p ? (p.budget || '') : '';
   $('u-vlist')._ticked = p ? (p.vendors || []) : [];
   $('u-form-title').textContent = p ? ('Edit — ' + p.email) : 'Add a person';
   $('u-save').textContent = p ? 'Save changes' : 'Save person';
@@ -672,7 +684,8 @@ async function savePerson(){
   if($('u-p-pen').value) perms.pending = $('u-p-pen').value;
   const body = {email: email, user: $('u-user').value, group1: $('u-g1').value,
                 group2: $('u-g2').value, admin: $('u-admin').checked,
-                vendors_mode: $('u-vmode').value, vendors: ticked, perms: perms};
+                vendors_mode: $('u-vmode').value, vendors: ticked, perms: perms,
+                budget: $('u-budget').value};
   const btn = $('u-save');
   btn.disabled = true;
   try{

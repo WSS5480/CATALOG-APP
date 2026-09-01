@@ -580,7 +580,25 @@ async def auth_signin(request: Request):
     # This app's own people sign in HERE — no ETL involved. Only an email with
     # no local row falls through to the ETL, and only while one is configured.
     p = _person(email)
-    if p is not None:
+    # Break-glass: BOOTSTRAP_EMAIL + BOOTSTRAP_PASSWORD on the Environment page
+    # always sign in and always arrive as an administrator. This is how the
+    # first admin gets in, and how a locked-out admin gets back in — change or
+    # remove the variables in Render at any time.
+    boot_e = os.environ.get("BOOTSTRAP_EMAIL", "").strip().lower()
+    boot_p = os.environ.get("BOOTSTRAP_PASSWORD", "")
+    if (boot_e and boot_p and email == boot_e
+            and str(body.get("password") or "") == boot_p and _people_on()):
+        from sqlalchemy import text as _t
+        with _builder_engine().begin() as c:
+            if c.execute(_t("select email from cat_people where email=:e"),
+                         {"e": email}).first() is None:
+                c.execute(_t("insert into cat_people(email,customer,admin) "
+                             "values(:e,:c,true)"), {"e": email, "c": _builder_only_customer()})
+            else:
+                c.execute(_t("update cat_people set admin=true where email=:e"), {"e": email})
+        data = {"ok": True, "email": email, "must_change": False}
+        token = _local_token(email)
+    elif p is not None:
         if not p["pw_hash"]:
             raise HTTPException(401, "No password is set for you yet — ask your administrator.")
         if not _pw_check(str(body.get("password") or ""), p["pw_hash"]):
@@ -593,9 +611,19 @@ async def auth_signin(request: Request):
         token = _local_token(email)
     else:
         which = (body.get("app") or request.cookies.get(APP_COOKIE, "") or "").strip()
-        data = await etl_send("POST", "/api/access/signin",
-                              {"email": body.get("email", ""),
-                               "password": body.get("password", ""), "app": which})
+        try:
+            data = await etl_send("POST", "/api/access/signin",
+                                  {"email": body.get("email", ""),
+                                   "password": body.get("password", ""), "app": which})
+        except HTTPException as e:
+            # A stale app cookie from a deleted app must never lock the door —
+            # try again as a plain sign-in, which still works for admins.
+            if which and e.status_code in (400, 404):
+                data = await etl_send("POST", "/api/access/signin",
+                                      {"email": body.get("email", ""),
+                                       "password": body.get("password", ""), "app": ""})
+            else:
+                raise
         token = data.pop("token", "")
     resp = JSONResponse(data)
     resp.set_cookie(

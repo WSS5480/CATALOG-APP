@@ -578,10 +578,46 @@ function drawBuilder(){
         '</div>' +
         '<div id="bld-prev-' + esc(src.id) + '"></div>' +
       '</div>').join('') || '') +
-    '<div class="row" style="margin-top:6px">' +
+    '<div id="bld-vinfo"></div>' +
+    '<div class="row" style="margin-top:14px">' +
       '<button class="btn green" onclick="bldBuild()">⚒ Build the catalog</button>' +
       '<span class="muted small">Appends every ready source into one dataset and serves it.</span>' +
     '</div>';
+  loadVendInfo();
+}
+
+/* ── vendor ordering details: order email + freight minimums ── */
+
+let VINFO = null;
+async function loadVendInfo(){
+  try{ VINFO = (await api('/api/admin/vendorinfo')).vendors || []; }
+  catch(e){ VINFO = null; }
+  drawVendInfo();
+}
+function drawVendInfo(){
+  const box = $('bld-vinfo'); if(!box) return;
+  if(!VINFO || !VINFO.length){ box.innerHTML = ''; return; }
+  box.innerHTML =
+    '<h4 style="margin:18px 0 4px;font-size:14.5px">Vendor ordering details</h4>' +
+    '<p class="cs">Where each vendor\'s orders go, and their freight minimums — the order form ' +
+      'reads these. Edits save themselves when you leave the box.</p>' +
+    '<div class="scroll" style="max-height:300px"><table class="t"><thead><tr>' +
+      '<th>Vendor</th><th>Order email</th><th>Freight min $</th><th>Min by category</th>' +
+      '<th>Min by brand</th><th>Qty or total cost</th></tr></thead><tbody>' +
+    VINFO.map((v, i) => '<tr><td class="ro">' + esc(v.vendor) + '</td>' +
+      ['order_email','freight_min','freight_min_by_cat','freight_min_by_brand','freight_qty_or_cost']
+        .map(k => '<td><input value="' + esc(v[k] || '') + '" data-vi="' + i + '" data-k="' + k + '"></td>')
+        .join('') + '</tr>').join('') +
+    '</tbody></table></div>';
+  box.querySelectorAll('input[data-vi]').forEach(inp => inp.addEventListener('change', async () => {
+    const v = VINFO[+inp.getAttribute('data-vi')];
+    v[inp.getAttribute('data-k')] = inp.value;
+    try{
+      await api('/api/admin/vendorinfo', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify(v)});
+      say('✓ Saved ' + v.vendor + '.', 'ok');
+    }catch(e){ say(e.message, 'bad'); }
+  }));
 }
 
 async function bldUpload(){

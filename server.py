@@ -3210,7 +3210,7 @@ def _builder_read_frame(filename: str, raw: bytes):
     return df
 
 
-def _feed_fetch_api(cfg: dict):
+def _feed_fetch_api(cfg: dict, progress=None):
     url = str(cfg.get("url") or "").strip()
     if not url.lower().startswith(("http://", "https://")):
         raise ValueError("The URL must start with http:// or https://")
@@ -3317,12 +3317,18 @@ def _feed_fetch_api(cfg: dict):
                 raise ValueError("The API returned JSON, but no list of records was found "
                                  f"inside it (top-level keys: {shape}).")
             records = [_flat(r) for r in parsed if isinstance(r, dict)]
+            first_page_n = len(parsed)
+            raw_json = parsed = None      # free the parsed page before the next
+            import gc
+            gc.collect()
+            if progress:
+                progress(1, len(records))
             qd = {str(k).lower(): str(v) for k, v in qparams}
             try:
                 limit_val = int(qd.get("limit") or 0)
             except Exception:
                 limit_val = 0
-            if limit_val > 0 and len(parsed) >= limit_val and "page" not in qd:
+            if limit_val > 0 and first_page_n >= limit_val and "page" not in qd:
                 page = 2
                 while page <= 200:
                     r2 = cl.get(url, headers=headers,
@@ -3336,7 +3342,12 @@ def _feed_fetch_api(cfg: dict):
                     if not isinstance(more, list) or not more:
                         break
                     records.extend(_flat(x) for x in more if isinstance(x, dict))
-                    if len(more) < limit_val or len(records) >= 150000:
+                    short = len(more) < limit_val
+                    more = None
+                    gc.collect()
+                    if progress:
+                        progress(page, len(records))
+                    if short or len(records) >= 150000:
                         break
                     page += 1
             df = pd.DataFrame(records)
@@ -3496,9 +3507,23 @@ def _feed_run_source(eng, row) -> dict:
     prev = _feed_status_of(row)
     out = {"last_run": time.strftime("%Y-%m-%d %H:%M"), "last_ts": time.time(),
            "ok": False, "changed": False, "note": ""}
+    def _progress(page, count):
+        try:
+            from sqlalchemy import text as _t
+            note = f"Downloading — page {page}, {count:,} records so far…"
+            with eng.begin() as c:
+                c.execute(_t("update cat_sources set feed_status=:s where id=:i"),
+                          {"s": json.dumps({"running": True, "note": note,
+                                            "last_run": out["last_run"],
+                                            "last_ts": out["last_ts"],
+                                            "sha": prev.get("sha", "")}),
+                           "i": row["id"]})
+        except Exception:
+            pass
+
     try:
         if kind == "api":
-            fname, raw = _feed_fetch_api(cfg)
+            fname, raw = _feed_fetch_api(cfg, progress=_progress)
         elif kind == "sftp":
             fname, raw = _feed_fetch_sftp(cfg)
         elif kind == "email":

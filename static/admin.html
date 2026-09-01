@@ -118,7 +118,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v13</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v14</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -994,6 +994,13 @@ function bldFeedBox(src){
           '<input class="f" type="password" id="fd-auth-pass-' + esc(src.id) +
             '" placeholder="Basic auth password" value="' + esc(f.auth_pass || '') +
             '" style="max-width:180px">' +
+          '<div style="flex-basis:100%"><span class="muted small">OAuth (only if the vendor ' +
+            'gave you a Client ID + Secret — the app trades them for a token first):</span></div>' +
+          inp('token-url', 'Token URL from the vendor\'s API docs', f.token_url, '340px') +
+          inp('client-id', 'Client ID', f.client_id, '250px') +
+          '<input class="f" type="password" id="fd-client-secret-' + esc(src.id) +
+            '" placeholder="Client Secret" value="' + esc(f.client_secret || '') +
+            '" style="max-width:220px">' +
           '<div style="flex-basis:100%"><span class="muted small">Query parameters — sent with ' +
             'every pull, like Domo\'s key/value rows:</span></div>' +
           '<div id="fd-qps-' + esc(src.id) + '" style="flex-basis:100%">' + qrows + '</div>' +
@@ -1069,6 +1076,9 @@ async function bldFeedSave(id){
     feed.url = g('url'); feed.header = g('header');
     feed.auth_user = g('auth-user');
     feed.auth_pass = ($('fd-auth-pass-' + id) || {value:''}).value;
+    feed.token_url = g('token-url');
+    feed.client_id = g('client-id');
+    feed.client_secret = ($('fd-client-secret-' + id) || {value:''}).value;
     const ks = [...document.querySelectorAll('.fd-qpk-' + id)].map(e => e.value.trim());
     const vs = [...document.querySelectorAll('.fd-qpv-' + id)].map(e => e.value.trim());
     feed.qparams = ks.map((k, j) => [k, vs[j] || '']).filter(p => p[0]);

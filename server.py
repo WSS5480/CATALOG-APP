@@ -1895,6 +1895,8 @@ def _builder_migrate(engine):
                 table_name text not null,
                 mapping text default '{}',
                 row_count integer default 0,
+                feed text default '{}',
+                feed_status text default '{}',
                 added_at timestamp default current_timestamp,
                 updated_at timestamp default current_timestamp)""",
         """create table if not exists cat_built(
@@ -3204,10 +3206,52 @@ def _builder_read_frame(filename: str, raw: bytes):
     return df
 
 
+def _feed_merge_frames(frames):
+    """Several endpoint pulls -> one wide table. Each extra frame is joined on
+    the item-number-ish column it shares with the first (so its columns are
+    appended beside the products); a frame that shares no column at all is
+    appended as extra rows instead."""
+    import pandas as pd
+    hints = ("sku", "itemnumber", "item_number", "itemno", "item", "itemid",
+             "item_id", "modelnum", "model", "productid", "product_id",
+             "upc", "id")
+    base = frames[0]
+    for f in frames[1:]:
+        low = {str(c).lower(): str(c) for c in base.columns}
+        shared = [(low[str(c).lower()], str(c)) for c in f.columns
+                  if str(c).lower() in low]
+        pick = None
+        for bk, fk in shared:
+            if bk.lower() in hints:
+                pick = (bk, fk)
+                break
+        if pick is None and shared:
+            # no known key name — take the shared column that looks most like
+            # one: the most distinct values on the products side
+            pick = max(shared, key=lambda p: base[p[0]].astype(str).nunique())
+            if base[pick[0]].astype(str).nunique() < 2:
+                pick = None
+        if pick is None:
+            base = pd.concat([base, f], ignore_index=True, sort=False)
+            continue
+        bk, fk = pick
+        f2 = f.rename(columns={fk: bk}) if fk != bk else f
+        base[bk] = base[bk].astype(str)
+        f2[bk] = f2[bk].astype(str)
+        f2 = f2.drop_duplicates(subset=[bk])
+        base = base.merge(f2, on=bk, how="left", suffixes=("", "_2"))
+    return base
+
+
 def _feed_fetch_api(cfg: dict, progress=None):
-    url = str(cfg.get("url") or "").strip()
-    if not url.lower().startswith(("http://", "https://")):
+    urls = [str(cfg.get("url") or "").strip()]
+    urls += [str(u or "").strip() for u in (cfg.get("urls") or [])]
+    urls = [u for u in urls if u]
+    if not urls:
         raise ValueError("The URL must start with http:// or https://")
+    for u in urls:
+        if not u.lower().startswith(("http://", "https://")):
+            raise ValueError("Every URL must start with http:// or https://")
     headers = {}
     for part in [p for p in
                  str(cfg.get("header") or "").replace("\n", ";").split(";") if p.strip()]:
@@ -3267,20 +3311,22 @@ def _feed_fetch_api(cfg: dict, progress=None):
                 return found
         return payload
 
-    with httpx.Client(timeout=120, follow_redirects=True, auth=auth) as cl:
+    def _pull_one(cl, url, tag=""):
+        """One endpoint -> (filename, raw bytes, dataframe-or-None)."""
+        seg = url.rsplit("/", 1)[-1].split("?")[0] or "feed"
         r = cl.get(url, headers=headers, params=qparams or None)
         if r.status_code != 200:
-            raise ValueError(f"The API answered {r.status_code}.")
+            where = f" on {seg}" if tag else ""
+            raise ValueError(f"The API answered {r.status_code}{where}.")
         data = r.content
         ctype = r.headers.get("content-type", "")
-        base = url.rsplit("/", 1)[-1].split("?")[0] or "feed"
+        base = seg
         is_file = base.lower().endswith((".csv", ".xlsx", ".xls", ".xlsm"))
         name = base if "." in base else base + (".xlsx" if "sheet" in ctype else ".csv")
         if "json" in ctype and not is_file:
             # A JSON API — a list of records becomes the table. When a limit
             # parameter is set and a page comes back full, keep turning pages
             # (Ashley-style pagination) until a short page says done.
-            import io
             import pandas as pd
 
             def _flat(rec):
@@ -3324,15 +3370,16 @@ def _feed_fetch_api(cfg: dict, progress=None):
             if not isinstance(parsed, list) or not parsed:
                 shape = (", ".join(list(raw_json.keys())[:8])
                          if isinstance(raw_json, dict) else type(raw_json).__name__)
-                raise ValueError("The API returned JSON, but no list of records was found "
-                                 f"inside it (top-level keys: {shape}).")
+                where = f" from {seg}" if tag else ""
+                raise ValueError(f"The API returned JSON{where}, but no list of records "
+                                 f"was found inside it (top-level keys: {shape}).")
             records = [_flat(r) for r in parsed if isinstance(r, dict)]
             first_page_n = len(parsed)
-            raw_json = parsed = None      # free the parsed page before the next
+            raw_json = parsed = data = None   # free the parsed page before the next
             import gc
             gc.collect()
             if progress:
-                progress(1, len(records))
+                progress(1, len(records), tag)
             qd = {str(k).lower(): str(v) for k, v in qparams}
             try:
                 limit_val = int(qd.get("limit") or 0)
@@ -3356,15 +3403,36 @@ def _feed_fetch_api(cfg: dict, progress=None):
                     more = None
                     gc.collect()
                     if progress:
-                        progress(page, len(records))
+                        progress(page, len(records), tag)
                     if short or len(records) >= 150000:
                         break
                     page += 1
-            df = pd.DataFrame(records)
+            return "feed.csv", b"", pd.DataFrame(records)
+        return name, data, None
+
+    import io
+    with httpx.Client(timeout=120, follow_redirects=True, auth=auth) as cl:
+        if len(urls) == 1:
+            name, data, df = _pull_one(cl, urls[0])
+            if df is None:
+                return name, data
             buf = io.BytesIO()
             df.to_csv(buf, index=False)
-            data, name = buf.getvalue(), "feed.csv"
-    return name, data
+            return "feed.csv", buf.getvalue()
+        # Several endpoints (products + prices + freight + quantities…):
+        # pull each with the same credentials and parameters, then join them
+        # into one wide table on the item column they share.
+        frames = []
+        for i, u in enumerate(urls, 1):
+            tag = f"feed {i} of {len(urls)}"
+            name, data, df = _pull_one(cl, u, tag)
+            frames.append(df if df is not None else _builder_read_frame(name, data))
+            data = df = None
+    merged = _feed_merge_frames(frames)
+    frames = None
+    buf = io.BytesIO()
+    merged.to_csv(buf, index=False)
+    return "feed.csv", buf.getvalue()
 
 
 def _feed_fetch_sftp(cfg: dict):
@@ -3517,10 +3585,11 @@ def _feed_run_source(eng, row) -> dict:
     prev = _feed_status_of(row)
     out = {"last_run": time.strftime("%Y-%m-%d %H:%M"), "last_ts": time.time(),
            "ok": False, "changed": False, "note": ""}
-    def _progress(page, count):
+    def _progress(page, count, tag=""):
         try:
             from sqlalchemy import text as _t
-            note = f"Downloading — page {page}, {count:,} records so far…"
+            lead = f"{tag} — " if tag else ""
+            note = f"Downloading {lead}page {page}, {count:,} records so far…"
             with eng.begin() as c:
                 c.execute(_t("update cat_sources set feed_status=:s where id=:i"),
                           {"s": json.dumps({"running": True, "note": note,
@@ -3680,6 +3749,9 @@ async def builder_feed_save(request: Request):
         keep = {"type": kind}
         if kind == "api":
             keep["url"] = str(cfg.get("url") or "").strip()
+            keep["urls"] = [str(u or "").strip()[:500]
+                            for u in (cfg.get("urls") or [])
+                            if str(u or "").strip()][:6]
             keep["header"] = str(cfg.get("header") or "").strip()
             keep["auth_user"] = str(cfg.get("auth_user") or "").strip()
             ap = str(cfg.get("auth_pass") or "")

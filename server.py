@@ -35,6 +35,7 @@ browser never sees them.
 import asyncio
 import base64
 import hashlib
+import re
 import hmac
 import json
 import os
@@ -587,7 +588,7 @@ async def orders_create(coll: str, request: Request):
     # every line is flagged over budget — and only an administrator can approve.
     try:
         p = _person(str(who.get("email") or ""))
-        if p is not None and not p["admin"]:
+        if p is not None and not _is_admin_row(p):
             notes = _budget_check(_builder_engine(), cust, p, content)
             if notes:
                 content["OverBudget"] = "Yes"
@@ -618,7 +619,10 @@ async def orders_update(coll: str, doc_id: str, request: Request):
         content = payload if isinstance(payload, dict) else {}
     from sqlalchemy import text
     is_admin = bool((who.get("scope") or {}).get("all")) or bool(who.get("admin"))
-    if not is_admin:
+    # An Approver may clear the over-budget flag too — that is the page's point.
+    may_approve = is_admin or bool(((who.get("scope") or {}).get("perms") or {})
+                                   .get("approver"))
+    if not may_approve:
         with _builder_engine().connect() as c:
             row = c.execute(text("select content from cat_orders where id=:i and coll=:o "
                                  "and customer=:c"), {"i": doc_id, "o": coll, "c": cust}).first()
@@ -1919,7 +1923,10 @@ def _builder_migrate(engine):
                 added_at timestamp default current_timestamp,
                 last_signin text default '',
                 perms text default '{}',
-                budget text default '')""",
+                budget text default '',
+                role text default '',
+                g1_list text default '[]',
+                g2_list text default '[]')""",
         """create table if not exists cat_kv(
                 k text primary key,
                 v text default '')""",
@@ -1938,6 +1945,7 @@ def _builder_migrate(engine):
                 vendors text default '[]',
                 perms text default '{}',
                 budget text default '',
+                kind text default '',
                 primary key (customer, name))""",
         """create table if not exists cat_freight(
                 customer text not null default '',
@@ -1966,6 +1974,10 @@ def _builder_migrate(engine):
         "alter table cat_people add column if not exists budget text default ''",
         "alter table cat_groups add column if not exists perms text default '{}'",
         "alter table cat_groups add column if not exists budget text default ''",
+        "alter table cat_people add column if not exists role text default ''",
+        "alter table cat_people add column if not exists g1_list text default '[]'",
+        "alter table cat_people add column if not exists g2_list text default '[]'",
+        "alter table cat_groups add column if not exists kind text default ''",
     ]
     for ddl in statements:
         try:
@@ -2491,15 +2503,34 @@ def _person(email: str):
 # What a person may reach in the storefront: the Catalog tab, the Order Form,
 # and Pending orders (none / read / write / delete-anything). Nothing set
 # anywhere means everything — you limit by setting less on a group or a person.
-_PERM_DEFAULT = {"catalog": True, "order": True, "pending": "delete"}
+_PERM_DEFAULT = {"catalog": True, "order": True, "pending": "delete",
+                 "approver": False, "purchasing": False, "vendorpage": False}
 _PENDING_LEVELS = {"none": 0, "read": 1, "write": 2, "delete": 3}
+_ROLES = ("AUTO", "ADMIN", "PD", "DM", "STORE", "VENDOR", "NONE")
+
+
+def _role_defaults(role) -> dict:
+    """What each role reaches before groups or per-person picks say otherwise —
+    the same defaults the old Domo panel used. NONE is a hard lock-out."""
+    r = str(role or "").strip().upper() or "AUTO"
+    out = dict(_PERM_DEFAULT)
+    if r == "NONE":
+        return {"catalog": False, "order": False, "pending": "none",
+                "approver": False, "purchasing": False, "vendorpage": False}
+    if r == "VENDOR":
+        out.update(order=False, pending="none", vendorpage=True)
+    elif r == "DM":
+        out.update(approver=True)
+    elif r == "PD":
+        out.update(approver=True, purchasing=True, vendorpage=True)
+    return out
 
 
 def _clean_perms(d) -> dict:
     out = {}
     if not isinstance(d, dict):
         return out
-    for k in ("catalog", "order"):
+    for k in ("catalog", "order", "approver", "purchasing", "vendorpage"):
         v = d.get(k)
         if isinstance(v, bool):
             out[k] = v
@@ -2511,6 +2542,29 @@ def _clean_perms(d) -> dict:
     if v in _PENDING_LEVELS:
         out["pending"] = v
     return out
+
+
+def _plist(v, fallback="") -> list:
+    """A JSON list column -> clean python list, the old single slot as the
+    fallback so nothing breaks for rows saved before multi-membership."""
+    try:
+        x = json.loads(v or "[]")
+        x = [str(s).strip()[:120] for s in x if str(s).strip()] \
+            if isinstance(x, list) else []
+    except Exception:
+        x = []
+    if not x and str(fallback or "").strip():
+        x = [str(fallback).strip()]
+    return x
+
+
+def _person_memberships(p):
+    """(districts, stores) this person belongs to — many of each."""
+    return (_plist(p["g2_list"], p["group2"]), _plist(p["g1_list"], p["group1"]))
+
+
+def _is_admin_row(p) -> bool:
+    return bool(p["admin"]) or str(p["role"] or "").strip().upper() == "ADMIN"
 
 
 def _pending_level(sc: dict) -> int:
@@ -2526,12 +2580,12 @@ def _money(s):
         return None
 
 
-def _person_group_names(cust: str, g2: str, g1: str) -> set:
-    """Every group this person is in, parents included — the cascade."""
+def _person_group_names(cust: str, names_in) -> set:
+    """Every group in these memberships, parents included — the cascade."""
     names = set()
-    for gname in (str(g2 or "").strip(), str(g1 or "").strip()):
+    for gname in names_in:
         seen = set()
-        g = _group_row(cust, gname)
+        g = _group_row(cust, str(gname or "").strip())
         while g is not None and g["name"] not in seen and len(seen) < 12:
             seen.add(g["name"])
             names.add(g["name"])
@@ -2582,12 +2636,16 @@ def _budget_check(eng, cust: str, p, content: dict) -> list:
     if pb is not None and mine + total > pb:
         notes.append(f"{p['user_label'] or p['email']} is over its ${pb:,.0f} monthly budget "
                      f"(${mine + total:,.0f} with this order)")
-    my_groups = _person_group_names(cust, p["group2"], p["group1"])
+    d2, s2 = _person_memberships(p)
+    my_groups = _person_group_names(cust, d2 + s2)
     if my_groups:
         from sqlalchemy import text
         with eng.connect() as c:
-            allp = c.execute(text("select email, group1, group2 from cat_people")).all()
-        chains = {str(e).lower(): _person_group_names(cust, g2, g1) for e, g1, g2 in allp}
+            allp = c.execute(text("select * from cat_people")).mappings().all()
+        chains = {}
+        for q in allp:
+            qd, qs = _person_memberships(q)
+            chains[str(q["email"]).lower()] = _person_group_names(cust, qd + qs)
         for gname in sorted(my_groups):
             g = _group_row(cust, gname)
             gb = _money(g["budget"]) if g is not None else None
@@ -2623,7 +2681,9 @@ def _effective_access(p, cust: str):
             return mode, json.loads(p["vendors"] or "[]")
         except Exception:
             return mode, []
-    for gname in (str(p["group2"] or "").strip(), str(p["group1"] or "").strip()):
+    d, s = _person_memberships(p)
+    found = []
+    for gname in d + s:
         seen = set()
         g = _group_row(cust, gname)
         while g is not None and g["name"] not in seen and len(seen) < 12:
@@ -2631,50 +2691,77 @@ def _effective_access(p, cust: str):
             gmode = str(g["vendors_mode"] or "all")
             if gmode in ("only", "except"):
                 try:
-                    return gmode, json.loads(g["vendors"] or "[]")
+                    found.append((gmode, json.loads(g["vendors"] or "[]")))
                 except Exception:
-                    return gmode, []
+                    found.append((gmode, []))
+                break
             g = _group_row(cust, str(g["parent"] or "").strip())
-    return "all", []
+    if not found:
+        return "all", []
+    # Grants add up across memberships: only-lists union; except-lists block
+    # just what EVERY grant blocks; mixed leans on the wider except side.
+    onlys = [set(map(str, v)) for m, v in found if m == "only"]
+    excepts = [set(map(str, v)) for m, v in found if m == "except"]
+    if onlys and not excepts:
+        return "only", sorted(set().union(*onlys))
+    blocked = set.intersection(*excepts) if excepts else set()
+    if onlys:
+        blocked -= set().union(*onlys)
+    return "except", sorted(blocked)
 
 
 def _effective_perms(p, cust: str) -> dict:
     """Tab reach, resolved the same way as vendor access: the person's own
     explicit settings win key by key, then Group 2's chain, then Group 1's,
     and anything still unset falls to wide open."""
-    chain = []
+    role = str(p["role"] or "").strip().upper()
+    if role == "NONE":
+        return _role_defaults("NONE")       # locked out — groups cannot reopen
     try:
-        chain.append(_clean_perms(json.loads(p["perms"] or "{}")))
+        mine = _clean_perms(json.loads(p["perms"] or "{}"))
     except Exception:
-        chain.append({})
-    for gname in (str(p["group2"] or "").strip(), str(p["group1"] or "").strip()):
+        mine = {}
+    gsets = []
+    dl, sl = _person_memberships(p)
+    for gname in dl + sl:
         seen = set()
         g = _group_row(cust, gname)
         while g is not None and g["name"] not in seen and len(seen) < 12:
             seen.add(g["name"])
             try:
-                chain.append(_clean_perms(json.loads(g["perms"] or "{}")))
+                gsets.append(_clean_perms(json.loads(g["perms"] or "{}")))
             except Exception:
                 pass
             g = _group_row(cust, str(g["parent"] or "").strip())
-    out = dict(_PERM_DEFAULT)
-    for k in ("catalog", "order", "pending"):
-        for d in chain:
-            if k in d:
-                out[k] = d[k]
-                break
+    out = _role_defaults(role)
+    for k in _PERM_DEFAULT:
+        if k in mine:                      # the person's own setting wins
+            out[k] = mine[k]
+            continue
+        vals = [d for d in (g.get(k) for g in gsets) if d is not None]
+        if not vals:
+            continue                       # nothing set anywhere: the default
+        if k == "pending":                 # grants add up: most permissive
+            out[k] = max(vals, key=lambda v: _PENDING_LEVELS.get(str(v), 0))
+        else:
+            out[k] = any(vals)
     return out
 
 
 def _person_scope(p) -> dict:
     cust = str(p["customer"] or "").strip() or _builder_only_customer()
-    if p["admin"]:
+    if _is_admin_row(p):
+        pr = dict(_PERM_DEFAULT)
+        pr.update(approver=True, purchasing=True, vendorpage=True)
         return {"all": True, "customer": cust, "vendors_all": True, "vendors": [],
-                "perms": dict(_PERM_DEFAULT)}
+                "perms": pr, "role": "ADMIN"}
+    dl, sl = _person_memberships(p)
     mode, vens = _effective_access(p, cust)
     return {"all": False, "customer": cust, "vendors_all": mode == "all",
             "vendors": vens, "vendors_mode": mode, "perms": _effective_perms(p, cust),
-            "user": p["user_label"], "group_1": p["group1"], "group_2": p["group2"]}
+            "user": p["user_label"], "group_1": p["group1"], "group_2": p["group2"],
+            "groups_1": sl, "groups_2": dl,
+            "role": str(p["role"] or "").strip().upper() or "AUTO"}
 
 
 async def _whoami(request: Request):
@@ -2688,7 +2775,7 @@ async def _whoami(request: Request):
         p = _person(email) if email else None
         if p is None:
             return None
-        return {"email": email, "admin": bool(p["admin"]), "local": True,
+        return {"email": email, "admin": _is_admin_row(p), "local": True,
                 "must_change": bool(p["must_change"]), "scope": _person_scope(p)}
     if ETL_BASE:
         try:
@@ -2731,9 +2818,13 @@ async def people_list(request: Request):
             prm = _clean_perms(json.loads(p["perms"] or "{}"))
         except Exception:
             prm = {}
+        dl, sl = _person_memberships(p)
         out.append({"email": p["email"], "user": p["user_label"],
                     "group1": p["group1"], "group2": p["group2"],
-                    "admin": bool(p["admin"]), "perms": prm,
+                    "stores": sl, "districts": dl,
+                    "role": str(p["role"] or "").strip().upper()
+                            or ("ADMIN" if p["admin"] else "AUTO"),
+                    "admin": _is_admin_row(p), "perms": prm,
                     "budget": p["budget"] or "",
                     "spent": round(spend.get(str(p["email"]).lower(), 0.0), 2),
                     "vendors_mode": str(p["vendors_mode"] or "all"), "vendors": vens,
@@ -2750,17 +2841,31 @@ async def people_save(request: Request):
     email = str(body.get("email") or "").strip().lower()
     if "@" not in email or "." not in email or len(email) > 200:
         raise HTTPException(400, "That does not look like an email address.")
-    admin = bool(body.get("admin"))
+    role = str(body.get("role") or "").strip().upper()[:20]
+    if role and role not in _ROLES:
+        role = "AUTO"
+    # The Role select is the authority when present; the old admin checkbox
+    # still works for callers that never send a role.
+    admin = (role == "ADMIN") if role else bool(body.get("admin"))
     if email == who["email"] and who.get("local") and not admin:
         raise HTTPException(400, "You cannot take away your own administrator access.")
     mode = str(body.get("vendors_mode") or "all").lower()
     if mode not in ("all", "only", "except"):
         raise HTTPException(400, "Vendor access must be all, only, or except.")
     vens = [str(v)[:120] for v in (body.get("vendors") or []) if str(v).strip()][:500]
+    # Multi-membership: lists rule; the old single slots mirror the first of
+    # each so store-mapping and older rows keep working untouched.
+    sl = [str(v).strip()[:120] for v in (body.get("stores") or []) if str(v).strip()][:200]
+    dl = [str(v).strip()[:120] for v in (body.get("districts") or []) if str(v).strip()][:200]
+    g1 = sl[0] if sl else str(body.get("group1") or "").strip()[:120]
+    g2 = dl[0] if dl else str(body.get("group2") or "").strip()[:120]
+    if not sl and g1:
+        sl = [g1]
+    if not dl and g2:
+        dl = [g2]
     vals = {"e": email, "u": str(body.get("user") or "").strip()[:120],
-            "g1": str(body.get("group1") or "").strip()[:120],
-            "g2": str(body.get("group2") or "").strip()[:120],
-            "a": admin, "vm": mode, "vs": json.dumps(vens),
+            "g1": g1, "g2": g2, "sl": json.dumps(sl), "dl": json.dumps(dl),
+            "r": role, "a": admin, "vm": mode, "vs": json.dumps(vens),
             "pm": json.dumps(_clean_perms(body.get("perms"))),
             "b": str(body.get("budget") or "").strip()[:40],
             "c": _builder_only_customer()}
@@ -2770,12 +2875,13 @@ async def people_save(request: Request):
                         {"e": email}).first()
         if row:
             c.execute(text("update cat_people set user_label=:u, group1=:g1, group2=:g2, "
+                           "g1_list=:sl, g2_list=:dl, role=:r, "
                            "admin=:a, vendors_mode=:vm, vendors=:vs, perms=:pm, budget=:b "
                            "where email=:e"), vals)
         else:
             c.execute(text("insert into cat_people(email,customer,user_label,group1,group2,"
-                           "admin,vendors_mode,vendors,perms,budget) "
-                           "values(:e,:c,:u,:g1,:g2,:a,:vm,:vs,:pm,:b)"), vals)
+                           "g1_list,g2_list,role,admin,vendors_mode,vendors,perms,budget) "
+                           "values(:e,:c,:u,:g1,:g2,:sl,:dl,:r,:a,:vm,:vs,:pm,:b)"), vals)
     return {"ok": True, "added": not bool(row),
             "message": ("Added " if not row else "Updated ") + email +
                        (". Set their password on the Passwords tab before they can sign in."
@@ -2855,7 +2961,7 @@ async def _aux_rows_local(ident: str, request: Request):
             return None
         key = _bnorm(ident)
         if key not in ("storemapping", "vendorinfolist", "vendorinfo",
-                       "freightbystore", "freight"):
+                       "freightbystore", "freight", "ashfreight"):
             return None
         who = await _whoami(request)
         if who is None:
@@ -2867,13 +2973,20 @@ async def _aux_rows_local(ident: str, request: Request):
         import pandas as pd
         from sqlalchemy import text
         eng = _builder_engine()
-        if key in ("freightbystore", "freight"):
+        if key in ("freightbystore", "freight", "ashfreight"):
+            # the order form filters by store: filter=storenumber = '104'
+            flt = str(request.query_params.get("filter") or "")
+            m = re.search(r"store_?number\s*=\s*'([^']*)'", flt, re.I)
+            q = ("select vendor, sku, store_number, store_number as storenumber, "
+                 "fob_point, net_before_freight, freight, express_freight, "
+                 "total_net_price, as_of from cat_freight where customer=:c")
+            args = {"c": cust}
+            if m:
+                q += " and store_number=:s"
+                args["s"] = m.group(1).strip()
             with eng.connect() as c:
-                rows = c.execute(text("select vendor, sku, store_number, fob_point, "
-                                      "net_before_freight, freight, express_freight, "
-                                      "total_net_price, as_of from cat_freight "
-                                      "where customer=:c order by vendor, store_number"),
-                                 {"c": cust}).mappings().all()
+                rows = c.execute(text(q + " order by vendor, store_number"),
+                                 args).mappings().all()
             df = pd.DataFrame([dict(r) for r in rows])
         elif key in ("vendorinfolist", "vendorinfo"):
             with eng.connect() as c:
@@ -2955,12 +3068,16 @@ async def my_budget(request: Request):
     if pb is not None:
         out.append({"name": p["user_label"] or "this location", "budget": pb,
                     "spent": round(spend.get(str(p["email"]).lower(), 0.0), 2)})
-    my_groups = _person_group_names(cust, p["group2"], p["group1"])
+    d2, s2 = _person_memberships(p)
+    my_groups = _person_group_names(cust, d2 + s2)
     if my_groups:
         from sqlalchemy import text
         with eng.connect() as c:
-            allp = c.execute(text("select email, group1, group2 from cat_people")).all()
-        chains = {str(e).lower(): _person_group_names(cust, g2, g1) for e, g1, g2 in allp}
+            allp = c.execute(text("select * from cat_people")).mappings().all()
+        chains = {}
+        for q in allp:
+            qd, qs = _person_memberships(q)
+            chains[str(q["email"]).lower()] = _person_group_names(cust, qd + qs)
         for gname in sorted(my_groups):
             g = _group_row(cust, gname)
             gb = _money(g["budget"]) if g is not None else None
@@ -2980,10 +3097,10 @@ async def groups_list(request: Request):
         rows = c.execute(text("select * from cat_groups where customer=:c order by name"),
                          {"c": cust}).mappings().all()
         counts = {}
-        for g1, g2 in c.execute(text("select group1, group2 from cat_people")):
-            for n in (str(g1 or "").strip(), str(g2 or "").strip()):
-                if n:
-                    counts[n] = counts.get(n, 0) + 1
+        for q in c.execute(text("select * from cat_people")).mappings().all():
+            qd, qs = _person_memberships(q)
+            for n in set(qd + qs):
+                counts[n] = counts.get(n, 0) + 1
     out = []
     for g in rows:
         try:
@@ -2994,9 +3111,13 @@ async def groups_list(request: Request):
             prm = _clean_perms(json.loads(g["perms"] or "{}"))
         except Exception:
             prm = {}
+        kind = str(g["kind"] or "").strip().lower()
+        if kind not in ("store", "district"):
+            nm = str(g["name"] or "").lower()
+            kind = "district" if ("district" in nm or "region" in nm) else "store"
         out.append({"name": g["name"], "parent": g["parent"] or "",
                     "vendors_mode": str(g["vendors_mode"] or "all"), "vendors": vens,
-                    "perms": prm, "budget": g["budget"] or "",
+                    "perms": prm, "budget": g["budget"] or "", "kind": kind,
                     "members": counts.get(g["name"], 0)})
     return {"ok": True, "groups": out}
 
@@ -3018,17 +3139,20 @@ async def groups_save(request: Request):
     cust = _builder_only_customer() or "main"
     pm = json.dumps(_clean_perms(body.get("perms")))
     bud = str(body.get("budget") or "").strip()[:40]
+    kind = str(body.get("kind") or "").strip().lower()
+    if kind not in ("store", "district"):
+        kind = ""
     from sqlalchemy import text
     with _builder_engine().begin() as c:
         n = c.execute(text("update cat_groups set parent=:p, vendors_mode=:m, vendors=:v, "
-                           "perms=:pm, budget=:b where customer=:c and name=:n"),
+                           "perms=:pm, budget=:b, kind=:k where customer=:c and name=:n"),
                       {"p": parent, "m": mode, "v": json.dumps(vens), "pm": pm, "b": bud,
-                       "c": cust, "n": name}).rowcount
+                       "k": kind, "c": cust, "n": name}).rowcount
         if not n:
             c.execute(text("insert into cat_groups(customer,name,parent,vendors_mode,vendors,"
-                           "perms,budget) values(:c,:n,:p,:m,:v,:pm,:b)"),
+                           "perms,budget,kind) values(:c,:n,:p,:m,:v,:pm,:b,:k)"),
                       {"c": cust, "n": name, "p": parent, "m": mode,
-                       "v": json.dumps(vens), "pm": pm, "b": bud})
+                       "v": json.dumps(vens), "pm": pm, "b": bud, "k": kind})
     return {"ok": True, "message": f"Saved group {name}."}
 
 
@@ -3045,42 +3169,32 @@ async def groups_members(request: Request):
     add = [str(e).strip().lower() for e in (body.get("add") or []) if str(e).strip()]
     remove = [str(e).strip().lower() for e in (body.get("remove") or []) if str(e).strip()]
     from sqlalchemy import text
-    full, moved = [], 0
+    moved = 0
+    grow = _group_row(_builder_only_customer() or "main", name)
+    gkind = str(grow["kind"] if grow is not None else "").strip().lower()
+    if gkind not in ("store", "district"):
+        gkind = "district" if ("district" in name.lower() or "region" in name.lower()) \
+                else "store"
+    col, mirror = ("g2_list", "group2") if gkind == "district" else ("g1_list", "group1")
     with _builder_engine().begin() as c:
-        for email in add:
-            row = c.execute(text("select group1, group2 from cat_people where email=:e"),
-                            {"e": email}).first()
+        for email in add + remove:
+            row = c.execute(text("select * from cat_people where email=:e"),
+                            {"e": email}).mappings().first()
             if row is None:
                 continue
-            g1, g2 = str(row[0] or "").strip(), str(row[1] or "").strip()
-            if name in (g1, g2):
-                continue
-            if not g1:
-                c.execute(text("update cat_people set group1=:n where email=:e"),
-                          {"n": name, "e": email})
-            elif not g2:
-                c.execute(text("update cat_people set group2=:n where email=:e"),
-                          {"n": name, "e": email})
+            lst = _plist(row[col], row[mirror])
+            if email in add and name not in lst:
+                lst.append(name)
+            elif email in remove and name in lst:
+                lst.remove(name)
             else:
-                full.append(email)
                 continue
+            c.execute(text(f"update cat_people set {col}=:l, {mirror}=:m where email=:e"),
+                      {"l": json.dumps(lst), "m": lst[0] if lst else "", "e": email})
             moved += 1
-        for email in remove:
-            row = c.execute(text("select group1, group2 from cat_people where email=:e"),
-                            {"e": email}).first()
-            if row is None:
-                continue
-            if str(row[0] or "").strip() == name:
-                c.execute(text("update cat_people set group1='' where email=:e"), {"e": email})
-                moved += 1
-            elif str(row[1] or "").strip() == name:
-                c.execute(text("update cat_people set group2='' where email=:e"), {"e": email})
-                moved += 1
-    msg = f"{moved} change{'' if moved == 1 else 's'} to {name}."
-    if full:
-        msg += (" Not added (both group slots already used): " + ", ".join(full[:5]) +
-                " \u2014 clear one of their groups on their row first.")
-    return {"ok": True, "message": msg, "refused": full}
+    return {"ok": True, "moved": moved,
+            "message": f"{moved} change{'' if moved == 1 else 's'} to {name}.",
+            "refused": []}
 
 
 @app.post("/api/admin/groups/delete")

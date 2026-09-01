@@ -1939,6 +1939,17 @@ def _builder_migrate(engine):
                 perms text default '{}',
                 budget text default '',
                 primary key (customer, name))""",
+        """create table if not exists cat_freight(
+                customer text not null default '',
+                vendor text not null default '',
+                sku text not null default '',
+                store_number text not null default '',
+                fob_point text default '',
+                net_before_freight text default '',
+                freight text default '',
+                express_freight text default '',
+                total_net_price text default '',
+                as_of text default '')""",
         """create table if not exists cat_vendorinfo(
                 customer text not null default '',
                 vendor text not null,
@@ -2843,7 +2854,8 @@ async def _aux_rows_local(ident: str, request: Request):
         if not os.environ.get("CATALOG_DATABASE_URL", "").strip():
             return None
         key = _bnorm(ident)
-        if key not in ("storemapping", "vendorinfolist", "vendorinfo"):
+        if key not in ("storemapping", "vendorinfolist", "vendorinfo",
+                       "freightbystore", "freight"):
             return None
         who = await _whoami(request)
         if who is None:
@@ -2855,7 +2867,15 @@ async def _aux_rows_local(ident: str, request: Request):
         import pandas as pd
         from sqlalchemy import text
         eng = _builder_engine()
-        if key in ("vendorinfolist", "vendorinfo"):
+        if key in ("freightbystore", "freight"):
+            with eng.connect() as c:
+                rows = c.execute(text("select vendor, sku, store_number, fob_point, "
+                                      "net_before_freight, freight, express_freight, "
+                                      "total_net_price, as_of from cat_freight "
+                                      "where customer=:c order by vendor, store_number"),
+                                 {"c": cust}).mappings().all()
+            df = pd.DataFrame([dict(r) for r in rows])
+        elif key in ("vendorinfolist", "vendorinfo"):
             with eng.connect() as c:
                 rows = c.execute(text("select * from cat_vendorinfo where customer=:c "
                                       "order by vendor"), {"c": cust}).mappings().all()
@@ -3596,6 +3616,139 @@ def _feed_fetch_api(cfg: dict, progress=None):
     return "feed.csv", buf.getvalue()
 
 
+# ── Freight by store: the same ProductsAndPrices API, asked once per store ──
+def _feed_freight_stores(eng, cust, cfg):
+    """Store numbers to quote: the card's own list when given, otherwise every
+    store found in Users (the leading number of "104 - MCALLEN")."""
+    manual = [s.strip() for s in str(cfg.get("frt_stores") or "")
+              .replace(";", ",").split(",") if s.strip()]
+    if manual:
+        return manual
+    from sqlalchemy import text
+    with eng.connect() as c:
+        ppl = c.execute(text("select user_label, group1 from cat_people where customer=:c"),
+                        {"c": cust}).mappings().all()
+    out = []
+    for p in ppl:
+        label = str(p["user_label"] or "").strip()
+        g1 = str(p["group1"] or "").lower()
+        if not label or "district" in g1 or "region" in g1:
+            continue
+        num = label
+        for sep in (" - ", " – ", "-"):
+            if sep in label:
+                num = label.split(sep, 1)[0].strip()
+                break
+        if num.isdigit() and num not in out:
+            out.append(num)
+    return out
+
+
+def _feed_freight_pull(eng, row, cfg, progress=None) -> str:
+    """Pull per-store freight with the card's own credentials and store it in
+    cat_freight. A store the account cannot quote (401) is skipped and named,
+    never fatal — exactly how the Domo flow behaved."""
+    from sqlalchemy import text
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time as _time
+    cust, vendor = str(row["customer"]), str(row["name"])
+    stores = _feed_freight_stores(eng, cust, cfg)
+    if not stores:
+        return "freight: no store numbers yet — list them on the card or add Users"
+    url = str(cfg.get("url") or "").strip()
+    headers = {}
+    for part in [p for p in str(cfg.get("header") or "").replace("\n", ";").split(";")
+                 if p.strip()]:
+        if ":" in part:
+            k, v = part.split(":", 1)
+            headers[k.strip()] = v.strip()
+    headers.setdefault("Accept", "application/json")
+    auth = None
+    if str(cfg.get("auth_user") or "").strip():
+        auth = (str(cfg.get("auth_user")).strip(), str(cfg.get("auth_pass") or ""))
+    qd = {str(k).lower(): str(v) for k, v in (cfg.get("qparams") or [])}
+    customer, limit = qd.get("customer", ""), 250
+
+    def _num(x):
+        try:
+            return float(x) if x not in (None, "") else ""
+        except Exception:
+            return ""
+
+    def pull_store(store):
+        rows, page = [], 1
+        with httpx.Client(timeout=120, follow_redirects=True, auth=auth) as cl:
+            while True:
+                r, last = None, ""
+                for attempt in range(3):
+                    try:
+                        r = cl.get(url, headers=headers,
+                                   params={"Customer": customer, "ShipTo": store,
+                                           "Limit": str(limit), "Page": str(page),
+                                           "IncludeTentative": "False"})
+                        if r.status_code == 429:      # rate-limited: back off
+                            last, r = "429", None
+                            _time.sleep(2 * (attempt + 1))
+                            continue
+                        break
+                    except Exception as e:
+                        last, r = (str(e) or type(e).__name__)[:80], None
+                        _time.sleep(2 * (attempt + 1))
+                if r is None:
+                    raise ValueError(last or "no answer")
+                if r.status_code != 200:
+                    raise ValueError(f"answered {r.status_code}")
+                d = r.json()
+                ents = d.get("entities") or []
+                for e in ents:
+                    p = (e or {}).get("price") or {}
+                    sku = p.get("sku")
+                    if not sku:
+                        continue
+                    rows.append({"sku": str(sku), "store_number": str(store),
+                                 "fob_point": str(p.get("fobPoint") or ""),
+                                 "net_before_freight": _num(p.get("netPriceBeforeFreight")),
+                                 "freight": _num(p.get("freight")),
+                                 "express_freight": _num(p.get("expressFreight")),
+                                 "total_net_price": _num(p.get("totalNetPrice"))})
+                total = int((d.get("metadata") or {}).get("totalRecords") or 0)
+                if len(ents) < limit or (total and page * limit >= total):
+                    break
+                page += 1
+                _time.sleep(0.2)
+        return rows
+
+    all_rows, failed, done = [], [], 0
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futs = {pool.submit(pull_store, s): s for s in stores}
+        for fut in as_completed(futs):
+            s = futs[fut]
+            done += 1
+            try:
+                all_rows.extend(fut.result())
+            except Exception:
+                failed.append(s)
+            if progress:
+                progress(done, len(all_rows), f"freight ({done} of {len(stores)} stores)")
+    import datetime as _dt
+    with eng.begin() as c:
+        c.execute(text("delete from cat_freight where customer=:c and vendor=:v"),
+                  {"c": cust, "v": vendor})
+    if all_rows:
+        import pandas as pd
+        fdf = pd.DataFrame(all_rows)
+        fdf["customer"], fdf["vendor"] = cust, vendor
+        fdf["as_of"] = _dt.datetime.now().isoformat(timespec="seconds")
+        fdf.astype(str).to_sql("cat_freight", eng, if_exists="append",
+                               index=False, chunksize=2000)
+    bit = f"freight: {len(all_rows):,} rows for {len(stores) - len(failed)} stores"
+    if failed:
+        failed.sort()
+        bit += (f" ({len(failed)} skipped: {', '.join(failed[:8])}"
+                f"{'…' if len(failed) > 8 else ''})")
+    return bit
+
+
 def _feed_fetch_sftp(cfg: dict):
     import fnmatch
     import io
@@ -3803,6 +3956,14 @@ def _feed_run_source(eng, row) -> dict:
             else:
                 out.update(ok=True, changed=True, sha=sha, rows=int(len(df)),
                            note=f"Pulled {fname} — {len(df)} rows.")
+        # Freight by store rides along on every successful API check — it is
+        # not part of the file, so it refreshes even when the file is unchanged.
+        if kind == "api" and cfg.get("frt_on") and out.get("ok"):
+            try:
+                out["note"] = (out["note"].rstrip(".") + " · " +
+                               _feed_freight_pull(eng, row, cfg, progress=_progress))
+            except Exception as fe:
+                out["note"] = out["note"] + f" · freight failed: {str(fe)[:120]}"
     except Exception as e:
         out["note"] = str(e)[:300]
         if prev.get("ok", True):        # tell a human once, not every retry
@@ -3964,6 +4125,8 @@ async def builder_feed_save(request: Request):
                 keep["atp_batch"] = max(1, min(int(cfg.get("atp_batch") or 40), 200))
             except Exception:
                 keep["atp_batch"] = 40
+            keep["frt_on"] = bool(cfg.get("frt_on"))
+            keep["frt_stores"] = str(cfg.get("frt_stores") or "").strip()[:1000]
         elif kind == "sftp":
             keep["host"] = str(cfg.get("host") or "").strip()
             try:

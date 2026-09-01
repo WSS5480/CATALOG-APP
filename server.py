@@ -3248,10 +3248,29 @@ def _feed_fetch_api(cfg: dict):
     qparams = [(str(k), str(v)) for k, v in (cfg.get("qparams") or [])
                if str(k).strip()]
     def _unwrap(payload):
-        if isinstance(payload, dict):           # common wrappers: {"data": [...]}
+        """Find the list of records wherever the API nested it: known wrapper
+        keys first, then a recursive hunt for the largest list of objects."""
+        def hunt(node, depth=0):
+            if isinstance(node, list):
+                if node and all(isinstance(x, dict) for x in node[:20]):
+                    return node
+                return None
+            if isinstance(node, dict) and depth < 5:
+                best = None
+                for v in node.values():
+                    got = hunt(v, depth + 1)
+                    if got is not None and (best is None or len(got) > len(best)):
+                        best = got
+                return best
+            return None
+        if isinstance(payload, dict):
             for key in ("data", "items", "rows", "results", "products"):
-                if isinstance(payload.get(key), list):
+                if isinstance(payload.get(key), list) and payload[key] \
+                        and all(isinstance(x, dict) for x in payload[key][:20]):
                     return payload[key]
+            found = hunt(payload)
+            if found is not None:
+                return found
         return payload
 
     with httpx.Client(timeout=120, follow_redirects=True, auth=auth) as cl:
@@ -3269,9 +3288,13 @@ def _feed_fetch_api(cfg: dict):
             # (Ashley-style pagination) until a short page says done.
             import io
             import pandas as pd
-            parsed = _unwrap(json.loads(data.decode("utf-8", "replace")))
+            raw_json = json.loads(data.decode("utf-8", "replace"))
+            parsed = _unwrap(raw_json)
             if not isinstance(parsed, list) or not parsed:
-                raise ValueError("The API returned JSON, but not a list of records.")
+                shape = (", ".join(list(raw_json.keys())[:8])
+                         if isinstance(raw_json, dict) else type(raw_json).__name__)
+                raise ValueError("The API returned JSON, but no list of records was found "
+                                 f"inside it (top-level keys: {shape}).")
             records = list(parsed)
             qd = {str(k).lower(): str(v) for k, v in qparams}
             try:

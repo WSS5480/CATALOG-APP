@@ -118,7 +118,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v9</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v10</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -769,6 +769,8 @@ async function loadBuilder(){
 }
 
 function bldMissing(src){
+  if(src.pending)
+    return '<span class="tag part">waiting for its feed\'s first pull</span>';
   return (src.missing || []).length
     ? '<span class="tag no">needs: ' + esc(src.missing.join(', ')) + '</span>'
     : '<span class="tag ok">ready</span>';
@@ -793,7 +795,7 @@ function drawBuilder(){
         'then press Build.</div>') +
     '<div class="row" style="margin:8px 0 16px">' +
       '<input type="file" id="bld-file" accept=".csv,.xlsx,.xlsm,.xls" style="font-size:13px">' +
-      '<input class="f" id="bld-vendor" placeholder="Vendor name (fills the Vendor column if the file has none)" style="max-width:330px">' +
+      '<input class="f" id="bld-vendor" placeholder="Vendor name — with a file it fills the Vendor column; alone it creates a feed-only source" style="max-width:330px">' +
       '<button class="btn" onclick="bldUpload()">Add source</button>' +
     '</div>' +
     ((BLD.sources || []).map(src =>
@@ -867,7 +869,20 @@ function drawVendInfo(){
 
 async function bldUpload(){
   const f = $('bld-file').files[0];
-  if(!f) return say('Choose a file first.', 'bad');
+  if(!f){
+    const name = $('bld-vendor').value.trim();
+    if(!name) return say('Choose a file — or type the vendor\'s name alone to create a source ' +
+                         'whose feed (API, SFTP or email) brings the first file.', 'bad');
+    try{
+      const out = await api('/api/admin/builder/create', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({name: name, vendor: name})});
+      say('✓ ' + (out.message || 'Created.'), 'ok');
+      $('bld-vendor').value = '';
+      await loadBuilder();
+    }catch(e){ say(e.message, 'bad'); }
+    return;
+  }
   say('Reading ' + f.name + '…', 'info');
   const b64 = await new Promise((res, rej) => {
     const r = new FileReader();

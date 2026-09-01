@@ -177,6 +177,18 @@
         everything: sign-in, the groups used for access, and the Passwords tab. Stored in this
         app's own database — no ETL involved.</p>
       <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;background:var(--panel)">
+        <h4 style="margin:0 0 6px;font-size:14.5px">Groups</h4>
+        <p class="cs" style="margin-bottom:10px">Create groups first, then add people to them.
+          Each group carries its own vendor access; everyone in it inherits, and a group inside
+          another group inherits from its parent. A person's own setting overrides their groups.</p>
+        <div class="row" style="margin-bottom:10px">
+          <input class="f" id="g-new" placeholder="New group name — STORE, 9206, DISTRICT…" style="max-width:280px">
+          <button class="btn sm" onclick="addGroup()">＋ Add group</button>
+        </div>
+        <div id="g-body"></div>
+      </div>
+
+      <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;background:var(--panel)">
         <h4 id="u-form-title" style="margin:0 0 10px;font-size:14.5px">Add a person</h4>
         <div class="two" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
           <div class="fg"><label class="f" for="u-email">Email</label>
@@ -184,9 +196,9 @@
           <div class="fg"><label class="f" for="u-user">User label</label>
             <input class="f" id="u-user" placeholder="104 - MCALLEN"></div>
           <div class="fg"><label class="f" for="u-g1">Group 1</label>
-            <input class="f" id="u-g1" placeholder="STORE"></div>
+            <select class="f" id="u-g1"></select></div>
           <div class="fg"><label class="f" for="u-g2">Group 2</label>
-            <input class="f" id="u-g2" placeholder="9206"></div>
+            <select class="f" id="u-g2"></select></div>
         </div>
         <div class="row" style="margin-top:4px">
           <label class="chk"><input type="checkbox" id="u-admin"> Administrator — sees and manages everything</label>
@@ -194,7 +206,7 @@
         <div class="row" style="margin-top:10px">
           <label class="f" style="margin:0">Vendor access</label>
           <select class="f" id="u-vmode" style="max-width:220px" onchange="uVendUI()">
-            <option value="all">All vendors</option>
+            <option value="all">From their groups (default)</option>
             <option value="only">Only the ticked vendors</option>
             <option value="except">All EXCEPT the ticked vendors</option>
           </select>
@@ -395,6 +407,122 @@ async function forceReset(email){
 
 /* ───────────────────────── users (add one at a time) ───────────────────────── */
 
+let GROUPS = [];
+
+async function loadGroups(){
+  try{ GROUPS = (await api('/api/admin/groups')).groups || []; }
+  catch(e){ GROUPS = []; }
+  drawGroups();
+  fillGroupSelects();
+}
+
+function groupOpts(sel, current){
+  const names = GROUPS.map(g => g.name);
+  if(current && names.indexOf(current) < 0) names.push(current);
+  sel.innerHTML = '<option value="">—</option>' +
+    names.map(n => '<option' + (n === current ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
+}
+function fillGroupSelects(){
+  const g1 = $('u-g1'), g2 = $('u-g2');
+  if(g1) groupOpts(g1, g1.value);
+  if(g2) groupOpts(g2, g2.value);
+}
+
+function gAccessWord(g){
+  if(g.vendors_mode === 'only')   return g.vendors.length ? 'only: ' + g.vendors.join(', ') : 'NOTHING ticked yet';
+  if(g.vendors_mode === 'except') return g.vendors.length ? 'all except: ' + g.vendors.join(', ') : 'all vendors';
+  return g.parent ? 'from ' + g.parent : 'all vendors';
+}
+
+function drawGroups(){
+  const box = $('g-body'); if(!box) return;
+  if(!GROUPS.length){
+    box.innerHTML = '<div class="muted small">No groups yet — name one above (STORE is a fine first one).</div>';
+    return;
+  }
+  box.innerHTML =
+    '<div class="scroll" style="max-height:280px"><table class="t"><thead><tr>' +
+    '<th>Group</th><th>Inside</th><th>Vendor access</th><th></th><th>People</th><th></th>' +
+    '</tr></thead><tbody>' +
+    GROUPS.map((g, i) =>
+      '<tr><td><b>' + esc(g.name) + '</b></td>' +
+      '<td><select data-gp="' + i + '" style="padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">' +
+        '<option value="">—</option>' +
+        GROUPS.filter(x => x.name !== g.name).map(x =>
+          '<option' + (x.name === g.parent ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('') +
+      '</select></td>' +
+      '<td><select data-gm="' + i + '" style="padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">' +
+        '<option value="all"' + (g.vendors_mode === 'all' ? ' selected' : '') + '>Inherit / all</option>' +
+        '<option value="only"' + (g.vendors_mode === 'only' ? ' selected' : '') + '>Only ticked</option>' +
+        '<option value="except"' + (g.vendors_mode === 'except' ? ' selected' : '') + '>All except ticked</option>' +
+      '</select> <span class="muted small">' + esc(gAccessWord(g)) + '</span></td>' +
+      '<td>' + (g.vendors_mode === 'all' ? '' :
+        '<button class="btn ghost sm" data-gt="' + i + '">vendors…</button>') + '</td>' +
+      '<td class="ro small">' + g.members + '</td>' +
+      '<td><button class="btn ghost sm" data-gx="' + esc(g.name) + '">✕</button></td></tr>' +
+      '<tr id="g-ticks-' + i + '" style="display:none"><td colspan="6"><div class="ticks" ' +
+        'style="max-height:190px" id="g-ticklist-' + i + '"></div></td></tr>'
+    ).join('') + '</tbody></table></div>';
+
+  box.querySelectorAll('select[data-gp]').forEach(s => s.addEventListener('change', () => {
+    const g = GROUPS[+s.getAttribute('data-gp')]; g.parent = s.value; saveGroup(g);
+  }));
+  box.querySelectorAll('select[data-gm]').forEach(s => s.addEventListener('change', () => {
+    const g = GROUPS[+s.getAttribute('data-gm')]; g.vendors_mode = s.value; saveGroup(g, true);
+  }));
+  box.querySelectorAll('button[data-gt]').forEach(b => b.onclick = () => {
+    const i = +b.getAttribute('data-gt'), row = $('g-ticks-' + i);
+    if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
+    row.style.display = '';
+    const g = GROUPS[i], have = new Set(g.vendors || []);
+    $('g-ticklist-' + i).innerHTML = (VENDORS.length ? VENDORS : [...have]).map(v =>
+      '<label><input type="checkbox" data-gv="' + i + '" value="' + esc(v) + '"' +
+      (have.has(v) ? ' checked' : '') + '><span><span class="nm">' + esc(v) + '</span></span></label>').join('') ||
+      '<div style="padding:10px" class="muted small">No vendors yet — build the catalog first.</div>';
+    $('g-ticklist-' + i).querySelectorAll('input[data-gv]').forEach(t =>
+      t.addEventListener('change', () => {
+        g.vendors = [...$('g-ticklist-' + i).querySelectorAll('input[data-gv]')]
+          .filter(x => x.checked).map(x => x.value);
+        saveGroup(g);
+      }));
+  });
+  box.querySelectorAll('button[data-gx]').forEach(b => b.onclick = async () => {
+    const name = b.getAttribute('data-gx');
+    if(!confirm('Remove the group "' + name + '"?\n\nPeople keep the label, but it stops carrying vendor access.')) return;
+    try{
+      const out = await api('/api/admin/groups/delete', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: name})});
+      say('✓ ' + (out.message || 'Removed.'), 'ok');
+      await loadGroups(); await loadUsers();
+    }catch(e){ say(e.message, 'bad'); }
+  });
+}
+
+async function addGroup(){
+  const name = $('g-new').value.trim();
+  if(!name) return say('Give the group a name first.', 'bad');
+  try{
+    await api('/api/admin/groups', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name: name, parent: '', vendors_mode: 'all', vendors: []})});
+    $('g-new').value = '';
+    say('✓ Group ' + name + ' created. Set its vendor access on its row, then add people to it.', 'ok');
+    await loadGroups();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+let _gSaveT = null;
+function saveGroup(g, redraw){
+  clearTimeout(_gSaveT);
+  _gSaveT = setTimeout(async () => {
+    try{
+      await api('/api/admin/groups', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(g)});
+      say('✓ Saved group ' + g.name + '.', 'ok');
+      if(redraw) drawGroups();
+    }catch(e){ say(e.message, 'bad'); }
+  }, 350);
+}
+
 let USERS = [];
 let VENDORS = [];
 let U_EDIT = '';       // email being edited, '' = adding new
@@ -403,7 +531,7 @@ function vendSummary(p){
   if(p.admin) return 'everything (admin)';
   if(p.vendors_mode === 'only')   return p.vendors.length ? 'only: ' + p.vendors.join(', ') : 'NOTHING (none ticked)';
   if(p.vendors_mode === 'except') return p.vendors.length ? 'all except: ' + p.vendors.join(', ') : 'all vendors';
-  return 'all vendors';
+  return 'from their groups';
 }
 
 async function loadUsers(){
@@ -416,6 +544,7 @@ async function loadUsers(){
     return;
   }
   uVendUI();
+  fillGroupSelects();
   if(!USERS.length){
     $('u-body').innerHTML = '<div class="center">Nobody yet. Add your first person above — ' +
       'start with yourself, ticked as administrator.</div>';
@@ -464,8 +593,8 @@ function fillPersonForm(p){
   $('u-email').value = p ? p.email : '';
   $('u-email').disabled = !!p;
   $('u-user').value = p ? (p.user || '') : '';
-  $('u-g1').value = p ? (p.group1 || '') : '';
-  $('u-g2').value = p ? (p.group2 || '') : '';
+  groupOpts($('u-g1'), p ? (p.group1 || '') : '');
+  groupOpts($('u-g2'), p ? (p.group2 || '') : '');
   $('u-admin').checked = p ? !!p.admin : false;
   $('u-vmode').value = p ? (p.vendors_mode || 'all') : 'all';
   $('u-vlist')._ticked = p ? (p.vendors || []) : [];
@@ -797,6 +926,7 @@ async function bldFeedRun(btn, id){
 
 loadMe();
 loadPeople();
+loadGroups();
 loadUsers();
 loadBuilder();
 </script>

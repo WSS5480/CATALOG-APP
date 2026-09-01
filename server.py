@@ -1836,6 +1836,16 @@ def _builder_migrate(engine):
                 content text not null default '{}',
                 created_at timestamptz default now(),
                 updated_at timestamptz default now())"""))
+        # Groups are first-class: each carries vendor access, people inherit it,
+        # and a group inside a group (parent) cascades its access down.
+        c.execute(text("""
+            create table if not exists cat_groups(
+                customer text not null default '',
+                name text not null,
+                parent text default '',
+                vendors_mode text default 'all',
+                vendors text default '[]',
+                primary key (customer, name))"""))
         # Per-vendor ordering details: where orders go, freight minimums.
         c.execute(text("""
             create table if not exists cat_vendorinfo(
@@ -2328,15 +2338,49 @@ def _person(email: str):
         return None
 
 
+def _group_row(cust: str, name: str):
+    if not name:
+        return None
+    from sqlalchemy import text
+    try:
+        with _builder_engine().connect() as c:
+            return c.execute(text("select * from cat_groups where customer=:c and name=:n"),
+                             {"c": cust, "n": name}).mappings().first()
+    except Exception:
+        return None
+
+
+def _effective_access(p, cust: str):
+    """(mode, vendors) for a person. Their own only/except setting wins;
+    otherwise their groups answer — Group 2 first (the more specific), then
+    Group 1, each walking up parents so a grant to a parent group cascades
+    down to every group within it. Nothing set anywhere means all vendors."""
+    mode = str(p["vendors_mode"] or "all")
+    if mode in ("only", "except"):
+        try:
+            return mode, json.loads(p["vendors"] or "[]")
+        except Exception:
+            return mode, []
+    for gname in (str(p["group2"] or "").strip(), str(p["group1"] or "").strip()):
+        seen = set()
+        g = _group_row(cust, gname)
+        while g is not None and g["name"] not in seen and len(seen) < 12:
+            seen.add(g["name"])
+            gmode = str(g["vendors_mode"] or "all")
+            if gmode in ("only", "except"):
+                try:
+                    return gmode, json.loads(g["vendors"] or "[]")
+                except Exception:
+                    return gmode, []
+            g = _group_row(cust, str(g["parent"] or "").strip())
+    return "all", []
+
+
 def _person_scope(p) -> dict:
     cust = str(p["customer"] or "").strip() or _builder_only_customer()
     if p["admin"]:
         return {"all": True, "customer": cust, "vendors_all": True, "vendors": []}
-    mode = str(p["vendors_mode"] or "all")
-    try:
-        vens = json.loads(p["vendors"] or "[]")
-    except Exception:
-        vens = []
+    mode, vens = _effective_access(p, cust)
     return {"all": False, "customer": cust, "vendors_all": mode == "all",
             "vendors": vens, "vendors_mode": mode,
             "user": p["user_label"], "group_1": p["group1"], "group_2": p["group2"]}
@@ -2578,6 +2622,75 @@ async def _aux_rows_local(ident: str, request: Request):
         return JSONResponse(json.loads(df.to_json(orient="records")))
     except Exception:
         return None
+
+
+@app.get("/api/admin/groups")
+async def groups_list(request: Request):
+    await _people_gate(request)
+    cust = _builder_only_customer() or "main"
+    from sqlalchemy import text
+    with _builder_engine().connect() as c:
+        rows = c.execute(text("select * from cat_groups where customer=:c order by name"),
+                         {"c": cust}).mappings().all()
+        counts = {}
+        for g1, g2 in c.execute(text("select group1, group2 from cat_people")):
+            for n in (str(g1 or "").strip(), str(g2 or "").strip()):
+                if n:
+                    counts[n] = counts.get(n, 0) + 1
+    out = []
+    for g in rows:
+        try:
+            vens = json.loads(g["vendors"] or "[]")
+        except Exception:
+            vens = []
+        out.append({"name": g["name"], "parent": g["parent"] or "",
+                    "vendors_mode": str(g["vendors_mode"] or "all"), "vendors": vens,
+                    "members": counts.get(g["name"], 0)})
+    return {"ok": True, "groups": out}
+
+
+@app.post("/api/admin/groups")
+async def groups_save(request: Request):
+    await _people_gate(request)
+    body = await request.json() or {}
+    name = str(body.get("name") or "").strip()[:120]
+    if not name:
+        raise HTTPException(400, "A group needs a name.")
+    parent = str(body.get("parent") or "").strip()[:120]
+    if parent == name:
+        raise HTTPException(400, "A group cannot be inside itself.")
+    mode = str(body.get("vendors_mode") or "all").lower()
+    if mode not in ("all", "only", "except"):
+        raise HTTPException(400, "Vendor access must be all, only, or except.")
+    vens = [str(v)[:120] for v in (body.get("vendors") or []) if str(v).strip()][:500]
+    cust = _builder_only_customer() or "main"
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        n = c.execute(text("update cat_groups set parent=:p, vendors_mode=:m, vendors=:v "
+                           "where customer=:c and name=:n"),
+                      {"p": parent, "m": mode, "v": json.dumps(vens),
+                       "c": cust, "n": name}).rowcount
+        if not n:
+            c.execute(text("insert into cat_groups(customer,name,parent,vendors_mode,vendors) "
+                           "values(:c,:n,:p,:m,:v)"),
+                      {"c": cust, "n": name, "p": parent, "m": mode, "v": json.dumps(vens)})
+    return {"ok": True, "message": f"Saved group {name}."}
+
+
+@app.post("/api/admin/groups/delete")
+async def groups_delete(request: Request):
+    await _people_gate(request)
+    body = await request.json() or {}
+    name = str(body.get("name") or "").strip()
+    cust = _builder_only_customer() or "main"
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("delete from cat_groups where customer=:c and name=:n"),
+                  {"c": cust, "n": name})
+        c.execute(text("update cat_groups set parent='' where customer=:c and parent=:n"),
+                  {"c": cust, "n": name})
+    return {"ok": True, "message": f"Removed group {name}. People keep the label; it just "
+                                   f"no longer carries access."}
 
 
 @app.get("/api/admin/vendorinfo")

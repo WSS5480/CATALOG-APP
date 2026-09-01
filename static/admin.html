@@ -118,7 +118,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v10</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v11</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -760,6 +760,12 @@ async function dropPerson(email){
 
 /* ───────────────────────── the catalog builder ───────────────────────── */
 
+function copyText(t, btn){
+  (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject())
+    .then(() => { if(btn){ btn.textContent = '\u2713 copied'; setTimeout(() => btn.textContent = 'Copy', 1600); } })
+    .catch(() => { window.prompt('Copy this address:', t); });
+}
+
 let BLD = null;
 
 async function loadBuilder(){
@@ -802,6 +808,12 @@ function drawBuilder(){
       '<div style="border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:12px">' +
         '<div class="row"><b>' + esc(src.name) + '</b> ' + bldMissing(src) +
         '<span class="muted small">' + src.rows + ' rows · ' + esc(src.filename) + '</span>' +
+        ((src.feed && src.feed.type === 'email' && src.feed_addr)
+          ? '<span class="small" style="background:#e9f0fa;color:#123a6b;border-radius:999px;' +
+            'padding:3px 10px">\ud83d\udce7 <b style="user-select:all">' + esc(src.feed_addr) + '</b> ' +
+            '<button class="btn ghost sm" style="padding:2px 8px" ' +
+            'onclick="copyText(\'' + esc(src.feed_addr) + '\', this)">Copy</button></span>'
+          : '') +
         '<span style="flex:1"></span>' +
         '<button class="btn ghost sm" onclick="bldPreview(\'' + esc(src.id) + '\')">Preview</button>' +
         '<button class="btn ghost sm" onclick="bldRemove(\'' + esc(src.id) + '\',\'' + esc(src.name) + '\')">✕</button></div>' +
@@ -981,13 +993,18 @@ function bldFeedBox(src){
           inp('path', '/outbound/  (folder, or one exact file)', f.path, '240px') +
           inp('pattern', '*.csv', f.pattern, '110px');
   }else if(t === 'email'){
-    cfg = (BLD.email_ready ? '' :
-        '<div class="small" style="color:#7a4b00;background:#fff4e5;border-radius:8px;' +
+    cfg = (BLD.email_ready
+      ? '<div class="small" style="color:#123a6b;background:#e9f0fa;border-radius:8px;' +
+        'padding:8px 11px;flex-basis:100%">This source\'s own address — vendors email the ' +
+        'file straight to it:&nbsp; <b style="user-select:all">' + esc(src.feed_addr || '') +
+        '</b> <button class="btn ghost sm" style="padding:2px 8px" ' +
+        'onclick="copyText(\'' + esc(src.feed_addr || '') + '\', this)">Copy</button><br><span class="muted">It lands in your connected mailbox and only this source ' +
+        'picks it up. Or fill “sender contains” below to match by sender instead.</span></div>'
+      : '<div class="small" style="color:#7a4b00;background:#fff4e5;border-radius:8px;' +
         'padding:7px 10px;flex-basis:100%">Mailbox not connected yet — on Render, this ' +
         'service → Environment: add EMAIL_IMAP_HOST, EMAIL_IMAP_USER and EMAIL_IMAP_PASS ' +
-        '(and EMAIL_IMAP_PORT if it is not 993). Vendors then email their files to that ' +
-        'mailbox and this source picks them up.</div>') +
-        inp('from', 'sender contains, e.g. @vendor1.com', f.from_contains, '250px') +
+        '(and EMAIL_IMAP_PORT if it is not 993).</div>') +
+        inp('from', 'sender contains (optional), e.g. @vendor1.com', f.from_contains, '250px') +
         inp('subj', 'subject contains (optional)', f.subject_contains, '220px');
   }
   const tail = t === 'manual' ? '' :

@@ -417,6 +417,9 @@ async def rows(ident: str, request: Request):
     local = await _builder_rows_local(ident, request)
     if local is not None:
         return local
+    aux = await _aux_rows_local(ident, request)
+    if aux is not None:
+        return aux
     params = dict(request.query_params)
     asked = params.pop("profile", "").strip()
     my = await _my_datasets(request)
@@ -525,26 +528,96 @@ async def image_passthrough(name: str):
                     headers={"Cache-Control": "public, max-age=86400, immutable"})
 
 
+# Orders: stored in THIS app's own database when it has one — the ETL is only
+# used when no catalog database is connected (the original proxy behaviour).
+
+async def _orders_ready(request: Request):
+    """Signed in + a local store to write to, else None (→ proxy as before)."""
+    if not os.environ.get("CATALOG_DATABASE_URL", "").strip():
+        return None
+    try:
+        who = await _whoami(request)
+    except Exception:
+        return None
+    if who is None:
+        raise HTTPException(401, "Not signed in.")
+    sc = who.get("scope") or {}
+    cust = _bslug(str(sc.get("customer") or "")) if str(sc.get("customer") or "").strip() else ""
+    if not cust or cust == "x":
+        cust = _builder_only_customer() or "main"
+    return who, cust
+
+
 @app.get("/api/app/collections/{coll}/documents/")
-async def orders_list(coll: str):
-    return await etl_get(f"/api/app/collections/{coll}/documents/")
+async def orders_list(coll: str, request: Request):
+    ready = await _orders_ready(request)
+    if ready is None:
+        return await etl_get(f"/api/app/collections/{coll}/documents/")
+    _who, cust = ready
+    from sqlalchemy import text
+    with _builder_engine().connect() as c:
+        rows = c.execute(text("select id, content from cat_orders where coll=:o and customer=:c "
+                              "order by created_at"), {"o": coll, "c": cust}).all()
+    out = []
+    for rid, content in rows:
+        try:
+            body = json.loads(content or "{}")
+        except Exception:
+            body = {}
+        out.append({"id": rid, "content": body})
+    return out
 
 
 @app.post("/api/app/collections/{coll}/documents/")
 async def orders_create(coll: str, request: Request):
-    return await etl_send("POST", f"/api/app/collections/{coll}/documents/",
-                          await request.json())
+    payload = await request.json()
+    ready = await _orders_ready(request)
+    if ready is None:
+        return await etl_send("POST", f"/api/app/collections/{coll}/documents/", payload)
+    who, cust = ready
+    content = (payload or {}).get("content")
+    if not isinstance(content, dict):
+        content = payload if isinstance(payload, dict) else {}
+    content.setdefault("SubmittedBy", who.get("email", ""))
+    rid = secrets.token_hex(8)
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("insert into cat_orders(id,coll,customer,content) values(:i,:o,:c,:b)"),
+                  {"i": rid, "o": coll, "c": cust, "b": json.dumps(content)})
+    return {"id": rid, "content": content}
 
 
 @app.put("/api/app/collections/{coll}/documents/{doc_id}")
 async def orders_update(coll: str, doc_id: str, request: Request):
-    return await etl_send("PUT", f"/api/app/collections/{coll}/documents/{doc_id}",
-                          await request.json())
+    payload = await request.json()
+    ready = await _orders_ready(request)
+    if ready is None:
+        return await etl_send("PUT", f"/api/app/collections/{coll}/documents/{doc_id}", payload)
+    _who, cust = ready
+    content = (payload or {}).get("content")
+    if not isinstance(content, dict):
+        content = payload if isinstance(payload, dict) else {}
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        n = c.execute(text("update cat_orders set content=:b, updated_at=current_timestamp "
+                           "where id=:i and coll=:o and customer=:c"),
+                      {"b": json.dumps(content), "i": doc_id, "o": coll, "c": cust}).rowcount
+    if not n:
+        raise HTTPException(404, "No such order line.")
+    return {"id": doc_id, "content": content}
 
 
 @app.delete("/api/app/collections/{coll}/documents/{doc_id}")
-async def orders_delete(coll: str, doc_id: str):
-    return await etl_send("DELETE", f"/api/app/collections/{coll}/documents/{doc_id}")
+async def orders_delete(coll: str, doc_id: str, request: Request):
+    ready = await _orders_ready(request)
+    if ready is None:
+        return await etl_send("DELETE", f"/api/app/collections/{coll}/documents/{doc_id}")
+    _who, cust = ready
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("delete from cat_orders where id=:i and coll=:o and customer=:c"),
+                  {"i": doc_id, "o": coll, "c": cust})
+    return {"ok": True}
 
 
 @app.post("/api/app/workflow/{name}/start")
@@ -553,6 +626,10 @@ async def workflow(name: str, request: Request):
         payload = await request.json()
     except Exception:
         payload = {}
+    # With a local catalog there is no ETL flow to run — the Builder and its
+    # feeds keep the data fresh, so "refresh" succeeds by having nothing to do.
+    if os.environ.get("CATALOG_DATABASE_URL", "").strip():
+        return {"ok": True, "message": "The catalog is served from this app's own database."}
     return await etl_send("POST", f"/api/app/workflow/{name}/start", payload)
 
 
@@ -1750,6 +1827,26 @@ def _builder_migrate(engine):
             create table if not exists cat_kv(
                 k text primary key,
                 v text default '')"""))
+        # Orders live at home too — the storefront's order form writes here.
+        c.execute(text("""
+            create table if not exists cat_orders(
+                id text primary key,
+                coll text not null default '',
+                customer text not null default '',
+                content text not null default '{}',
+                created_at timestamptz default now(),
+                updated_at timestamptz default now())"""))
+        # Per-vendor ordering details: where orders go, freight minimums.
+        c.execute(text("""
+            create table if not exists cat_vendorinfo(
+                customer text not null default '',
+                vendor text not null,
+                order_email text default '',
+                freight_min text default '',
+                freight_min_by_cat text default '',
+                freight_min_by_brand text default '',
+                freight_qty_or_cost text default '',
+                primary key (customer, vendor))"""))
 
 
 # The schema the catalog reads — the same names the storefront asks for.
@@ -2381,6 +2478,155 @@ async def people_force_reset(request: Request):
         c.execute(text("update cat_people set pw_hash='', must_change=false where email=:e"),
                   {"e": email})
     return {"ok": True, "message": f"{email} can no longer sign in until a new password is set."}
+
+
+def _built_vendors(eng, cust: str) -> list:
+    from sqlalchemy import text
+    try:
+        with eng.connect() as c:
+            b = c.execute(text("select table_name from cat_built where customer=:c"),
+                          {"c": cust}).first()
+            if not b:
+                b = c.execute(text("select table_name from cat_built limit 1")).first()
+            if not b:
+                return []
+            return sorted({str(r[0]).strip() for r in c.execute(text(
+                f'select distinct "Vendor" from "{b[0]}"')) if str(r[0]).strip()})
+    except Exception:
+        return []
+
+
+async def _aux_rows_local(ident: str, request: Request):
+    """Store/district and vendor-ordering rows, answered from this app's own
+    store. The order form reads these; they used to be ETL datasets. Stores
+    and districts come straight from the people rows: the user label is the
+    store ("104 - MCALLEN"), Group 2 is the district where one exists, and a
+    person whose Group 1 says district or region is that district's manager.
+    A catalog with no districts simply leaves Group 2 blank — nothing else
+    to set up."""
+    try:
+        if not os.environ.get("CATALOG_DATABASE_URL", "").strip():
+            return None
+        key = _bnorm(ident)
+        if key not in ("storemapping", "vendorinfolist", "vendorinfo"):
+            return None
+        who = await _whoami(request)
+        if who is None:
+            return None
+        sc = who.get("scope") or {}
+        cust = _bslug(str(sc.get("customer") or "")) if str(sc.get("customer") or "").strip() else ""
+        if not cust or cust == "x":
+            cust = _builder_only_customer() or "main"
+        import pandas as pd
+        from sqlalchemy import text
+        eng = _builder_engine()
+        if key in ("vendorinfolist", "vendorinfo"):
+            with eng.connect() as c:
+                rows = c.execute(text("select * from cat_vendorinfo where customer=:c "
+                                      "order by vendor"), {"c": cust}).mappings().all()
+            by_v = {r["vendor"]: r for r in rows}
+            recs = []
+            for v in (_built_vendors(eng, cust) or list(by_v.keys())):
+                r = by_v.get(v)
+                recs.append({"Vendor": v,
+                             "OrderEmail": r["order_email"] if r else "",
+                             "FreightMin": r["freight_min"] if r else "",
+                             "FreightMinbyCat": r["freight_min_by_cat"] if r else "",
+                             "FreightMinbyBrand": r["freight_min_by_brand"] if r else "",
+                             "FreightMinQtyorTotalCost": r["freight_qty_or_cost"] if r else ""})
+            df = pd.DataFrame(recs)
+        else:
+            with eng.connect() as c:
+                ppl = c.execute(text("select * from cat_people order by group2, user_label"))\
+                        .mappings().all()
+            recs = []
+            for p in ppl:
+                label = str(p["user_label"] or "").strip()
+                if not label:
+                    continue
+                num, name = label, label
+                for sep in (" - ", " – ", "-"):
+                    if sep in label:
+                        num, name = label.split(sep, 1)[0].strip(), label.split(sep, 1)[1].strip()
+                        break
+                g1 = str(p["group1"] or "").lower()
+                isd = ("district" in g1) or ("region" in g1)
+                recs.append({"DistrictID": str(p["group2"] or "").strip(),
+                             "StoreNum": "" if isd else num,
+                             "StoreName": "" if isd else name,
+                             "GeneralManagersName": name,
+                             "StoreEmail": "" if isd else p["email"],
+                             "ManagerEmail": "" if isd else p["email"],
+                             "DistrictManager": name if isd else "",
+                             "DistrictManagerEmail": p["email"] if isd else "",
+                             "PurchasingDirector": "", "RegionID": ""})
+            df = pd.DataFrame(recs)
+        if df.empty:
+            return JSONResponse([])
+        params = dict(request.query_params)
+        want = [c.strip() for c in (params.get("groupby") or params.get("fields") or "")
+                .split(",") if c.strip()]
+        if want:
+            by_norm = {}
+            for c in df.columns:
+                by_norm.setdefault(_bnorm(c), c)
+            have = list(dict.fromkeys(by_norm[_bnorm(w)] for w in want if _bnorm(w) in by_norm))
+            if have:
+                df = df[have]
+                if params.get("groupby"):
+                    df = df.drop_duplicates()
+        return JSONResponse(json.loads(df.to_json(orient="records")))
+    except Exception:
+        return None
+
+
+@app.get("/api/admin/vendorinfo")
+async def vendorinfo_list(request: Request):
+    """Every vendor of the built catalog, with where their orders go."""
+    await _people_gate(request)
+    from sqlalchemy import text
+    eng = _builder_engine()
+    cust = _builder_only_customer() or "main"
+    with eng.connect() as c:
+        rows = c.execute(text("select * from cat_vendorinfo where customer=:c"),
+                         {"c": cust}).mappings().all()
+    by_v = {r["vendor"]: r for r in rows}
+    out = []
+    for v in sorted(set(_built_vendors(eng, cust)) | set(by_v.keys())):
+        r = by_v.get(v)
+        out.append({"vendor": v,
+                    "order_email": r["order_email"] if r else "",
+                    "freight_min": r["freight_min"] if r else "",
+                    "freight_min_by_cat": r["freight_min_by_cat"] if r else "",
+                    "freight_min_by_brand": r["freight_min_by_brand"] if r else "",
+                    "freight_qty_or_cost": r["freight_qty_or_cost"] if r else ""})
+    return {"ok": True, "vendors": out}
+
+
+@app.post("/api/admin/vendorinfo")
+async def vendorinfo_save(request: Request):
+    await _people_gate(request)
+    body = await request.json() or {}
+    vendor = str(body.get("vendor") or "").strip()
+    if not vendor:
+        raise HTTPException(400, "Which vendor?")
+    vals = {"c": _builder_only_customer() or "main", "v": vendor[:120],
+            "e": str(body.get("order_email") or "").strip()[:200],
+            "f1": str(body.get("freight_min") or "").strip()[:80],
+            "f2": str(body.get("freight_min_by_cat") or "").strip()[:80],
+            "f3": str(body.get("freight_min_by_brand") or "").strip()[:80],
+            "f4": str(body.get("freight_qty_or_cost") or "").strip()[:80]}
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        n = c.execute(text("update cat_vendorinfo set order_email=:e, freight_min=:f1, "
+                           "freight_min_by_cat=:f2, freight_min_by_brand=:f3, "
+                           "freight_qty_or_cost=:f4 where customer=:c and vendor=:v"),
+                      vals).rowcount
+        if not n:
+            c.execute(text("insert into cat_vendorinfo(customer,vendor,order_email,freight_min,"
+                           "freight_min_by_cat,freight_min_by_brand,freight_qty_or_cost) "
+                           "values(:c,:v,:e,:f1,:f2,:f3,:f4)"), vals)
+    return {"ok": True, "message": f"Saved {vendor}."}
 
 
 @app.get("/api/admin/people/vendors")

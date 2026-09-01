@@ -184,9 +184,10 @@
   <section id="s-builder" class="screen">
     <div class="card">
       <h3>Catalog Builder</h3>
-      <p class="cs">Your whole catalog, built here. Drop each vendor's file in, check the schema
-        it recognised, press Build — the storefront serves the result at once, from this app's
-        own database.</p>
+      <p class="cs">Your whole catalog, built here. Drop each vendor's file in — or give a source
+        a feed (API, SFTP or email) and it fetches its own updates on a schedule, rebuilds the
+        catalog, and emails you if a file arrives with schema trouble. The storefront serves the
+        result from this app's own database.</p>
       <div id="bld-body" class="center">Loading…</div>
     </div>
   </section>
@@ -564,11 +565,9 @@ function drawBuilder(){
   const built = BLD.built;
   b.innerHTML =
     (built
-      ? '<div class="msg on ' + (built.serving ? 'ok' : 'info') + '" style="display:block">' +
-        '<b>' + built.rows + ' rows built</b> · ' + esc(built.at) + ' · ' +
-        (built.serving ? 'the storefront is serving this now.' : 'built, but NOT serving.') +
-        ' <button class="btn ghost sm" onclick="bldServe(' + (!built.serving) + ')">' +
-        (built.serving ? 'Stop serving (back to ETL dataset)' : 'Serve this') + '</button></div>'
+      ? '<div class="msg on ok" style="display:block">' +
+        '<b>' + built.rows + ' rows built</b> · ' + esc(built.at) + ' · this is the catalog the ' +
+        'storefront serves. When a feed below brings an updated file, it rebuilds itself.</div>'
       : '<div class="msg on info" style="display:block">Nothing built yet. Add sources below, ' +
         'then press Build.</div>') +
     '<div class="row" style="margin:8px 0 16px">' +
@@ -586,6 +585,7 @@ function drawBuilder(){
         '<div class="row" style="margin-top:6px"><label class="f" style="margin:0">Vendor label</label>' +
           '<input class="f" style="max-width:240px" value="' + esc(src.vendor || '') + '"' +
           ' onchange="bldVendor(\'' + esc(src.id) + '\',this.value)"></div>' +
+        bldFeedBox(src) +
         '<div class="two" style="margin-top:9px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">' +
           BLD.fields.map(f => {
             const cur = src.mapping[f.name] || '';
@@ -683,12 +683,102 @@ async function bldBuild(){
   }catch(e){ say(e.message, 'bad'); }
 }
 
-async function bldServe(on){
+/* ── feeds: how a source refreshes itself without a hand upload ── */
+
+function bldFeedBox(src){
+  const f = src.feed || {};
+  const t = f.type || 'manual';
+  const st = src.feed_status || {};
+  const stLine = st.last_run
+    ? '<span class="tag ' + (st.ok ? 'ok' : 'no') + '">' + (st.ok ? 'ok' : 'attention') + '</span>' +
+      '<span class="muted small">' + esc(st.last_run) + ' — ' + esc(st.note || '') + '</span>'
+    : '<span class="muted small">not checked yet — Save feed, then Check now.</span>';
+  const inp = (k, ph, val, w) => '<input class="f" id="fd-' + k + '-' + esc(src.id) +
+    '" placeholder="' + ph + '" value="' + esc(val === undefined || val === null ? '' : val) +
+    '" style="max-width:' + (w || '220px') + '">';
+  let cfg = '';
+  if(t === 'api'){
+    cfg = inp('url', 'https://vendor.com/pricefile.csv (or a JSON list)', f.url, '360px') +
+          inp('header', 'Header if it needs one, e.g. Authorization: Bearer …', f.header, '320px');
+  }else if(t === 'sftp'){
+    cfg = inp('host', 'sftp.vendor.com', f.host, '190px') +
+          inp('port', '22', f.port || 22, '70px') +
+          inp('user', 'user', f.user, '140px') +
+          '<input class="f" type="password" id="fd-pass-' + esc(src.id) +
+            '" placeholder="password" value="' + esc(f.password || '') + '" style="max-width:140px">' +
+          inp('path', '/outbound/  (folder, or one exact file)', f.path, '240px') +
+          inp('pattern', '*.csv', f.pattern, '110px');
+  }else if(t === 'email'){
+    cfg = (BLD.email_ready ? '' :
+        '<div class="small" style="color:#7a4b00;background:#fff4e5;border-radius:8px;' +
+        'padding:7px 10px;flex-basis:100%">Mailbox not connected yet — on Render, this ' +
+        'service → Environment: add EMAIL_IMAP_HOST, EMAIL_IMAP_USER and EMAIL_IMAP_PASS ' +
+        '(and EMAIL_IMAP_PORT if it is not 993). Vendors then email their files to that ' +
+        'mailbox and this source picks them up.</div>') +
+        inp('from', 'sender contains, e.g. @vendor1.com', f.from_contains, '250px') +
+        inp('subj', 'subject contains (optional)', f.subject_contains, '220px');
+  }
+  const tail = t === 'manual' ? '' :
+    '<label class="f" style="margin:0">every</label>' +
+    inp('every', '24', f.every_hours || 24, '60px') +
+    '<label class="f" style="margin:0">hours</label>' +
+    '<button class="btn sm" onclick="bldFeedSave(\'' + esc(src.id) + '\')">Save feed</button>' +
+    '<button class="btn ghost sm" onclick="bldFeedRun(this,\'' + esc(src.id) + '\')">Check now</button>';
+  return '<div style="margin-top:10px;border-top:1px dashed var(--line);padding-top:9px">' +
+    '<div class="row">' +
+      '<label class="f" style="margin:0">Feed</label>' +
+      '<select class="f" style="max-width:160px;padding:7px 9px;font-size:13px"' +
+        ' onchange="bldFeedType(\'' + esc(src.id) + '\',this.value)">' +
+        [['manual','Manual upload'],['api','API pull'],['sftp','SFTP pull'],['email','Email in']]
+          .map(o => '<option value="' + o[0] + '"' + (t === o[0] ? ' selected' : '') + '>' +
+                    o[1] + '</option>').join('') +
+      '</select>' +
+      (t === 'manual'
+        ? '<span class="muted small">You drop the file in yourself. Pick API, SFTP or Email ' +
+          'and this source refreshes itself — and rebuilds the catalog when the file changes.</span>'
+        : stLine) +
+    '</div>' +
+    (cfg || tail ? '<div class="row" style="margin-top:7px">' + cfg + tail + '</div>' : '') +
+    '</div>';
+}
+
+function bldFeedType(id, t){
+  const src = (BLD.sources || []).find(s => s.id === id); if(!src) return;
+  src.feed = Object.assign({}, src.feed || {}, {type: t});
+  drawBuilder();
+}
+
+async function bldFeedSave(id){
+  const src = (BLD.sources || []).find(s => s.id === id); if(!src) return;
+  const g = k => { const el = $('fd-' + k + '-' + id); return el ? el.value.trim() : ''; };
+  const t = (src.feed && src.feed.type) || 'manual';
+  const feed = {type: t, every_hours: g('every') || 24};
+  if(t === 'api'){ feed.url = g('url'); feed.header = g('header'); }
+  if(t === 'sftp'){ feed.host = g('host'); feed.port = g('port') || 22; feed.user = g('user');
+                    feed.password = ($('fd-pass-' + id) || {value:''}).value;
+                    feed.path = g('path'); feed.pattern = g('pattern'); }
+  if(t === 'email'){ feed.from_contains = g('from'); feed.subject_contains = g('subj'); }
   try{
-    await api('/api/admin/builder/serving', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify({serving: on})});
+    await api('/api/admin/builder/feed', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id, feed: feed})});
+    say(t === 'manual' ? '✓ Feed turned off — this source is manual again.'
+        : '✓ Feed saved. It checks by itself every ' + (feed.every_hours || 24) +
+          ' hours — or press Check now to try it this minute.', 'ok');
     await loadBuilder();
   }catch(e){ say(e.message, 'bad'); }
+}
+
+async function bldFeedRun(btn, id){
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try{
+    const out = await api('/api/admin/builder/feed/run', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id})});
+    say((out.ok ? '✓ ' : '') + out.message, out.ok ? (out.changed ? 'ok' : 'info') : 'bad');
+    await loadBuilder();
+  }catch(e){
+    say(e.message, 'bad');
+    btn.disabled = false; btn.textContent = 'Check now';
+  }
 }
 
 /* ───────────────────────── start ───────────────────────── */

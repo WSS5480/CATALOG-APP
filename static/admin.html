@@ -667,5 +667,293 @@ loadPeople();
 loadRows();
 loadCatalog();
 </script>
+
+<style id="cat-users-css">
+#ial-users{padding:14px 0 18px}
+#ial-users table{width:100%;border-collapse:collapse;font-size:13px;min-width:620px}
+#ial-users th{text-align:left;padding:6px 8px;color:#5a6273;font-weight:700;font-size:12px}
+#ial-users td{padding:6px 8px;border-top:1px solid #e6e8ee;vertical-align:top}
+#ial-users select{max-width:170px;font-size:13px;padding:4px}
+#ial-users .ial-bar{display:flex;gap:14px;flex-wrap:wrap;align-items:end;margin-bottom:12px}
+#ial-users .ial-f{display:flex;flex-direction:column;gap:3px;font-size:12px;color:#5a6273}
+#ial-users button{padding:6px 12px;border:1px solid #d1d5db;border-radius:7px;background:#fff;cursor:pointer;font-size:13px}
+#ial-users .ial-add{background:#16294f;color:#fff;border-color:#16294f;font-weight:600}
+#ial-users .ial-wrap{overflow-x:auto}
+</style>
+<script id="cat-users-panel">
+(function(){
+  var D=null, VALS={};
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function human(s){return String(s||'').split('_').filter(Boolean)
+    .map(function(w){return w.toLowerCase()==='id'?'ID':w.charAt(0).toUpperCase()+w.slice(1);}).join(' ');}
+  function opts(list,cur,blank){
+    return '<option value="">'+esc(blank)+'</option>'+(list||[]).map(function(v){
+      return '<option value="'+esc(v)+'"'+(String(v)===String(cur||'')?' selected':'')+'>'+esc(v)+'</option>';
+    }).join('');
+  }
+  function vals(ds,col){
+    var k=ds+'|'+col;
+    if(VALS[k])return Promise.resolve(VALS[k]);
+    if(!ds||!col)return Promise.resolve([]);
+    return fetch('/api/admin/app-values?dataset='+encodeURIComponent(ds)+'&column='+encodeURIComponent(col),
+      {credentials:'same-origin'}).then(function(r){return r.ok?r.json():{values:[]};})
+      .then(function(j){VALS[k]=j.values||[];return VALS[k];}).catch(function(){return [];});
+  }
+  function save(){
+    return fetch('/api/admin/app-users',{method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({groups:D.groups,grants:D.grants,
+        extra_people:D.extra_people||[]})}).then(load);
+  }
+  function draw(){
+    var host=document.getElementById('ial-users'); if(!host||!D)return;
+    var ucols=(D.user_columns||[]).map(function(c){return {v:c,t:human(c)};});
+    function colSel(id,cur){
+      return '<select data-ial="'+id+'"><option value="">- choose -</option>'
+        +ucols.map(function(c){
+          return '<option value="'+esc(c.v)+'"'+(c.v===cur?' selected':'')+'>'+esc(c.t)+'</option>';
+        }).join('')+'</select>';
+    }
+    host.innerHTML='<h3 style="margin:0 0 10px;font-size:15px">Access grants <span style="font-size:10px;color:#9aa3b5;font-weight:600">v2</span></h3>'
+      +'<div class="ial-bar">'
+      +'<label class="ial-f">Group 1 column'+colSel('g1',D.groups.g1||'')+'</label>'
+      +'<label class="ial-f">Group 2 column'+colSel('g2',D.groups.g2||'')+'</label></div>'
+      +'<div class="ial-wrap"><table><thead><tr><th>Group 1</th><th>Group 2</th><th>User</th>'
+      +'<th>Column</th><th>Rows</th><th></th></tr></thead><tbody data-ial="rows">'
+      +'<tr><td colspan="6">Loading...</td></tr></tbody></table></div>'
+      +'<div style="margin-top:10px"><button class="ial-add" data-ial="add">+ New grant access</button> '
+      +'<span style="font-size:12px;color:#6b7280">Fill only as far as you need - naming a user '
+      +'overrules their group.</span></div>';
+    var rows=D.grants||[];
+    Promise.all(rows.map(function(g){return vals(D.catalog_dataset,g.column);})).then(function(rv){
+      var body=host.querySelector('[data-ial="rows"]'); if(!body)return;
+      if(!rows.length){
+        body.innerHTML='<tr><td colspan="6" style="color:#6b7280">Nobody has access yet.</td></tr>';
+        return;
+      }
+      body.innerHTML=rows.map(function(g,i){
+        var chosen=(g.values||[]).map(String);
+        var n=chosen.length;
+        var word=n?(g.exclude?('all except '+n):(n===1?'1 selected':n+' selected')):'— any —';
+        var pv=g.column
+          ? '<details class="ial-ms"><summary style="cursor:pointer;border:1px solid #d1d5db;'
+            +'border-radius:7px;padding:4px 9px;font-size:13px;background:#fff;max-width:180px;'
+            +'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(word)+' ▾</summary>'
+            +'<div style="position:absolute;z-index:60;background:#fff;border:1px solid #d1d5db;'
+            +'border-radius:9px;padding:9px;box-shadow:0 10px 26px rgba(0,0,0,.25);'
+            +'max-height:300px;overflow:auto;min-width:220px">'
+            +'<input placeholder="filter" data-ial="vfilter" style="width:100%;margin:0 0 7px;'
+            +'border:1px solid #d1d5db;border-radius:6px;padding:5px 7px;font-size:12.5px">'
+            +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 7px">'
+            +'<button data-ial="vall" data-i="'+i+'" style="padding:2px 8px;font-size:11.5px">All</button>'
+            +'<button data-ial="vnone" data-i="'+i+'" style="padding:2px 8px;font-size:11.5px">None</button>'
+            +'<label style="display:flex;gap:5px;align-items:center;font-size:11.5px;cursor:pointer">'
+            +'<input type="checkbox" data-ial="vexc" data-i="'+i+'"'+(g.exclude?' checked':'')+'>'
+            +'all <b>except</b> ticked</label></div>'
+            +(rv[i]||[]).map(function(v){
+              return '<label style="display:flex;gap:7px;align-items:center;padding:3px 2px;'
+                +'font-size:12.5px;cursor:pointer;white-space:nowrap">'
+                +'<input type="checkbox" data-ial="vtick" data-i="'+i+'" value="'+esc(v)+'"'
+                +(chosen.indexOf(String(v))>=0?' checked':'')+'>'+esc(v)+'</label>';
+            }).join('')
+            +'</div></details>'
+          : '<span style="color:#6b7280">every row</span>';
+        return '<tr>'
+          +'<td><select data-ial="group1" data-i="'+i+'">'+opts(D.group1_values,g.group1,'- any -')+'</select></td>'
+          +'<td><select data-ial="group2" data-i="'+i+'">'+opts(D.group2_values,g.group2,'- any -')+'</select></td>'
+          +'<td><select data-ial="user" data-i="'+i+'">'+opts(D.people,g.user,'- any -')+'</select></td>'
+          +'<td><select data-ial="column" data-i="'+i+'">'+opts(D.catalog_columns,g.column,'- any -')+'</select></td>'
+          +'<td>'+pv+'</td>'
+          +'<td><button data-ial="drop" data-i="'+i+'">X</button></td></tr>';
+      }).join('');
+    });
+    drawExtras(host);
+  }
+  // Typed-in people and stores. Same rows the ETL screen edits — one store,
+  // two doors — so whichever is open, the other shows it on its next load.
+  function dl(id,list){
+    return '<datalist id="'+id+'">'+(list||[]).map(function(v){
+      return '<option value="'+esc(v)+'"></option>';}).join('')+'</datalist>';
+  }
+  function txt(k,i,v,ph,list){
+    return '<input data-ial="'+k+'" data-i="'+i+'" value="'+esc(v||'')+'" placeholder="'+esc(ph||'')+'"'
+      +(list?(' list="'+list+'"'):'')+' style="width:100%;min-width:110px;padding:4px;'
+      +'border:1px solid #d1d5db;border-radius:6px;font-size:13px">';
+  }
+  function drawExtras(host){
+    var P=D.extra_people||[], L=D.extra_locations||[], FILE=D.locations||[];
+    var mine={}; L.forEach(function(l){mine[String(l.location||'').toLowerCase()]=1;});
+    var fileRows=FILE.filter(function(l){return !mine[String(l.location||'').toLowerCase()];});
+    var box=document.createElement('div');
+    box.innerHTML=
+      dl('ial-g1',D.group1_values)+dl('ial-g2',D.group2_values)
+      +'<h3 style="margin:22px 0 4px;font-size:15px">Users added by hand</h3>'
+      +'<p style="margin:0 0 8px;font-size:12px;color:#6b7280">People who are not in '
+      +esc(D.users_dataset||'the users dataset')+'. Give them a group and the grants above reach '
+      +'them like anybody else.</p>'
+      +'<div class="ial-wrap"><table><thead><tr><th>Email</th><th>User</th><th>Group 1</th>'
+      +'<th>Group 2</th><th>Access</th><th></th></tr></thead><tbody>'
+      +(P.length?P.map(function(p,i){
+        return '<tr>'
+          +'<td>'+txt('pe',i,p.email,'name@company.com')+'</td>'
+          +'<td>'+txt('pu',i,p.user,'81 - ALAMO')+'</td>'
+          +'<td>'+txt('p1',i,p.group_1,'',"ial-g1")+'</td>'
+          +'<td>'+txt('p2',i,p.group_2,'',"ial-g2")+'</td>'
+          +'<td><select data-ial="pa" data-i="'+i+'">'
+            +'<option value="member"'+(p.access!=='admin'?' selected':'')+'>Member</option>'
+            +'<option value="admin"'+(p.access==='admin'?' selected':'')+'>Admin</option></select></td>'
+          +'<td><button data-ial="pdrop" data-i="'+i+'">X</button></td></tr>';
+        }).join('')
+        :'<tr><td colspan="6" style="color:#6b7280">Nobody added by hand.</td></tr>')
+      +'</tbody></table></div>'
+      +'<div style="margin-top:8px"><button class="ial-add" data-ial="padd">+ Add a user</button></div>'
+      ;
+    host.appendChild(box);
+  }
+  function onChange(e){
+    var el=e.target, k=el.getAttribute&&el.getAttribute('data-ial');
+    if(!k||!D)return;
+    if(k==='g1'||k==='g2'){ D.groups[k]=el.value; VALS={}; save(); return; }
+    var PMAP={pe:'email',pu:'user',p1:'group_1',p2:'group_2',pa:'access'};
+    var LMAP={};
+    var j=parseInt(el.getAttribute('data-i'),10);
+    if(PMAP[k]){ if(!isNaN(j)&&(D.extra_people||[])[j]){
+      D.extra_people[j][PMAP[k]]=el.value; save(); } return; }
+    if(LMAP[k]){ if(!isNaN(j)&&(D.extra_locations||[])[j]){
+      D.extra_locations[j][LMAP[k]]=el.value; save(); } return; }
+    var i=parseInt(el.getAttribute('data-i'),10);
+    if(isNaN(i)||!D.grants[i])return;
+    if(k==='vtick'){
+      var cur=(D.grants[i].values||[]).map(String);
+      if(el.checked){ if(cur.indexOf(el.value)<0)cur.push(el.value); }
+      else cur=cur.filter(function(v){return v!==el.value;});
+      D.grants[i].values=cur;
+    } else if(k==='vexc'){
+      D.grants[i].exclude=el.checked;
+    } else if(k==='vfilter'){
+      var q=(el.value||'').toLowerCase();
+      el.parentElement.querySelectorAll('label').forEach(function(l){
+        if(l.querySelector('[data-ial="vexc"]'))return;
+        l.style.display=(!q||l.textContent.toLowerCase().indexOf(q)>=0)?'flex':'none';
+      });
+      return;
+    } else if(k==='group1'||k==='group2'||k==='user'||k==='column'){
+      D.grants[i][k]=el.value;
+      if(k==='column')D.grants[i].values=[];
+    } else return;
+    save();
+  }
+  function onClick(e){
+    var el=e.target, k=el.getAttribute&&el.getAttribute('data-ial');
+    if(!k||!D)return;
+    var di=parseInt(el.getAttribute('data-i'),10);
+    if(k==='add'){ D.grants.push({group1:'',group2:'',user:'',column:'',values:[],exclude:false}); draw(); }
+    else if(k==='drop'){
+      var g=D.grants[di]||{};
+      var who=[].concat(g.user||[],g.group2||[],g.group1||[]).filter(Boolean).join(', ')||'everyone in this app';
+      if(!confirm('Delete this grant?\n\n'+who+'\n\nThey lose this access the moment it is gone.'))return;
+      D.grants.splice(di,1); save();
+    }
+    else if(k==='vall'){ var g2=D.grants[di];
+      if(g2&&g2.column){ vals(D.catalog_dataset,g2.column).then(function(v){
+        g2.values=(v||[]).map(String); save(); }); } }
+    else if(k==='vnone'){ if(D.grants[di]){ D.grants[di].values=[]; save(); } }
+    else if(k==='padd'){ D.extra_people=(D.extra_people||[]).concat(
+        [{email:'',user:'',group_1:'',group_2:'',access:'member'}]); draw(); }
+    else if(k==='pdrop'){
+      var pe=(D.extra_people[di]||{}).email||'this person';
+      if(!confirm('Remove '+pe+' from the hand-added users?'))return;
+      D.extra_people.splice(di,1); save();
+    }
+
+  }
+  function load(){
+    return fetch('/api/admin/app-users',{credentials:'same-origin'})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(j){ if(!j)return; D=j; D.groups=D.groups||{g1:'',g2:''}; D.grants=D.grants||[];
+        D.extra_people=D.extra_people||[]; D.extra_locations=D.extra_locations||[]; draw(); })
+      .catch(function(){});
+  }
+  function leaves(re){
+    var out=[], all=document.querySelectorAll('body *');
+    for(var i=0;i<all.length;i++){
+      var el=all[i];
+      if(el.children.length)continue;
+      var t=(el.textContent||'').replace(/\s+/g,' ').trim();
+      if(re.test(t))out.push(el);
+    }
+    return out;
+  }
+  function relabel(){
+    leaves(/^people\s*&\s*passwords$/i).forEach(function(el){ el.textContent='Passwords'; });
+    var ps=document.querySelectorAll('p');
+    for(var j=0;j<ps.length;j++){
+      if(ps[j].children.length)continue;
+      var s=ps[j].textContent||'';
+      if(/rows of the location dataset/i.test(s)){
+        ps[j].textContent=s.replace(/rows of the location dataset your catalog covers/i,
+          'people in the users dataset this catalog serves');
+      }
+    }
+  }
+  // The Role column used to be decided by WHICH email column named you. In
+  // the shape everyone is built to now there is one address column, so that
+  // question has one answer for everybody and the whole list read "Purchasing
+  // Director". Group 1 is what actually says what someone is, so it is what
+  // the column shows — sourced from the same list the table is drawn from.
+  var GROUPS=null;
+  function humanGroup(s){
+    return String(s||'').split('_').filter(Boolean)
+      .map(function(w){return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase();}).join(' ');
+  }
+  function paintRoles(){
+    if(!GROUPS)return;
+    var rows=document.querySelectorAll('tr');
+    for(var i=0;i<rows.length;i++){
+      var cells=rows[i].cells; if(!cells||cells.length<2)continue;
+      var em=(cells[0].textContent||'').trim().toLowerCase();
+      if(em.indexOf('@')<1)continue;
+      var g=GROUPS[em];
+      if(g&&(cells[1].textContent||'').trim()!==humanGroup(g))cells[1].textContent=humanGroup(g);
+    }
+  }
+  function loadRoles(){
+    return fetch('/api/admin/my-people',{credentials:'same-origin'})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(j){
+        if(!j||!j.people)return;
+        GROUPS={};
+        j.people.forEach(function(p){ if(p.group)GROUPS[String(p.email).toLowerCase()]=p.group; });
+        paintRoles();
+      }).catch(function(){});
+  }
+  function mount(){
+    relabel();
+    loadRoles();
+    if(document.getElementById('ial-users'))return;
+    var anchor=null, hs=document.querySelectorAll('h1,h2,h3,h4');
+    for(var i=0;i<hs.length;i++){
+      var t=(hs[i].textContent||'').trim();
+      if(/^users$/i.test(t)){anchor=hs[i];break;}
+    }
+    if(!anchor)for(var j=0;j<hs.length;j++){
+      var t2=(hs[j].textContent||'').trim();
+      if(/^locations$/i.test(t2)){anchor=hs[j];break;}
+    }
+    var box=document.createElement('div');
+    box.id='ial-users';
+    box.innerHTML='<div style="color:#6b7280">Loading...</div>';
+    if(anchor&&anchor.parentNode)anchor.parentNode.insertBefore(box,anchor.nextSibling);
+    else document.body.appendChild(box);
+    document.addEventListener('change',onChange,true);
+    document.addEventListener('click',onClick,true);
+    load();
+  }
+  if(document.readyState!=='loading')mount(); else document.addEventListener('DOMContentLoaded',mount);
+  if(window.MutationObserver)new MutationObserver(function(){relabel();paintRoles();})
+    .observe(document.documentElement,{childList:true,subtree:true});
+})();
+</script>
 </body>
 </html>

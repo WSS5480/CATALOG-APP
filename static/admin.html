@@ -118,7 +118,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v16</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v17</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1097,13 +1097,29 @@ async function bldFeedSave(id){
   }catch(e){ say(e.message, 'bad'); }
 }
 
+let _bldPoll = null;
 async function bldFeedRun(btn, id){
   btn.disabled = true; btn.textContent = 'Checking…';
   try{
     const out = await api('/api/admin/builder/feed/run', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id})});
-    say((out.ok ? '✓ ' : '') + out.message, out.ok ? (out.changed ? 'ok' : 'info') : 'bad');
-    await loadBuilder();
+    say('⏳ ' + (out.message || 'Checking in the background…'), 'info');
+    // the pull runs server-side — refresh the card every 10s until it lands
+    clearInterval(_bldPoll);
+    let n = 0;
+    const before = JSON.stringify(((BLD.sources||[]).find(s=>s.id===id)||{}).feed_status||{});
+    _bldPoll = setInterval(async () => {
+      n++;
+      await loadBuilder();
+      const now = JSON.stringify(((BLD.sources||[]).find(s=>s.id===id)||{}).feed_status||{});
+      if(now !== before || n > 36){
+        clearInterval(_bldPoll);
+        if(now !== before){
+          const st = ((BLD.sources||[]).find(s=>s.id===id)||{}).feed_status||{};
+          say((st.ok ? '✓ ' : '') + (st.note || 'Finished.'), st.ok ? 'ok' : 'bad');
+        }
+      }
+    }, 10000);
   }catch(e){
     say(e.message, 'bad');
     btn.disabled = false; btn.textContent = 'Check now';

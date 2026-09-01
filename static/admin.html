@@ -123,7 +123,8 @@
 <div class="scopebar" id="scopebar">Loading…</div>
 
 <div class="tabs">
-  <button id="t-people"    class="on" onclick="showTab('people')">People &amp; passwords</button>
+  <button id="t-people"    class="on" onclick="showTab('people')">Passwords</button>
+  <button id="t-users"              onclick="showTab('users')">Users</button>
   <button id="t-locations"          onclick="showTab('locations')">Locations</button>
   <button id="t-catalog"            onclick="showTab('catalog')">Catalog</button>
 </div>
@@ -165,6 +166,16 @@
         The server can check a password but cannot read one back. A forgotten password is replaced,
         never looked up — set a new one and tell them, or force a reset so they choose their own
         at the next sign-in.</div>
+    </div>
+  </section>
+
+  <!-- ═══════════ USERS (access) ═══════════ -->
+  <section id="s-users" class="screen">
+    <div class="card">
+      <h3>Users</h3>
+      <p class="cs">Group columns, access grants, and the users and locations added by hand.
+        Grants are saved as you change them.</p>
+      <!-- the access panel mounts itself under this heading -->
     </div>
   </section>
 
@@ -244,7 +255,7 @@ async function api(path, opts){
 }
 
 function showTab(name){
-  ['people','locations','catalog'].forEach(n => {
+  ['people','users','locations','catalog'].forEach(n => {
     $('s-' + n).classList.toggle('on', n === name);
     $('t-' + n).classList.toggle('on', n === name);
   });

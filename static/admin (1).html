@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin — Product Catalog</title>
+<style>
+  :root{--navy:#0C447C;--navy2:#08294c;--ink:#1b2130;--muted:#6b7690;--line:#e3e7f0;
+        --bg:#eef1f7;--good:#12925f;--warn:#e0592a;--paper:#fff;--panel:#fbfcfe}
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;color:var(--ink);
+       background:var(--bg);line-height:1.55}
+
+  .top{background:var(--navy);color:#fff;padding:11px 16px;display:flex;align-items:center;
+       gap:12px;flex-wrap:wrap}
+  .top .brand{font-weight:800;font-size:16px}
+  .top .who{margin-left:auto;display:flex;align-items:center;gap:9px;font-size:13px;flex-wrap:wrap}
+  .pill{background:rgba(255,255,255,.16);border-radius:999px;padding:4px 11px;font-size:12px;
+        font-weight:700;color:#fff;text-decoration:none;border:0;font-family:inherit;cursor:pointer}
+  .pill:hover{background:rgba(255,255,255,.26)}
+
+  .scopebar{background:#dcefe4;border-left:4px solid var(--good);color:#0d5b3c;padding:9px 16px;
+            font-size:13px}
+  .scopebar.wide{background:#fff4e5;border-left-color:var(--warn);color:#7a4b00}
+
+  .tabs{background:#fff;border-bottom:1px solid var(--line);display:flex;gap:2px;padding:0 8px;
+        overflow:auto;position:sticky;top:0;z-index:5}
+  .tabs button{border:0;background:transparent;font:inherit;font-size:14px;font-weight:600;
+               color:var(--muted);padding:13px 14px;cursor:pointer;border-bottom:3px solid transparent;
+               white-space:nowrap}
+  .tabs button.on{color:var(--navy);border-bottom-color:var(--navy)}
+
+  .wrap{max-width:none;margin:0 auto;padding:16px 28px}
+  @media(max-width:900px){.wrap{padding:16px}}
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:16px;
+        margin-bottom:16px}
+  .card h3{margin:0 0 4px;font-size:16px}
+  .card .cs{color:var(--muted);font-size:13px;margin:0 0 14px}
+  .screen{display:none}
+  .screen.on{display:block}
+
+  label.f{display:block;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+          color:var(--muted);margin:0 0 6px}
+  input.f,select.f,textarea.f{width:100%;padding:11px 12px;border:1px solid var(--line);
+          border-radius:10px;font:inherit;font-size:15px;background:var(--panel)}
+  input.f:focus,select.f:focus,textarea.f:focus{outline:2px solid #b9d2f2;border-color:var(--navy)}
+  .fg{margin-bottom:14px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:760px){.two{grid-template-columns:1fr}}
+
+  .btn{border:0;border-radius:10px;padding:11px 16px;font:inherit;font-weight:800;font-size:14px;
+       cursor:pointer;background:var(--navy);color:#fff}
+  .btn:hover{background:#0a3560}
+  .btn:disabled{opacity:.55;cursor:default}
+  .btn.ghost{background:#fff;border:1px solid var(--line);color:var(--navy)}
+  .btn.ghost:hover{background:#f4f7fc}
+  .btn.warn{background:var(--warn);color:#fff}
+  .btn.green{background:var(--good)}
+  .btn.sm{padding:6px 11px;font-size:12.5px;font-weight:700}
+  .row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+
+  table.t{width:100%;border-collapse:collapse;font-size:13px}
+  table.t th{background:#16213f;color:#fff;text-align:left;padding:8px 10px;font-size:12px;
+             font-weight:700;white-space:nowrap;position:sticky;top:0}
+  table.t td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+  table.t tr:nth-child(even) td{background:#f8f9fc}
+  .scroll{overflow:auto;max-width:100%;border:1px solid var(--line);border-radius:11px;
+          max-height:66vh}
+  table.t td input{width:100%;min-width:150px;padding:6px 8px;border:1px solid var(--line);
+                   border-radius:7px;font:inherit;font-size:13px;background:#fff}
+  table.t td input:focus{outline:2px solid #b9d2f2;border-color:var(--navy)}
+  td.ro{color:var(--muted)}
+
+  .tag{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:800;
+       white-space:nowrap}
+  .tag.ok{background:#dcefe4;color:#0d5b3c}
+  .tag.no{background:#fde5e5;color:#8f1d1d}
+  .tag.part{background:#fff0d6;color:#7a4b00}
+
+  .lock{color:var(--muted);font-size:12.5px;background:#f5f7fb;border:1px dashed var(--line);
+        border-radius:10px;padding:11px 13px;margin-top:12px;line-height:1.6}
+
+  .msg{display:none;border-radius:10px;padding:11px 13px;font-size:13.5px;font-weight:600;
+       margin-bottom:14px}
+  .msg.on{display:block}
+  .msg.bad{background:#fde5e5;color:#8f1d1d;border-left:4px solid #c0392b}
+  .msg.ok{background:#dcefe4;color:#0d5b3c;border-left:4px solid var(--good)}
+  .msg.info{background:#e9f0fa;color:#123a6b;border-left:4px solid var(--navy)}
+
+  .ticks{border:1px solid var(--line);border-radius:11px;max-height:340px;overflow:auto;
+         background:#fff}
+  .ticks label{display:flex;gap:10px;align-items:center;padding:9px 12px;font-size:13.5px;
+               border-bottom:1px solid #f0f3f8;cursor:pointer}
+  .ticks label:last-child{border-bottom:0}
+  .ticks label.off{opacity:.5;cursor:not-allowed}
+  .ticks input{width:17px;height:17px;flex:none}
+  .ticks.compact label{padding:4px 9px;font-size:12.5px;gap:7px;border-bottom:1px solid #f0f2f7}
+  .ticks.compact input{width:14px;height:14px}
+  #s-users .t td{vertical-align:top;text-align:left}
+  .btn.danger{background:#b3261e;color:#fff}
+  /* tick lists can live inside tables — the grid's wide-input styling must
+     never reach their checkboxes */
+  table.t td .ticks input{width:17px;min-width:17px;height:17px}
+  /* the People table is wide — keep the Save/✕ column pinned like Domo did */
+  #u-body table.t th:last-child, #u-body table.t td:last-child{
+    position:sticky;right:0;background:#fff;z-index:2;
+    box-shadow:-7px 0 7px -5px rgba(0,0,0,.14)}
+  #u-body table.t thead th:last-child{background:#f3f5f9}
+  table.t td .ticks label{white-space:nowrap}
+  table.t td input[id^="gp-bud-"]{width:auto}
+  .ticks .nm{font-weight:600}
+  .ticks .sub{color:var(--muted);font-size:12px}
+
+  .pwpanel{display:none;margin-top:14px;border:1px solid var(--line);border-radius:12px;
+           padding:15px;background:var(--panel);max-width:430px}
+  .pwpanel.on{display:block}
+  .pwpanel h4{margin:0 0 12px;font-size:15px}
+  .chk{display:flex;gap:9px;align-items:center;font-size:13.5px}
+  .chk input{width:17px;height:17px}
+  .muted{color:var(--muted)}
+  .small{font-size:12.5px}
+  .center{text-align:center;padding:44px 16px;color:var(--muted)}
+  #bld-progressbar{position:relative;height:16px;border-radius:999px;background:#e3e7f0;
+    overflow:hidden;margin:0 0 8px}
+  #bld-progressbar>div{position:absolute;inset:0;width:100%;
+    background:repeating-linear-gradient(45deg,#12925f 0 14px,#0e7a4f 14px 28px);
+    animation:bldmove 1.1s linear infinite}
+  @keyframes bldmove{from{background-position:0 0}to{background-position:56px 0}}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <span class="brand" id="brand">Admin</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v34</span>
+  <span class="pill" id="catpill" style="display:none"></span>
+  <div class="who">
+    <span id="whoami" class="small"></span>
+    <a class="pill" href="/">&#8592; Back to catalog</a>
+    <button class="pill" onclick="signOut()">Sign out</button>
+  </div>
+</div>
+
+<div class="scopebar" id="scopebar">Loading…</div>
+
+<div class="tabs">
+  <button id="t-people"    class="on" onclick="showTab('people')">Passwords</button>
+  <button id="t-users"              onclick="showTab('users')">Users</button>
+  <button id="t-builder"            onclick="showTab('builder')">Builder</button>
+</div>
+
+<div class="wrap">
+  <div class="msg" id="msg"></div>
+
+  <!-- ═══════════ PEOPLE ═══════════ -->
+  <section id="s-people" class="screen on">
+    <div class="card">
+      <h3>People &amp; passwords</h3>
+      <p class="cs">Everyone in a catalog you run. A person appears here the moment they land in
+        the users dataset — or is added by hand on the Users tab — and cannot sign in until they
+        have a password.</p>
+      <div id="people-body" class="center">Loading…</div>
+
+      <div id="pwPanel" class="pwpanel">
+        <h4 id="pwWho">Set password</h4>
+        <div class="fg">
+          <label class="f" for="pw1">New password (8 characters or more)</label>
+          <input class="f" id="pw1" type="password" autocomplete="new-password">
+        </div>
+        <div class="fg">
+          <label class="f" for="pw2">Confirm</label>
+          <input class="f" id="pw2" type="password" autocomplete="new-password">
+        </div>
+        <label class="chk"><input type="checkbox" id="pwForceNew" checked>
+          Make them choose their own the first time they sign in</label>
+        <div class="row" style="margin-top:14px">
+          <button class="btn green" id="pwSave" onclick="savePassword()">Save password</button>
+          <button class="btn ghost" onclick="closePw()">Cancel</button>
+        </div>
+        <p class="muted small" style="margin:12px 0 0">Stored as a one-way hash. It cannot be read
+          back anywhere in this app, by anyone — tell them what it is, or tick the box above and
+          let them choose their own.</p>
+      </div>
+
+      <div class="lock">🔒 <b>There is no "view password" button, and there never will be.</b>
+        The server can check a password but cannot read one back. A forgotten password is replaced,
+        never looked up — set a new one and tell them, or force a reset so they choose their own
+        at the next sign-in.</div>
+    </div>
+  </section>
+
+  <!-- ═══════════ USERS (access) ═══════════ -->
+  <section id="s-users" class="screen">
+    <div class="card">
+      <h3>Users</h3>
+      <p class="cs">The people of this catalog, added one at a time. The same row feeds
+        everything: sign-in, the groups used for access, and the Passwords tab. Stored in this
+        app's own database — no ETL involved.</p>
+      <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;background:var(--panel)">
+        <h4 style="margin:0 0 6px;font-size:14.5px">Groups</h4>
+        <p class="cs" style="margin-bottom:10px">Create groups first, then add people to them.
+          Each group carries its own vendor access; everyone in it inherits, and a group inside
+          another group inherits from its parent. A person's own setting overrides their groups.</p>
+        <div class="row" style="margin-bottom:10px">
+          <input class="f" id="g-new" placeholder="New group name — STORE, 9206, DISTRICT…" style="max-width:280px">
+          <button class="btn sm" onclick="addGroup()">＋ Add group</button>
+        </div>
+        <div id="g-body"></div>
+      </div>
+
+      <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;background:var(--panel)">
+        <h4 style="margin:0 0 6px;font-size:14.5px">People</h4>
+        <p class="cs" style="margin-bottom:10px">One row per person, edited in place — groups,
+          vendor access, tabs and budget, exactly like the group rows above. New people start
+          with no groups and no password: tick them into groups here or above, and set the
+          password on the Passwords tab.</p>
+        <div class="row" style="margin-bottom:10px">
+          <input class="f" id="u-new-email" placeholder="person@company.com" style="max-width:250px">
+          <input class="f" id="u-new-label" placeholder="User label — 104 - MCALLEN" style="max-width:230px">
+          <button class="btn sm" onclick="addPersonQuick()">＋ Add person</button>
+        </div>
+      <div id="u-body" class="center">Loading…</div>
+    </div>
+  </section>
+
+  <!-- ═══════════ BUILDER ═══════════ -->
+  <section id="s-builder" class="screen">
+    <div class="card">
+      <h3>Catalog Builder</h3>
+      <p class="cs">Your whole catalog, built here. Drop each vendor's file in — or give a source
+        a feed (API, SFTP or email) and it fetches its own updates on a schedule, rebuilds the
+        catalog, and emails you if a file arrives with schema trouble. The storefront serves the
+        result from this app's own database.</p>
+      <div id="bld-body" class="center">Loading…</div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+/* Everything this page knows, kept in one place so a failed save can simply
+   reload rather than trying to unpick a half-applied change. */
+let PEOPLE = null;     // /api/admin/people
+let PW_FOR = '';       // whose password the panel is open for
+
+const esc = s => String(s === null || s === undefined ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
+function say(text, kind){
+  const m = $('msg');
+  m.textContent = text;
+  m.className = 'msg on ' + (kind || 'info');
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+function clearSay(){ $('msg').className = 'msg'; }
+
+/* One place that talks to the server. A 401 means the session went stale while
+   the page was open — send them back to sign in rather than showing a wall of
+   errors they can do nothing about. */
+async function api(path, opts){
+  const r = await fetch(path, Object.assign({credentials:'same-origin'}, opts || {}));
+  if(r.status === 401){
+    location.href = '/login?next=' + encodeURIComponent('/admin');
+    throw new Error('Please sign in.');
+  }
+  let body = null;
+  try{ body = await r.json(); }catch(e){ body = null; }
+  if(!r.ok) throw new Error((body && body.detail) || ('That did not work (' + r.status + ').'));
+  return body;
+}
+
+function showTab(name){
+  ['people','users','builder'].forEach(n => {
+    $('s-' + n).classList.toggle('on', n === name);
+    $('t-' + n).classList.toggle('on', n === name);
+  });
+  clearSay();
+}
+
+async function signOut(){
+  try{ await fetch('/api/auth/signout', {method:'POST', credentials:'same-origin'}); }catch(e){}
+  location.href = '/login';
+}
+
+/* ───────────────────────── who am I ───────────────────────── */
+
+async function loadMe(){
+  try{
+    const me = await api('/api/auth/me');
+    const s = me.scope || {};
+    $('whoami').textContent = s.email || me.email || '';
+    const owned = (me.catalogs || []).filter(c => c.owner).map(c => c.name);
+    if(s.all){
+      $('scopebar').className = 'scopebar wide';
+      $('scopebar').innerHTML = '⚙ <b>You are an administrator.</b> ' +
+        'You are seeing every catalog and every person, not just one customer’s.';
+    }else{
+      $('scopebar').className = 'scopebar';
+      $('scopebar').innerHTML = '🔒 <b>You run ' +
+        (owned.length ? esc(owned.join(', ')) : 'your catalog') + '.</b> ' +
+        'Everything on this page is limited to the locations it covers — ' +
+        'other customers’ people are not listed here and cannot be reached from here.';
+    }
+  }catch(e){
+    $('scopebar').className = 'scopebar wide';
+    $('scopebar').textContent = e.message;
+  }
+  try{
+    const cfg = await (await fetch('/api/app/config', {credentials:'same-origin'})).json();
+    const n = (cfg && (cfg.catalogLabel || cfg.catalog)) || '';
+    if(n){ $('catpill').textContent = n; $('catpill').style.display = 'inline-block'; }
+    $('brand').textContent = 'Admin';
+  }catch(e){}
+}
+
+/* ───────────────────────── people (passwords) ───────────────────────── */
+
+function pwTag(p){
+  if(p.pw === 'never')       return '<span class="tag part">Never set</span>';
+  if(p.pw === 'must_change') return '<span class="tag part">Must change</span>';
+  return '<span class="tag ok">Set</span>';
+}
+
+async function loadPeople(){
+  try{
+    PEOPLE = await api('/api/admin/people');
+  }catch(e){
+    $('people-body').innerHTML = '<div class="center">' + esc(e.message) + '</div>';
+    return;
+  }
+  const list = PEOPLE.people || [];
+  if(!list.length){
+    $('people-body').innerHTML = '<div class="center">Nobody yet — add your people one at a ' +
+      'time on the Users tab, then set each password here.</div>';
+    return;
+  }
+  $('people-body').innerHTML =
+    '<div class="scroll"><table class="t"><thead><tr>' +
+      '<th>Email</th><th>User</th><th>Group 1</th><th>Password</th><th>Last sign-in</th>' +
+      '<th style="width:230px">Actions</th></tr></thead><tbody>' +
+    list.map(p => {
+      const first = p.pw === 'never';
+      return '<tr>' +
+        '<td>' + esc(p.email) + (p.admin ? ' <span class="tag ok">admin</span>' : '') + '</td>' +
+        '<td class="ro">' + esc(p.user || '—') + '</td>' +
+        '<td class="ro">' + esc(p.group1 || '—') + '</td>' +
+        '<td>' + pwTag(p) + '</td>' +
+        '<td class="ro small">' + esc(p.last_signin || 'never') + '</td>' +
+        '<td class="row">' +
+          '<button class="btn ' + (first ? 'warn' : 'ghost') + ' sm" data-pw="' + esc(p.email) + '">' +
+            (first ? 'Set first password' : 'Set password') + '</button>' +
+          (first ? '' :
+            '<button class="btn ghost sm" data-force="' + esc(p.email) + '">Force reset</button>') +
+        '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+
+  $('people-body').querySelectorAll('[data-pw]').forEach(b =>
+    b.onclick = () => openPw(b.getAttribute('data-pw')));
+  $('people-body').querySelectorAll('[data-force]').forEach(b =>
+    b.onclick = () => forceReset(b.getAttribute('data-force')));
+}
+
+function openPw(email){
+  PW_FOR = email;
+  $('pwWho').textContent = 'Set password — ' + email;
+  $('pw1').value = ''; $('pw2').value = ''; $('pwForceNew').checked = true;
+  $('pwPanel').classList.add('on');
+  $('pwPanel').scrollIntoView({behavior:'smooth', block:'center'});
+  $('pw1').focus();
+}
+function closePw(){ $('pwPanel').classList.remove('on'); PW_FOR = ''; }
+
+async function savePassword(){
+  const a = $('pw1').value, b = $('pw2').value;
+  if(a.length < 8)  return say('That password is too short — 8 characters or more.', 'bad');
+  if(a !== b)       return say('Those two passwords do not match.', 'bad');
+  const btn = $('pwSave');
+  btn.disabled = true;
+  try{
+    const out = await api('/api/admin/people/password', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({email: PW_FOR, password: a, must_change: $('pwForceNew').checked})
+    });
+    say('✓ ' + (out.message || (PW_FOR + ' — password saved.')), 'ok');
+    closePw();
+    await loadPeople();
+  }catch(e){
+    say(e.message, 'bad');
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+async function forceReset(email){
+  if(!confirm('Force a reset for ' + email + '?\n\nTheir current password stops working ' +
+              'immediately, and they cannot sign in until you give them a new one.')) return;
+  try{
+    const out = await api('/api/admin/people/force-reset', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: email})});
+    say('✓ ' + (out.message || (email + ' can no longer sign in until given a new password.')), 'ok');
+    await loadPeople();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+/* ───────────────────────── users (add one at a time) ───────────────────────── */
+
+function closeRows(prefixes, keepId){
+  prefixes.forEach(pfx => document.querySelectorAll('tr[id^="' + pfx + '"]').forEach(r => {
+    if(r.id !== keepId) r.style.display = 'none';
+  }));
+}
+
+let GROUPS = [];
+
+async function loadGroups(){
+  try{ GROUPS = (await api('/api/admin/groups')).groups || []; }
+  catch(e){ GROUPS = []; }
+  drawGroups();
+  if(typeof drawUsers === 'function' && USERS.length) drawUsers();
+}
+
+function groupOpts(sel, current){
+  const names = GROUPS.map(g => g.name);
+  if(current && names.indexOf(current) < 0) names.push(current);
+  sel.innerHTML = '<option value="">—</option>' +
+    names.map(n => '<option' + (n === current ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
+}
+function fillGroupSelects(){
+  const g1 = $('u-g1'), g2 = $('u-g2');
+  if(g1) groupOpts(g1, g1.value);
+  if(g2) groupOpts(g2, g2.value);
+}
+
+function gAccessWord(g){
+  if(g.vendors_mode === 'only')   return g.vendors.length ? 'only: ' + g.vendors.join(', ') : 'NOTHING ticked yet';
+  if(g.vendors_mode === 'except') return g.vendors.length ? 'all except: ' + g.vendors.join(', ') : 'all vendors';
+  return g.parent ? 'from ' + g.parent : 'all vendors';
+}
+
+function drawGroups(){
+  const box = $('g-body'); if(!box) return;
+  if(!GROUPS.length){
+    box.innerHTML = '<div class="muted small">No groups yet — name one above (STORE is a fine first one).</div>';
+    return;
+  }
+  box.innerHTML =
+    '<div class="scroll" style="max-height:280px"><table class="t"><thead><tr>' +
+    '<th>Group</th><th>Kind</th><th>Inside</th><th>Vendor access</th><th></th><th>People</th><th></th>' +
+    '</tr></thead><tbody>' +
+    GROUPS.map((g, i) =>
+      '<tr><td><b>' + esc(g.name) + '</b></td>' +
+      '<td><select data-gk="' + i + '" style="padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">' +
+        '<option value="store"' + (g.kind !== 'district' ? ' selected' : '') + '>Store</option>' +
+        '<option value="district"' + (g.kind === 'district' ? ' selected' : '') + '>District</option>' +
+      '</select></td>' +
+      '<td><select data-gp="' + i + '" style="padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">' +
+        '<option value="">—</option>' +
+        GROUPS.filter(x => x.name !== g.name).map(x =>
+          '<option' + (x.name === g.parent ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('') +
+      '</select></td>' +
+      '<td><select data-gm="' + i + '" style="padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">' +
+        '<option value="all"' + (g.vendors_mode === 'all' ? ' selected' : '') + '>Inherit / all</option>' +
+        '<option value="only"' + (g.vendors_mode === 'only' ? ' selected' : '') + '>Only ticked</option>' +
+        '<option value="except"' + (g.vendors_mode === 'except' ? ' selected' : '') + '>All except ticked</option>' +
+      '</select> <span class="muted small">' + esc(gAccessWord(g)) + '</span></td>' +
+      '<td class="row">' + (g.vendors_mode === 'all' ? '' :
+        '<button class="btn ghost sm" data-gt="' + i + '">vendors…</button>') +
+        '<button class="btn ghost sm" data-gtb="' + i + '">tabs…</button>' +
+        '<button class="btn ghost sm" data-gpp="' + i + '">people…</button></td>' +
+      '<td class="ro small">' + g.members + '</td>' +
+      '<td><button class="btn ghost sm" data-gx="' + esc(g.name) + '">✕</button></td></tr>' +
+      '<tr id="g-ticks-' + i + '" style="display:none"><td colspan="6"><div class="ticks" ' +
+        'style="max-height:190px" id="g-ticklist-' + i + '"></div></td></tr>' +
+      '<tr id="g-tabs-' + i + '" style="display:none"><td colspan="6"><div class="row" ' +
+        'style="padding:6px 2px" id="g-tabbox-' + i + '"></div></td></tr>' +
+      '<tr id="g-ppl-' + i + '" style="display:none"><td colspan="6"><div class="ticks" ' +
+        'style="max-height:230px" id="g-pplist-' + i + '"></div></td></tr>'
+    ).join('') + '</tbody></table></div>';
+
+  box.querySelectorAll('select[data-gp]').forEach(s => s.addEventListener('change', () => {
+    const g = GROUPS[+s.getAttribute('data-gp')]; g.parent = s.value; saveGroup(g);
+  }));
+  box.querySelectorAll('select[data-gm]').forEach(s => s.addEventListener('change', () => {
+    const g = GROUPS[+s.getAttribute('data-gm')]; g.vendors_mode = s.value; saveGroup(g, true);
+  }));
+  box.querySelectorAll('button[data-gt]').forEach(b => b.onclick = () => {
+    const i = +b.getAttribute('data-gt'), row = $('g-ticks-' + i);
+    if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
+    closeRows(['g-ticks-','g-tabs-','g-ppl-'], row.id);
+    row.style.display = '';
+    const g = GROUPS[i], have = new Set(g.vendors || []);
+    $('g-ticklist-' + i).innerHTML = (VENDORS.length ? VENDORS : [...have]).map(v =>
+      '<label><input type="checkbox" data-gv="' + i + '" value="' + esc(v) + '"' +
+      (have.has(v) ? ' checked' : '') + '><span><span class="nm">' + esc(v) + '</span></span></label>').join('') ||
+      '<div style="padding:10px" class="muted small">No vendors yet — build the catalog first.</div>';
+    $('g-ticklist-' + i).querySelectorAll('input[data-gv]').forEach(t =>
+      t.addEventListener('change', () => {
+        g.vendors = [...$('g-ticklist-' + i).querySelectorAll('input[data-gv]')]
+          .filter(x => x.checked).map(x => x.value);
+        saveGroup(g);
+      }));
+  });
+  box.querySelectorAll('button[data-gtb]').forEach(b => b.onclick = () => {
+    const i = +b.getAttribute('data-gtb'), row = $('g-tabs-' + i);
+    if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
+    closeRows(['g-ticks-','g-tabs-','g-ppl-'], row.id);
+    row.style.display = '';
+    const g = GROUPS[i], pp = g.perms || {};
+    const sel = (id2, opts, cur) => '<select id="' + id2 + '" style="padding:5px 7px;font-size:13px;' +
+      'border:1px solid var(--line);border-radius:7px">' + opts.map(o =>
+      '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' + o[1] + '</option>')
+      .join('') + '</select>';
+    const yn = [['','Inherit'],['yes','Yes'],['no','No']];
+    $('g-tabbox-' + i).innerHTML =
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Catalog</label>' +
+      sel('gp-cat-' + i, yn, 'catalog' in pp ? (pp.catalog ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Order form</label>' +
+      sel('gp-ord-' + i, yn, 'order' in pp ? (pp.order ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Pending orders</label>' +
+      sel('gp-pen-' + i, [['','Inherit'],['none','None'],['read','Read only'],
+        ['write','Read + write'],['delete','Full (delete too)']], pp.pending || '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Approver</label>' +
+      sel('gp-apr-' + i, yn, 'approver' in pp ? (pp.approver ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Purchasing Admin</label>' +
+      sel('gp-pur-' + i, yn, 'purchasing' in pp ? (pp.purchasing ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Vendor page</label>' +
+      sel('gp-vnd-' + i, yn, 'vendorpage' in pp ? (pp.vendorpage ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0 0 0 12px;text-transform:none;font-weight:600">Monthly budget $</label>' +
+      '<input id="gp-bud-' + i + '" placeholder="50000 (blank = none)" value="' + esc(g.budget || '') + '"' +
+      ' style="max-width:140px;padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">';
+    ['gp-cat-','gp-ord-','gp-pen-','gp-apr-','gp-pur-','gp-vnd-','gp-bud-'].forEach(pfx => $(pfx + i).addEventListener('change', () => {
+      const perms = {};
+      if($('gp-cat-' + i).value) perms.catalog = $('gp-cat-' + i).value === 'yes';
+      if($('gp-ord-' + i).value) perms.order = $('gp-ord-' + i).value === 'yes';
+      if($('gp-pen-' + i).value) perms.pending = $('gp-pen-' + i).value;
+      if($('gp-apr-' + i).value) perms.approver = $('gp-apr-' + i).value === 'yes';
+      if($('gp-pur-' + i).value) perms.purchasing = $('gp-pur-' + i).value === 'yes';
+      if($('gp-vnd-' + i).value) perms.vendorpage = $('gp-vnd-' + i).value === 'yes';
+      g.perms = perms;
+      g.budget = $('gp-bud-' + i).value.trim();
+      saveGroup(g);
+    }));
+  });
+  box.querySelectorAll('button[data-gpp]').forEach(b => b.onclick = () => {
+    const i = +b.getAttribute('data-gpp'), row = $('g-ppl-' + i);
+    if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
+    closeRows(['g-ticks-','g-tabs-','g-ppl-'], row.id);
+    row.style.display = '';
+    const g = GROUPS[i];
+    const inG = p => p.group1 === g.name || p.group2 === g.name;
+    $('g-pplist-' + i).innerHTML = USERS.length ? USERS.map(p =>
+      '<label><input type="checkbox" data-gm2="' + i + '" value="' + esc(p.email) + '"' +
+      (inG(p) ? ' checked' : '') + '><span><span class="nm">' + esc(p.user || p.email) +
+      '</span><span class="sub"> · ' + esc(p.email) +
+      (p.group1 || p.group2 ? ' · in: ' + esc([p.group1, p.group2].filter(Boolean).join(', ')) : '') +
+      '</span></span></label>').join('')
+      : '<div style="padding:10px" class="muted small">Nobody yet — add people below first.</div>';
+    $('g-pplist-' + i).querySelectorAll('input[data-gm2]').forEach(t =>
+      t.addEventListener('change', async () => {
+        const bodyMsg = t.checked ? {name: g.name, add: [t.value]} : {name: g.name, remove: [t.value]};
+        try{
+          const out = await api('/api/admin/groups/members', {method:'POST',
+            headers:{'Content-Type':'application/json'}, body: JSON.stringify(bodyMsg)});
+          say('✓ ' + (out.message || 'Saved.'), (out.refused && out.refused.length) ? 'info' : 'ok');
+          if(out.refused && out.refused.length) t.checked = false;
+          const keep = i;
+          await loadUsers(); await loadGroups();
+          const btn2 = document.querySelector('button[data-gpp="' + keep + '"]');
+          if(btn2) btn2.click();
+        }catch(e){ say(e.message, 'bad'); }
+      }));
+  });
+  box.querySelectorAll('button[data-gx]').forEach(b => b.onclick = async () => {
+    const name = b.getAttribute('data-gx');
+    if(!confirm('Remove the group "' + name + '"?\n\nPeople keep the label, but it stops carrying vendor access.')) return;
+    try{
+      const out = await api('/api/admin/groups/delete', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: name})});
+      say('✓ ' + (out.message || 'Removed.'), 'ok');
+      await loadGroups(); await loadUsers();
+    }catch(e){ say(e.message, 'bad'); }
+  });
+}
+
+async function addGroup(){
+  const name = $('g-new').value.trim();
+  if(!name) return say('Give the group a name first.', 'bad');
+  try{
+    await api('/api/admin/groups', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name: name, parent: '', vendors_mode: 'all', vendors: []})});
+    $('g-new').value = '';
+    say('✓ Group ' + name + ' created. Set its vendor access on its row, then add people to it.', 'ok');
+    await loadGroups();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+let _gSaveT = null;
+function saveGroup(g, redraw){
+  clearTimeout(_gSaveT);
+  _gSaveT = setTimeout(async () => {
+    try{
+      await api('/api/admin/groups', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(g)});
+      say('✓ Saved group ' + g.name + '.', 'ok');
+      if(redraw) drawGroups();
+    }catch(e){ say(e.message, 'bad'); }
+  }, 350);
+}
+
+let USERS = [];
+let VENDORS = [];
+let U_EDIT = '';       // email being edited, '' = adding new
+
+function vendWord(p){
+  if(p.admin) return 'everything (admin)';
+  if(p.vendors_mode === 'only')   return p.vendors.length ? 'only: ' + p.vendors.join(', ') : 'NOTHING ticked';
+  if(p.vendors_mode === 'except') return p.vendors.length ? 'all except: ' + p.vendors.join(', ') : 'all vendors';
+  return 'from groups';
+}
+
+async function loadUsers(){
+  try{
+    const out = await api('/api/admin/people');
+    USERS = out.people || [];
+    try{ VENDORS = (await api('/api/admin/people/vendors')).vendors || []; }catch(e){ VENDORS = []; }
+  }catch(e){
+    $('u-body').innerHTML = '<div class="center">' + esc(e.message) + '</div>';
+    return;
+  }
+  drawUsers();
+}
+
+const _selCss = 'padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px';
+
+const PAGES = [['catalog','Catalog'],['order','Order Form'],['pending','Pending Orders'],
+               ['approver','Approver'],['purchasing','Purchasing Admin'],['vendorpage','Vendor Page']];
+const ROLES = ['AUTO','ADMIN','PD','DM','STORE','VENDOR','NONE'];
+
+function tickList(cls, i, names, have, empty){
+  return '<div class="ticks" style="max-height:96px;min-width:150px">' +
+    (names.length ? names.map(n =>
+      '<label><input type="checkbox" class="' + cls + i + '" value="' + esc(n) + '"' +
+      (have.has(n) ? ' checked' : '') + '><span><span class="nm">' + esc(n) +
+      '</span></span></label>').join('')
+    : '<div class="muted small" style="padding:6px">' + empty + '</div>') + '</div>';
+}
+
+function pageTicks(cls, i, pp){
+  const explicit = PAGES.some(([k]) => k in pp);
+  const on = k => explicit ? (k === 'pending' ? (pp.pending || 'none') !== 'none' : !!pp[k]) : false;
+  return '<div style="min-width:150px"><div class="ticks compact" style="max-height:150px">' +
+    PAGES.map(([k, label]) =>
+    '<label><input type="checkbox" class="' + cls + i + '" value="' + k + '"' +
+    (on(k) ? ' checked' : '') + '><span><span class="nm">' + label + '</span></span></label>')
+    .join('') + '</div>' +
+    '<div class="muted small" style="margin-top:3px">nothing ticked = from groups</div></div>';
+}
+
+function accessTicks(cls, i, pp){
+  const lv = {none:0, read:1, write:2, delete:3}[pp.pending] ?? -1;   // -1 = inherit
+  return '<div class="ticks compact" style="min-width:86px;max-height:150px">' +
+    [['read',1],['write',2],['delete',3]].map(([k, n]) =>
+    '<label><input type="checkbox" class="' + cls + i + '" value="' + k + '"' +
+    (lv >= n ? ' checked' : '') + '><span><span class="nm">' + k + '</span></span></label>')
+    .join('') + '</div>';
+}
+
+function rowPerms(i){
+  const perms = {};
+  const pages = [...document.querySelectorAll('.upg' + i)];
+  const anyPage = pages.some(x => x.checked);
+  if(anyPage){
+    pages.forEach(x => { if(x.value !== 'pending') perms[x.value] = x.checked; });
+    if(!pages.find(x => x.value === 'pending').checked) perms.pending = 'none';
+  }
+  const acc = [...document.querySelectorAll('.uac' + i)].filter(x => x.checked).map(x => x.value);
+  if(acc.includes('delete')) perms.pending = 'delete';
+  else if(acc.includes('write')) perms.pending = 'write';
+  else if(acc.includes('read')) perms.pending = 'read';
+  else if(anyPage && pages.find(x => x.value === 'pending').checked) perms.pending = 'delete';
+  return perms;
+}
+
+function drawUsers(){
+  const box = $('u-body'); if(!box) return;
+  if(!USERS.length){
+    box.innerHTML = '<div class="center">Nobody yet — add your first person above (start with ' +
+      'yourself if you have not).</div>';
+    return;
+  }
+  const districts = GROUPS.filter(g => g.kind === 'district').map(g => g.name);
+  const stores = GROUPS.filter(g => g.kind !== 'district').map(g => g.name);
+  box.innerHTML =
+    '<div class="scroll"><table class="t"><thead><tr>' +
+    '<th>Person</th><th>Role</th><th>Districts</th><th>Stores</th><th>Vendors</th>' +
+    '<th>Pages</th><th>Access</th><th></th></tr></thead><tbody>' +
+    USERS.map((p, i) =>
+      '<tr><td style="min-width:150px"><b>' + esc(p.user || '—') + '</b>' +
+        (p.admin ? ' <span class="tag ok">admin</span>' : '') +
+        '<div class="muted small">' + esc(p.email) + '</div>' +
+        '<div class="muted small">' + (p.last_signin ? esc(p.last_signin) : 'never signed in') + '</div>' +
+        '<div style="margin-top:4px"><input data-ubud="' + i + '" value="' + esc(p.budget || '') +
+        '" placeholder="budget $" title="Monthly budget — blank = none"' +
+        ' style="max-width:88px;padding:4px 6px;font-size:12px;border:1px solid var(--line);border-radius:7px">' +
+        (p.spent ? ' <span class="muted small">$' + (+p.spent).toLocaleString() + ' spent</span>' : '') +
+        '</div></td>' +
+      '<td><select data-urole="' + i + '" style="' + _selCss + '">' +
+        ROLES.map(r => '<option' + (r === (p.role || 'AUTO') ? ' selected' : '') + '>' + r + '</option>')
+        .join('') + '</select></td>' +
+      '<td>' + tickList('ud2-', i, districts.concat((p.districts || []).filter(n => !districts.includes(n))),
+                        new Set(p.districts || []), 'no district groups yet') + '</td>' +
+      '<td>' + tickList('us1-', i, stores.concat((p.stores || []).filter(n => !stores.includes(n))),
+                        new Set(p.stores || []), 'no store groups yet') + '</td>' +
+      '<td style="min-width:170px"><select data-uvm="' + i + '" style="' + _selCss + ';margin-bottom:3px">' +
+        '<option value="all"' + (p.vendors_mode === 'all' ? ' selected' : '') + '>From groups</option>' +
+        '<option value="only"' + (p.vendors_mode === 'only' ? ' selected' : '') + '>Only ticked</option>' +
+        '<option value="except"' + (p.vendors_mode === 'except' ? ' selected' : '') + '>All except ticked</option>' +
+      '</select>' +
+      (p.vendors_mode === 'all'
+        ? '<div class="muted small">' + esc(vendWord(p)) + '</div>'
+        : tickList('uv2-', i, VENDORS.length ? VENDORS : (p.vendors || []),
+                   new Set(p.vendors || []), 'build the catalog first')) + '</td>' +
+      '<td>' + pageTicks('upg', i, p.perms || {}) + '</td>' +
+      '<td>' + accessTicks('uac', i, p.perms || {}) + '</td>' +
+      '<td style="white-space:nowrap"><button class="btn sm" data-usave="' + i + '">Save</button> ' +
+        '<button class="btn sm danger" data-drop="' + esc(p.email) + '">Remove</button></td></tr>'
+    ).join('') + '</tbody></table></div>';
+
+  const wire = (sel, fn) => box.querySelectorAll(sel).forEach(el =>
+    el.addEventListener('change', () => fn(el)));
+  wire('select[data-urole]', el => { const p = USERS[+el.getAttribute('data-urole')];
+    p.role = el.value; p.admin = el.value === 'ADMIN'; saveUserRow(p); });
+  wire('input[data-ubud]', el => { const p = USERS[+el.getAttribute('data-ubud')];
+    p.budget = el.value.trim(); saveUserRow(p); });
+  wire('select[data-uvm]', el => { const p = USERS[+el.getAttribute('data-uvm')];
+    p.vendors_mode = el.value; saveUserRow(p, true); });
+  USERS.forEach((p, i) => {
+    ['.ud2-', '.us1-', '.uv2-', '.upg', '.uac'].forEach(cls =>
+      box.querySelectorAll(cls + i).forEach(t => t.addEventListener('change', () => {
+        p.districts = [...box.querySelectorAll('.ud2-' + i)].filter(x => x.checked).map(x => x.value);
+        p.stores = [...box.querySelectorAll('.us1-' + i)].filter(x => x.checked).map(x => x.value);
+        if(p.vendors_mode !== 'all')
+          p.vendors = [...box.querySelectorAll('.uv2-' + i)].filter(x => x.checked).map(x => x.value);
+        p.perms = rowPerms(i);
+        saveUserRow(p);
+      })));
+  });
+  box.querySelectorAll('button[data-usave]').forEach(b => b.onclick = () => {
+    const i = +b.getAttribute('data-usave'), p = USERS[i];
+    p.perms = rowPerms(i);
+    saveUserRow(p, true);
+  });
+  box.querySelectorAll('[data-drop]').forEach(b =>
+    b.onclick = () => dropPerson(b.getAttribute('data-drop')));
+}
+
+let _uSaveT = {};
+function saveUserRow(p, redraw){
+  clearTimeout(_uSaveT[p.email]);
+  _uSaveT[p.email] = setTimeout(async () => {
+    try{
+      await api('/api/admin/people', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({email: p.email, user: p.user, role: p.role || 'AUTO',
+          stores: p.stores || [], districts: p.districts || [],
+          group1: p.group1, group2: p.group2,
+          admin: p.admin, vendors_mode: p.vendors_mode, vendors: p.vendors || [],
+          perms: p.perms || {}, budget: p.budget || ''})});
+      say('✓ Saved ' + (p.user || p.email) + '.', 'ok');
+      if(redraw) drawUsers();
+      loadGroups();
+      loadPeople();
+    }catch(e){ say(e.message, 'bad'); }
+  }, 350);
+}
+
+async function addPersonQuick(){
+  const email = $('u-new-email').value.trim().toLowerCase();
+  if(!email) return say('An email address is what a person signs in with — it cannot be blank.', 'bad');
+  try{
+    const out = await api('/api/admin/people', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({email: email, user: $('u-new-label').value.trim()})});
+    say('✓ ' + (out.message || 'Added.'), 'ok');
+    $('u-new-email').value = ''; $('u-new-label').value = '';
+    await loadUsers(); await loadPeople(); await loadGroups();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+async function dropPerson(email){
+  if(!confirm('Remove ' + email + '?\n\nThey lose sign-in and catalog access immediately.')) return;
+  try{
+    const out = await api('/api/admin/people/delete', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: email})});
+    say('✓ ' + (out.message || 'Removed.'), 'ok');
+    await loadUsers(); await loadPeople(); await loadGroups();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+/* ───────────────────────── the catalog builder ───────────────────────── */
+
+function copyText(t, btn){
+  (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject())
+    .then(() => { if(btn){ btn.textContent = '\u2713 copied'; setTimeout(() => btn.textContent = 'Copy', 1600); } })
+    .catch(() => { window.prompt('Copy this address:', t); });
+}
+
+let BLD = null;
+const _bldOpen = new Set();
+function bldToggle(id){
+  const det = $('bld-det-' + id), car = $('bld-car-' + id);
+  if(!det) return;
+  const open = det.style.display === 'none';
+  det.style.display = open ? 'block' : 'none';
+  if(car) car.textContent = open ? '\u25be' : '\u25b8';
+  if(open) _bldOpen.add(id); else _bldOpen.delete(id);
+}
+
+async function loadBuilder(){
+  try{ BLD = await api('/api/admin/builder'); }
+  catch(e){ $('bld-body').innerHTML = '<div class="center">' + esc(e.message) + '</div>'; return; }
+  drawBuilder();
+}
+
+function bldMissing(src){
+  if(src.pending)
+    return '<span class="tag part">waiting for its feed\'s first pull</span>';
+  return (src.missing || []).length
+    ? '<span class="tag no">needs: ' + esc(src.missing.join(', ')) + '</span>'
+    : '<span class="tag ok">ready</span>';
+}
+
+function drawBuilder(){
+  const b = $('bld-body');
+  if(!BLD.connected){
+    b.innerHTML = '<div class="msg on info" style="display:block">The catalog\'s own database is '
+      + 'not connected yet. In Render: open <b>catalog-db</b>, copy its <b>Internal Database '
+      + 'URL</b>, and add it to this service as <b>CATALOG_DATABASE_URL</b>. Reload this tab '
+      + 'once the deploy finishes.</div>';
+    return;
+  }
+  const built = BLD.built;
+  const running = (BLD.sources || []).find(s => s.feed_status && s.feed_status.running);
+  b.innerHTML =
+    (running
+      ? '<div id="bld-progressbar"><div></div></div>' +
+        '<div class="small" style="margin:0 0 12px;font-weight:700;color:#0d5b3c">' +
+        esc(running.name) + ' — ' + esc(running.feed_status.note || 'Downloading…') + '</div>'
+      : '') +
+    (built
+      ? '<div class="msg on ok" style="display:block">' +
+        '<b>' + built.rows + ' rows built</b> · ' + esc(built.at) + ' · this is the catalog the ' +
+        'storefront serves. When a feed below brings an updated file, it rebuilds itself.</div>'
+      : '<div class="msg on info" style="display:block">Nothing built yet. Add sources below, ' +
+        'then press Build.</div>') +
+    '<div class="row" style="margin:8px 0 16px">' +
+      '<input type="file" id="bld-file" accept=".csv,.xlsx,.xlsm,.xls" style="font-size:13px">' +
+      '<input class="f" id="bld-vendor" placeholder="Vendor name — with a file it fills the Vendor column; alone it creates a feed-only source" style="max-width:330px">' +
+      '<button class="btn" onclick="bldUpload()">Add source</button>' +
+    '</div>' +
+    ((BLD.sources || []).map(src => {
+      if(window._bldJustAdded && src.name === window._bldJustAdded){ _bldOpen.add(src.id); window._bldJustAdded = ''; }
+      const open = _bldOpen.has(src.id);
+      return '<div style="border:1px solid var(--line);border-radius:12px;padding:9px 13px;margin-bottom:8px">' +
+        '<div class="row" style="cursor:pointer;user-select:none" onclick="bldToggle(\'' + esc(src.id) + '\')">' +
+        '<span id="bld-car-' + esc(src.id) + '" style="font-size:11px;color:#5a6273;width:14px">' + (open ? '\u25be' : '\u25b8') + '</span>' +
+        '<b>' + esc(src.vendor || src.name) + '</b> ' + bldMissing(src) +
+        '<span class="muted small">' + src.rows + ' rows · ' + esc(src.filename) + '</span>' +
+        ((src.feed && src.feed.type === 'email' && src.feed_addr)
+          ? '<span class="small" style="background:#e9f0fa;color:#123a6b;border-radius:999px;' +
+            'padding:3px 10px">\ud83d\udce7 <b style="user-select:all">' + esc(src.feed_addr) + '</b> ' +
+            '<button class="btn ghost sm" style="padding:2px 8px" ' +
+            'onclick="event.stopPropagation();copyText(\'' + esc(src.feed_addr) + '\', this)">Copy</button></span>'
+          : '') +
+        '<span style="flex:1"></span>' +
+        '<button class="btn ghost sm" onclick="event.stopPropagation();bldPreview(\'' + esc(src.id) + '\')">Preview</button>' +
+        '<button class="btn ghost sm" onclick="event.stopPropagation();bldRemove(\'' + esc(src.id) + '\',\'' + esc(src.name) + '\')">✕</button></div>' +
+        '<div id="bld-det-' + esc(src.id) + '" style="display:' + (open ? 'block' : 'none') + '">' +
+        '<div class="row" style="margin-top:6px"><label class="f" style="margin:0">Vendor label</label>' +
+          '<input class="f" style="max-width:240px" value="' + esc(src.vendor || '') + '"' +
+          ' onchange="bldVendor(\'' + esc(src.id) + '\',this.value)"></div>' +
+        bldFeedBox(src) +
+        '<div class="two" style="margin-top:9px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">' +
+          BLD.fields.map(f => {
+            const cur = src.mapping[f.name] || '';
+            const dark = f.required && !cur && !(f.name === 'Vendor' && src.vendor);
+            return '<div class="fg" style="margin-bottom:8px"><label class="f"' +
+              (dark ? ' style="color:#c0392b"' : '') + '>' + esc(f.name) +
+              (f.required ? ' *' : '') + '</label>' +
+              '<select class="f" style="padding:7px 9px;font-size:13.5px"' +
+              ' onchange="bldMap(\'' + esc(src.id) + '\',\'' + esc(f.name) + '\',this.value)">' +
+              '<option value="">— not in this file —</option>' +
+              [...src.columns].sort((a, b) => String(a).toLowerCase()
+                  .localeCompare(String(b).toLowerCase()))
+                .map(c => '<option' + (c === cur ? ' selected' : '') + '>' +
+                esc(c) + '</option>').join('') + '</select></div>';
+          }).join('') +
+        '</div>' +
+        '<div id="bld-prev-' + esc(src.id) + '"></div>' +
+        '</div>' +
+      '</div>'; }).join('') || '') +
+    '<div id="bld-vinfo"></div>' +
+    '<div class="row" style="margin-top:14px">' +
+      '<button class="btn green" onclick="bldBuild()">⚒ Build the catalog</button>' +
+      '<span class="muted small">Appends every ready source into one dataset and serves it.</span>' +
+    '</div>';
+  loadVendInfo();
+}
+
+/* ── vendor ordering details: order email + freight minimums ── */
+
+let VINFO = null;
+async function loadVendInfo(){
+  try{ VINFO = (await api('/api/admin/vendorinfo')).vendors || []; }
+  catch(e){ VINFO = null; }
+  drawVendInfo();
+}
+function drawVendInfo(){
+  const box = $('bld-vinfo'); if(!box) return;
+  if(!VINFO || !VINFO.length){ box.innerHTML = ''; return; }
+  box.innerHTML =
+    '<h4 style="margin:18px 0 4px;font-size:14.5px">Vendor ordering details</h4>' +
+    '<p class="cs">Where each vendor\'s orders go, and their freight minimums — the order form ' +
+      'reads these. Edits save themselves when you leave the box.</p>' +
+    '<div class="scroll" style="max-height:300px"><table class="t"><thead><tr>' +
+      '<th>Vendor</th><th>Order email</th><th>Freight min $</th><th>Min by category</th>' +
+      '<th>Min by brand</th><th>Qty or total cost</th></tr></thead><tbody>' +
+    VINFO.map((v, i) => '<tr><td class="ro">' + esc(v.vendor) + '</td>' +
+      ['order_email','freight_min','freight_min_by_cat','freight_min_by_brand','freight_qty_or_cost']
+        .map(k => '<td><input value="' + esc(v[k] || '') + '" data-vi="' + i + '" data-k="' + k + '"></td>')
+        .join('') + '</tr>').join('') +
+    '</tbody></table></div>';
+  box.querySelectorAll('input[data-vi]').forEach(inp => inp.addEventListener('change', async () => {
+    const v = VINFO[+inp.getAttribute('data-vi')];
+    v[inp.getAttribute('data-k')] = inp.value;
+    try{
+      await api('/api/admin/vendorinfo', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify(v)});
+      say('✓ Saved ' + v.vendor + '.', 'ok');
+    }catch(e){ say(e.message, 'bad'); }
+  }));
+}
+
+async function bldUpload(){
+  const f = $('bld-file').files[0];
+  if(!f){
+    const name = $('bld-vendor').value.trim();
+    if(!name) return say('Choose a file — or type the vendor\'s name alone to create a source ' +
+                         'whose feed (API, SFTP or email) brings the first file.', 'bad');
+    try{
+      const out = await api('/api/admin/builder/create', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({name: name, vendor: name})});
+      say('✓ ' + (out.message || 'Created.'), 'ok');
+      window._bldJustAdded = name;
+      $('bld-vendor').value = '';
+      await loadBuilder();
+    }catch(e){ say(e.message, 'bad'); }
+    return;
+  }
+  say('Reading ' + f.name + '…', 'info');
+  const b64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(',')[1] || '');
+    r.onerror = rej;
+    r.readAsDataURL(f);
+  });
+  try{
+    const out = await api('/api/admin/builder/upload', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({filename: f.name, vendor: $('bld-vendor').value, content_b64: b64})});
+    say('✓ ' + f.name + ' — ' + out.rows + ' rows, ' + out.mapped + ' fields recognised' +
+        (out.missing.length ? ('; still needs ' + out.missing.join(', ')) : ' — ready.'),
+        out.missing.length ? 'info' : 'ok');
+    window._bldJustAdded = (out.name || $('bld-vendor').value.trim() || f.name);
+    await loadBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+async function bldMap(id, field, col){
+  const src = (BLD.sources || []).find(s => s.id === id); if(!src) return;
+  if(col) src.mapping[field] = col; else delete src.mapping[field];
+  try{
+    await api('/api/admin/builder/map', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id: id, mapping: src.mapping})});
+    src.missing = BLD.fields.filter(f => f.required && !src.mapping[f.name] &&
+      !(f.name === 'Vendor' && src.vendor)).map(f => f.name);
+    drawBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+async function bldVendor(id, v){
+  try{
+    await api('/api/admin/builder/map', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id: id, vendor: v})});
+    await loadBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+async function bldRemove(id, name){
+  if(!confirm('Remove the source "' + name + '"?\n\nIts rows leave the next build.')) return;
+  try{
+    await api('/api/admin/builder/remove', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id})});
+    await loadBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+async function bldPreview(id){
+  const box = $('bld-prev-' + id); if(!box) return;
+  box.innerHTML = '<span class="muted small">Loading preview…</span>';
+  try{
+    const p = await api('/api/admin/builder/preview?id=' + encodeURIComponent(id));
+    box.innerHTML = '<div class="scroll" style="max-height:220px;margin-top:9px">' +
+      '<table class="t"><thead><tr>' +
+      p.columns.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr></thead><tbody>' +
+      p.rows.map(r => '<tr>' + p.columns.map(c =>
+        '<td class="ro">' + esc(String(r[c] === null ? '' : r[c]).slice(0, 40)) + '</td>').join('') +
+        '</tr>').join('') + '</tbody></table></div>';
+  }catch(e){ box.innerHTML = '<span class="muted small">' + esc(e.message) + '</span>'; }
+}
+
+async function bldBuild(){
+  try{
+    const out = await api('/api/admin/builder/build', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: '{}'});
+    say('✓ ' + out.message, 'ok');
+    await loadBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+/* ── feeds: how a source refreshes itself without a hand upload ── */
+
+function bldFeedBox(src){
+  const f = src.feed || {};
+  const t = f.type || 'manual';
+  const st = src.feed_status || {};
+  const stLine = st.last_run
+    ? '<span class="tag ' + (st.ok ? 'ok' : 'no') + '">' + (st.ok ? 'ok' : 'attention') + '</span>' +
+      '<span class="muted small">' + esc(st.last_run) + ' — ' + esc(st.note || '') + '</span>'
+    : '<span class="muted small">not checked yet — Save feed, then Check now.</span>';
+  const inp = (k, ph, val, w) => '<input class="f" id="fd-' + k + '-' + esc(src.id) +
+    '" placeholder="' + ph + '" value="' + esc(val === undefined || val === null ? '' : val) +
+    '" style="max-width:' + (w || '220px') + '">';
+  let cfg = '';
+  if(t === 'api'){
+    const qrows = ((f.qparams && f.qparams.length ? f.qparams : [['','']]).map(q =>
+      '<div class="row" style="margin-top:5px;flex-basis:100%">' +
+      '<input class="f fd-qpk-' + esc(src.id) + '" placeholder="Key — e.g. Customer" value="' +
+        esc(q[0] || '') + '" style="max-width:200px">' +
+      '<input class="f fd-qpv-' + esc(src.id) + '" placeholder="Value — e.g. 3989100" value="' +
+        esc(q[1] || '') + '" style="max-width:240px"></div>').join(''));
+    const xurls = (f.urls || []).map(u =>
+      '<input class="f fd-xurl-' + esc(src.id) + '" placeholder="https://…/Prices — joined by item number"' +
+      ' value="' + esc(u || '') + '" style="max-width:380px">').join('');
+    cfg = inp('url', 'https://vendor.com/api/prices (or a CSV/JSON file URL)', f.url, '380px') +
+          '<span id="fd-xurls-' + esc(src.id) + '" style="display:contents">' + xurls + '</span>' +
+          '<button class="btn ghost sm" onclick="bldUrlAdd(\'' + esc(src.id) + '\')" ' +
+            'title="Pull a second endpoint too — Prices, Freight, Quantity… Same credentials and ' +
+            'parameters; its columns are joined onto the first by item number.">＋ endpoint</button>' +
+          inp('header', 'Header if it needs one, e.g. Ocp-Apim-Subscription-Key: …', f.header, '330px') +
+          inp('auth-user', 'Basic auth user (optional)', f.auth_user, '180px') +
+          '<input class="f" type="password" id="fd-auth-pass-' + esc(src.id) +
+            '" placeholder="Basic auth password" value="' + esc(f.auth_pass || '') +
+            '" style="max-width:180px">' +
+          '<div style="flex-basis:100%"><span class="muted small">OAuth (only if the vendor ' +
+            'gave you a Client ID + Secret — the app trades them for a token first):</span></div>' +
+          inp('token-url', 'Token URL from the vendor\'s API docs', f.token_url, '340px') +
+          inp('client-id', 'Client ID', f.client_id, '250px') +
+          '<input class="f" type="password" id="fd-client-secret-' + esc(src.id) +
+            '" placeholder="Client Secret" value="' + esc(f.client_secret || '') +
+            '" style="max-width:220px">' +
+          '<div style="flex-basis:100%"><span class="muted small">Query parameters — sent with ' +
+            'every pull, like Domo\'s key/value rows:</span></div>' +
+          '<div id="fd-qps-' + esc(src.id) + '" style="flex-basis:100%">' + qrows + '</div>' +
+          '<button class="btn ghost sm" onclick="bldQpAdd(\'' + esc(src.id) + '\')">＋ parameter</button>' +
+          '<div style="flex-basis:100%;margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
+            '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-atpon-' + esc(src.id) + '"' +
+            (f.atp_on ? ' checked' : '') + '> <b>Also pull quantities</b> (Ashley ATP) — after the main pull, ' +
+            'every SKU is checked for availability + lead time and joined on. Adds 10–25 minutes for a big catalog.</label></div>' +
+          inp('atp-external', 'ATP External ID — e.g. Buddys3989100', f.atp_external_id, '210px') +
+          '<input class="f" type="password" id="fd-atp-keycode-' + esc(src.id) +
+            '" placeholder="ATP KeyCode" value="' + esc(f.atp_keycode || '') + '" style="max-width:170px">' +
+          inp('atp-user', 'ATP user — e.g. AD_…_VP', f.atp_user, '160px') +
+          '<input class="f" type="password" id="fd-atp-pass-' + esc(src.id) +
+            '" placeholder="ATP password" value="' + esc(f.atp_password || '') + '" style="max-width:150px">' +
+          inp('atp-customer', 'customer (blank = from parameters)', f.atp_customer, '200px') +
+          inp('atp-shipto', 'shipto (blank = from parameters)', f.atp_shipto, '180px') +
+          '<div style="flex-basis:100%;margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
+            '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-frton-' + esc(src.id) + '"' +
+            (f.frt_on ? ' checked' : '') + '> <b>Also pull freight by store</b> — the same API asked once per ' +
+            'ship-to, keeping the freight fields (fob, freight, express, net). Skips ship-tos the account ' +
+            'can\'t quote.</label></div>' +
+          inp('frt-stores', 'Ship-to numbers, comma-separated — blank = store numbers from Users',
+              f.frt_stores, '420px');
+  }else if(t === 'sftp'){
+    cfg = inp('host', 'sftp.vendor.com', f.host, '190px') +
+          inp('port', '22', f.port || 22, '70px') +
+          inp('user', 'user', f.user, '140px') +
+          '<input class="f" type="password" id="fd-pass-' + esc(src.id) +
+            '" placeholder="password" value="' + esc(f.password || '') + '" style="max-width:140px">' +
+          inp('path', '/outbound/  (folder, or one exact file)', f.path, '240px') +
+          inp('pattern', '*.csv', f.pattern, '110px');
+  }else if(t === 'email'){
+    cfg = (BLD.email_ready
+      ? '<div class="small" style="color:#123a6b;background:#e9f0fa;border-radius:8px;' +
+        'padding:8px 11px;flex-basis:100%">This source\'s own address — vendors email the ' +
+        'file straight to it:&nbsp; <b style="user-select:all">' + esc(src.feed_addr || '') +
+        '</b> <button class="btn ghost sm" style="padding:2px 8px" ' +
+        'onclick="copyText(\'' + esc(src.feed_addr || '') + '\', this)">Copy</button><br><span class="muted">It lands in your connected mailbox and only this source ' +
+        'picks it up. Or fill “sender contains” below to match by sender instead.</span></div>'
+      : '<div class="small" style="color:#7a4b00;background:#fff4e5;border-radius:8px;' +
+        'padding:7px 10px;flex-basis:100%">Mailbox not connected yet — on Render, this ' +
+        'service → Environment: add EMAIL_IMAP_HOST, EMAIL_IMAP_USER and EMAIL_IMAP_PASS ' +
+        '(and EMAIL_IMAP_PORT if it is not 993).</div>') +
+        inp('from', 'sender contains (optional), e.g. @vendor1.com', f.from_contains, '250px') +
+        inp('subj', 'subject contains (optional)', f.subject_contains, '220px');
+  }
+  const tail = t === 'manual' ? '' :
+    '<label class="f" style="margin:0">every</label>' +
+    inp('every', '24', f.every_hours || 24, '60px') +
+    '<label class="f" style="margin:0">hours</label>' +
+    '<button class="btn sm" onclick="bldFeedSave(\'' + esc(src.id) + '\')">Save feed</button>' +
+    '<button class="btn ghost sm" onclick="bldFeedRun(this,\'' + esc(src.id) + '\')">Check now</button>';
+  return '<div style="margin-top:10px;border-top:1px dashed var(--line);padding-top:9px">' +
+    '<div class="row">' +
+      '<label class="f" style="margin:0">Feed</label>' +
+      '<select class="f" style="max-width:160px;padding:7px 9px;font-size:13px"' +
+        ' onchange="bldFeedType(\'' + esc(src.id) + '\',this.value)">' +
+        [['manual','Manual upload'],['api','API pull'],['sftp','SFTP pull'],['email','Email in']]
+          .map(o => '<option value="' + o[0] + '"' + (t === o[0] ? ' selected' : '') + '>' +
+                    o[1] + '</option>').join('') +
+      '</select>' +
+      (t === 'manual'
+        ? '<span class="muted small">You drop the file in yourself. Pick API, SFTP or Email ' +
+          'and this source refreshes itself — and rebuilds the catalog when the file changes.</span>'
+        : stLine) +
+    '</div>' +
+    (cfg || tail ? '<div class="row" style="margin-top:7px">' + cfg + tail + '</div>' : '') +
+    '</div>';
+}
+
+function bldFeedType(id, t){
+  const src = (BLD.sources || []).find(s => s.id === id); if(!src) return;
+  src.feed = Object.assign({}, src.feed || {}, {type: t});
+  drawBuilder();
+}
+
+function bldUrlAdd(id){
+  const box = $('fd-xurls-' + id); if(!box) return;
+  const el = document.createElement('input');
+  el.className = 'f fd-xurl-' + id;
+  el.placeholder = 'https://…/Prices — joined by item number';
+  el.style.maxWidth = '380px';
+  box.appendChild(el);
+  el.focus();
+}
+
+function bldQpAdd(id){
+  const box = $('fd-qps-' + id); if(!box) return;
+  const d = document.createElement('div');
+  d.className = 'row'; d.style.cssText = 'margin-top:5px;flex-basis:100%';
+  d.innerHTML = '<input class="f fd-qpk-' + id + '" placeholder="Key" style="max-width:200px">' +
+                '<input class="f fd-qpv-' + id + '" placeholder="Value" style="max-width:240px">';
+  box.appendChild(d);
+}
+
+async function bldFeedSave(id){
+  const src = (BLD.sources || []).find(s => s.id === id); if(!src) return;
+  const g = k => { const el = $('fd-' + k + '-' + id); return el ? el.value.trim() : ''; };
+  const t = (src.feed && src.feed.type) || 'manual';
+  const feed = {type: t, every_hours: g('every') || 24};
+  if(t === 'api'){
+    feed.url = g('url'); feed.header = g('header');
+    feed.urls = [...document.querySelectorAll('.fd-xurl-' + id)]
+      .map(e => e.value.trim()).filter(Boolean);
+    feed.auth_user = g('auth-user');
+    feed.auth_pass = ($('fd-auth-pass-' + id) || {value:''}).value;
+    feed.token_url = g('token-url');
+    feed.client_id = g('client-id');
+    feed.client_secret = ($('fd-client-secret-' + id) || {value:''}).value;
+    const ks = [...document.querySelectorAll('.fd-qpk-' + id)].map(e => e.value.trim());
+    const vs = [...document.querySelectorAll('.fd-qpv-' + id)].map(e => e.value.trim());
+    feed.qparams = ks.map((k, j) => [k, vs[j] || '']).filter(p => p[0]);
+    feed.atp_on = ($('fd-atpon-' + id) || {checked:false}).checked;
+    feed.atp_external_id = g('atp-external');
+    feed.atp_keycode = ($('fd-atp-keycode-' + id) || {value:''}).value;
+    feed.atp_user = g('atp-user');
+    feed.atp_password = ($('fd-atp-pass-' + id) || {value:''}).value;
+    feed.atp_customer = g('atp-customer');
+    feed.atp_shipto = g('atp-shipto');
+    feed.frt_on = ($('fd-frton-' + id) || {checked:false}).checked;
+    feed.frt_stores = g('frt-stores');
+  }
+  if(t === 'sftp'){ feed.host = g('host'); feed.port = g('port') || 22; feed.user = g('user');
+                    feed.password = ($('fd-pass-' + id) || {value:''}).value;
+                    feed.path = g('path'); feed.pattern = g('pattern'); }
+  if(t === 'email'){ feed.from_contains = g('from'); feed.subject_contains = g('subj'); }
+  try{
+    await api('/api/admin/builder/feed', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id, feed: feed})});
+    say(t === 'manual' ? '✓ Feed turned off — this source is manual again.'
+        : '✓ Feed saved. It checks by itself every ' + (feed.every_hours || 24) +
+          ' hours — or press Check now to try it this minute.', 'ok');
+    await loadBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+
+let _bldPoll = null;
+async function bldFeedRun(btn, id){
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try{
+    const out = await api('/api/admin/builder/feed/run', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id})});
+    say('⏳ ' + (out.message || 'Checking in the background…'), 'info');
+    // the pull runs server-side — refresh the card every 10s until it lands
+    clearInterval(_bldPoll);
+    let n = 0;
+    _bldPoll = setInterval(async () => {
+      n++;
+      await loadBuilder();
+      const st = ((BLD.sources||[]).find(s=>s.id===id)||{}).feed_status||{};
+      if((st.last_run && !st.running) || n > 240){
+        clearInterval(_bldPoll);
+        if(!st.running && st.note)
+          say((st.ok ? '✓ ' : '') + st.note, st.ok ? 'ok' : (st.schema ? 'info' : 'bad'));
+      }
+    }, 5000);
+  }catch(e){
+    say(e.message, 'bad');
+    btn.disabled = false; btn.textContent = 'Check now';
+  }
+}
+
+/* ───────────────────────── start ───────────────────────── */
+
+loadMe();
+loadPeople();
+loadGroups();
+loadUsers();
+loadBuilder();
+</script>
+
+</body>
+</html>

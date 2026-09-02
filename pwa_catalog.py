@@ -305,7 +305,8 @@ PWA_JS = """
   }
 
   window.addEventListener('beforeinstallprompt', function (e) {
-    e.preventDefault();
+    /* No preventDefault: the browser shows its own install popup, the same
+       one the other apps get. We keep the event so our button works too. */
     deferred = e;
     if (!snoozed()) show();
   });

@@ -133,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v33</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v34</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -867,7 +867,7 @@ function drawBuilder(){
       return '<div style="border:1px solid var(--line);border-radius:12px;padding:9px 13px;margin-bottom:8px">' +
         '<div class="row" style="cursor:pointer;user-select:none" onclick="bldToggle(\'' + esc(src.id) + '\')">' +
         '<span id="bld-car-' + esc(src.id) + '" style="font-size:11px;color:#5a6273;width:14px">' + (open ? '\u25be' : '\u25b8') + '</span>' +
-        '<b>' + esc(src.name) + '</b> ' + bldMissing(src) +
+        '<b>' + esc(src.vendor || src.name) + '</b> ' + bldMissing(src) +
         '<span class="muted small">' + src.rows + ' rows · ' + esc(src.filename) + '</span>' +
         ((src.feed && src.feed.type === 'email' && src.feed_addr)
           ? '<span class="small" style="background:#e9f0fa;color:#123a6b;border-radius:999px;' +

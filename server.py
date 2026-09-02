@@ -1636,7 +1636,7 @@ async def home(request: Request):
     # A vendor rep signs in through the same link as everyone else but their
     # page is the editor, not the store catalog. Server-decided, like the
     # Admin button: the browser is never asked to hide anything.
-    if str(sc.get("role") or "") == "vendor" and not sc.get("all"):
+    if str(sc.get("role") or "").lower() == "vendor" and not sc.get("all"):
         return RedirectResponse("/vendor", status_code=302)
     page = _page_file()
     if not page:
@@ -1667,7 +1667,7 @@ async def home_alias(request: Request):
 async def vendor_page(request: Request):
     sc = await _me_scope(request)
     role = str(sc.get("role") or "")
-    if role != "vendor" and not _scope_administers(sc):
+    if str(role).lower() != "vendor" and not _scope_administers(sc):
         return RedirectResponse("/", status_code=302)
     try:
         with open("static/vendor.html", "rb") as fh:

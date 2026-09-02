@@ -2570,6 +2570,9 @@ body.qc-open #whoAmI{display:none !important;}
       b.onclick = function(){ location.href = t[0]; };
       bar.appendChild(b);
     });
+    var vch=document.createElement('span'); vch.textContent='v28'; vch.title='build version';
+    vch.style.cssText='color:#9fb3d9;font-size:11px;font-weight:700;align-self:center;padding:0 10px 0 4px;';
+    bar.appendChild(vch);
     document.body.appendChild(bar);
   }
 

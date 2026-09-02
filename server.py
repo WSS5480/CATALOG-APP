@@ -128,7 +128,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "28"
+APP_VERSION = "29"
 # Which app this browser is signing in to, set by visiting that app's own link.
 # It is only ever a claim about WHICH app, never about who — ETL still checks
 # the password and still decides what the person reaches. The worst a forged

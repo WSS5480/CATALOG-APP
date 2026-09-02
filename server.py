@@ -1560,6 +1560,8 @@ def _tabs_block(sc: dict) -> bytes:
     into the page as literal values, no extra request from the browser."""
     pr = dict(_PERM_DEFAULT)
     pr.update(_clean_perms((sc or {}).get("perms") or {}))
+    if (sc or {}).get("all"):
+        pr.update(approver=True, purchasing=True, vendorpage=True)
     allowed = []
     if pr.get("catalog", True):
         allowed.append("catalog")
@@ -1567,18 +1569,25 @@ def _tabs_block(sc: dict) -> bytes:
         allowed.append("order")
     if _PENDING_LEVELS.get(str(pr.get("pending", "delete")).lower(), 3) >= 1:
         allowed.append("pending")
-    if len(allowed) >= 3:
-        return b""
+    if pr.get("approver"):
+        allowed.append("approver")
+    if pr.get("purchasing"):
+        allowed.append("purchasing")
+    if pr.get("vendorpage"):
+        allowed.append("vendorpage")
+    if _scope_administers(sc or {}):
+        allowed.append("setup")
     js = ("<script>(function(){var A=" + json.dumps(allowed) + ";"
           "function fix(){['__dtabs','__mtabs'].forEach(function(id){"
           "var bar=document.getElementById(id);if(!bar)return;"
           "bar.querySelectorAll('button[data-v]').forEach(function(b){"
-          "if(A.indexOf(b.getAttribute('data-v'))<0)b.style.display='none';});});}"
+          "b.style.display=(A.indexOf(b.getAttribute('data-v'))<0)?'none':'';});});}"
           "var n=0;var t=setInterval(function(){fix();if(++n>25)clearInterval(t);},400);"
           "setTimeout(function(){try{if(window.__showView&&A.length&&A.indexOf('catalog')<0)"
           "window.__showView(A[0]);}catch(e){}},2600);"
           "})();</script>")
     return js.encode()
+
 
 
 def _with_admin_launcher(body: bytes, may_administer: bool = False, sc: dict | None = None) -> bytes:

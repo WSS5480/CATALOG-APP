@@ -128,7 +128,12 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "30"
+APP_VERSION = "31"
+try:                                   # install-to-home-screen (PWA) plumbing
+    from pwa_catalog import router as _pwa_router, inject as _pwa_inject
+except Exception:                      # missing file must never kill the app
+    _pwa_router = None
+    def _pwa_inject(x): return x
 # Which app this browser is signing in to, set by visiting that app's own link.
 # It is only ever a claim about WHICH app, never about who — ETL still checks
 # the password and still decides what the person reaches. The worst a forged
@@ -1648,7 +1653,7 @@ async def home(request: Request):
             status_code=404, media_type="text/html")
     with open(page, "rb") as fh:
         body = fh.read()
-    return Response(_with_admin_launcher(body, _scope_administers(sc), sc),
+    return Response(_pwa_inject(_with_admin_launcher(body, _scope_administers(sc), sc)),
                     media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
@@ -1677,7 +1682,7 @@ async def vendor_page(request: Request):
         return Response("<h1>Vendor editor not installed</h1><p>Upload "
                         "<code>vendor.html</code> to the static folder.</p>",
                         status_code=500, media_type="text/html")
-    return Response(body, media_type="text/html",
+    return Response(_pwa_inject(body), media_type="text/html",
                     headers={"Cache-Control": "no-cache"})
 
 
@@ -2205,7 +2210,7 @@ async def builder_upload(request: Request):
     with eng.begin() as c:
         c.execute(text("insert into cat_sources(id,customer,name,filename,vendor_label,"
                        "table_name,mapping,row_count) values(:i,:c,:n,:f,:v,:t,:m,:r)"),
-                  {"i": sid, "c": cust, "n": filename.rsplit(".", 1)[0][:80], "f": filename[:120],
+                  {"i": sid, "c": cust, "n": (vendor or filename.rsplit(".", 1)[0])[:80], "f": filename[:120],
                    "v": vendor[:80], "t": table, "m": json.dumps(mapping), "r": int(len(df))})
     return {"ok": True, "id": sid, "rows": int(len(df)),
             "mapped": len(mapping), "missing": _builder_missing(mapping, vendor)}
@@ -2229,6 +2234,8 @@ async def builder_map(request: Request):
             vals["mapping"] = json.dumps(m)
         if "vendor" in (body or {}):
             vals["vendor_label"] = str((body or {}).get("vendor") or "")[:80]
+            if vals["vendor_label"]:
+                vals["name"] = vals["vendor_label"]   # the line is titled by the vendor you enter
         if vals:
             sets = ", ".join(f"{k}=:{k}" for k in vals)
             vals.update({"i": sid, "c": cust})
@@ -4303,4 +4310,6 @@ async def builder_feed_run(request: Request):
 
 # The static-file mount goes LAST: a mount at "/" catches every path, so every
 # API route above must already be registered before it.
+if _pwa_router is not None:
+    app.include_router(_pwa_router)   # before the static catch-all, or /sw.js never resolves
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

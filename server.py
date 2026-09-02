@@ -128,6 +128,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
+APP_VERSION = "28"
 # Which app this browser is signing in to, set by visiting that app's own link.
 # It is only ever a claim about WHICH app, never about who — ETL still checks
 # the password and still decides what the person reaches. The worst a forged
@@ -261,7 +262,7 @@ async def healthz():
     silently override every signed-in person's own datasets, and nothing on this
     page said so.
     """
-    return {"ok": True, "service": "catalog-app",
+    return {"version": APP_VERSION, "ok": True, "service": "catalog-app",
             "etl_configured": bool(ETL_BASE), "application": APPLICATION,
             "catalog": DATASETS["catalog"],
             "catalog_profile_set": bool(CATALOG_PROFILE),

@@ -128,7 +128,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "33"
+APP_VERSION = "34"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -1440,49 +1440,38 @@ SIGNOUT_BLOCK = b"""
 </script>
 <script id="cat-clear-topright">
 (function(){
-  // The identity strip (#whoAmI, fixed to the top-right by the page) was
-  // sitting on top of the cart button and whatever else lives in that corner.
-  // Rather than hand-edit the big catalog page, measure at load: if the strip
-  // covers any control in the top-right, slide the strip down until it clears
-  // the lowest of them. Runs again on resize; leaves the phone layout alone
-  // (the page's own media query already relocates the strip there).
-  function clearTopRight(){
+  // The identity strip (#whoAmI) used to float fixed at the top-right, where
+  // it overlapped the toolbar card and the cart. Its real home is the tab bar:
+  // docked at the right end it reads like the Domo nav (name - role - sign out),
+  // rides along on every view, and can never sit on top of anything.
+  function dock(){
     var who = document.getElementById('whoAmI');
     if (!who) return false;
-    var cs = getComputedStyle(who);
-    if (cs.position !== 'fixed' || cs.display === 'none') return true;
-    who.style.top = '';                       // re-measure from the stylesheet position
-    var wr = who.getBoundingClientRect();
-    if (!wr.width || wr.top > 160) return true;   // hidden, or already moved by the page
-    var zoneRight = Math.max(360, wr.width + 80); // how far in from the right edge to look
-    var cands = document.querySelectorAll('button, a, [role="button"], [id^="qc"]');
-    var maxBottom = 0, hit = false;
-    for (var i = 0; i < cands.length; i++){
-      var el = cands[i];
-      if (el === who || who.contains(el)) continue;
-      var r = el.getBoundingClientRect();
-      if (!r.width || !r.height) continue;          // not rendered
-      if (r.top >= 160) continue;                   // not in the top strip
-      if (r.right < innerWidth - zoneRight) continue;   // not in the corner
-      if (r.width > innerWidth / 2) continue;       // a whole bar, not a control
-      if (r.bottom > maxBottom) maxBottom = r.bottom;
-      if (r.left < wr.right + 8 && r.right > wr.left - 8 &&
-          r.top < wr.bottom + 8 && r.bottom > wr.top - 8) hit = true;
+    var bar = document.getElementById('__dtabs');
+    if (!bar){
+      // No desktop bar (real phone layouts pin sign-out themselves) - just make
+      // sure the strip never covers the mobile tab bar.
+      return true;
     }
-    if (hit) who.style.top = Math.round(maxBottom + 10) + 'px';
+    if (who.parentNode !== bar) bar.appendChild(who);
+    who.style.setProperty('position','static','important');
+    who.style.setProperty('top','auto','important');
+    who.style.setProperty('right','auto','important');
+    who.style.setProperty('z-index','auto','important');
+    who.style.setProperty('margin','0 2px 0 8px','important');
+    who.style.setProperty('padding','0 0 0 10px','important');
+    who.style.setProperty('background','transparent','important');
+    who.style.setProperty('box-shadow','none','important');
+    who.style.setProperty('border-left','1px solid rgba(255,255,255,.25)','important');
     return true;
   }
-  // The strip and the cart button are both drawn by scripts after load, so
-  // keep trying briefly rather than assuming they are there on the first look.
   var tries = 0;
-  var timer = setInterval(function(){
-    if ((clearTopRight() && tries > 14) || ++tries > 30) clearInterval(timer);
-  }, 400);
-  window.addEventListener('load', clearTopRight);
-  var rz;
-  window.addEventListener('resize', function(){
-    clearTimeout(rz); rz = setTimeout(clearTopRight, 150);
-  });
+  var t = setInterval(function(){ if (dock() && document.getElementById('whoAmI') || ++tries > 60) clearInterval(t); }, 400);
+  if (window.MutationObserver){
+    new MutationObserver(function(){ dock(); })
+      .observe(document.documentElement, {childList: true, subtree: true});
+  }
+  window.addEventListener('resize', dock);
 })();
 </script>
 """
@@ -2325,6 +2314,15 @@ def _builder_do_build(eng, cust: str):
             else:
                 out[name] = ""
         out = out[out["ModelNum"].astype(str).str.strip() != ""]
+        # A source named at upload time ("VENDOR 1") adopts the real vendor the
+        # moment its rows show exactly one — the line reads like the catalog.
+        if not str(r["vendor_label"] or "").strip():
+            uniq = [v for v in out["Vendor"].astype(str).str.strip().unique() if v]
+            if len(uniq) == 1:
+                with eng.begin() as c2:
+                    c2.execute(text("update cat_sources set vendor_label=:v, name=:v "
+                                    "where id=:i and customer=:c"),
+                               {"v": uniq[0][:80], "i": r["id"], "c": cust})
         frames.append(out)
         per.append({"source": r["name"], "rows": int(len(out))})
     allf = pd.concat(frames, ignore_index=True)

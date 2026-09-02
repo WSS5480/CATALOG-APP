@@ -133,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v29</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v30</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -809,6 +809,15 @@ function copyText(t, btn){
 }
 
 let BLD = null;
+const _bldOpen = new Set();
+function bldToggle(id){
+  const det = $('bld-det-' + id), car = $('bld-car-' + id);
+  if(!det) return;
+  const open = det.style.display === 'none';
+  det.style.display = open ? 'block' : 'none';
+  if(car) car.textContent = open ? '\u25be' : '\u25b8';
+  if(open) _bldOpen.add(id); else _bldOpen.delete(id);
+}
 
 async function loadBuilder(){
   try{ BLD = await api('/api/admin/builder'); }
@@ -852,19 +861,24 @@ function drawBuilder(){
       '<input class="f" id="bld-vendor" placeholder="Vendor name — with a file it fills the Vendor column; alone it creates a feed-only source" style="max-width:330px">' +
       '<button class="btn" onclick="bldUpload()">Add source</button>' +
     '</div>' +
-    ((BLD.sources || []).map(src =>
-      '<div style="border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:12px">' +
-        '<div class="row"><b>' + esc(src.name) + '</b> ' + bldMissing(src) +
+    ((BLD.sources || []).map(src => {
+      if(window._bldJustAdded && src.name === window._bldJustAdded){ _bldOpen.add(src.id); window._bldJustAdded = ''; }
+      const open = _bldOpen.has(src.id);
+      return '<div style="border:1px solid var(--line);border-radius:12px;padding:9px 13px;margin-bottom:8px">' +
+        '<div class="row" style="cursor:pointer;user-select:none" onclick="bldToggle(\'' + esc(src.id) + '\')">' +
+        '<span id="bld-car-' + esc(src.id) + '" style="font-size:11px;color:#5a6273;width:14px">' + (open ? '\u25be' : '\u25b8') + '</span>' +
+        '<b>' + esc(src.name) + '</b> ' + bldMissing(src) +
         '<span class="muted small">' + src.rows + ' rows · ' + esc(src.filename) + '</span>' +
         ((src.feed && src.feed.type === 'email' && src.feed_addr)
           ? '<span class="small" style="background:#e9f0fa;color:#123a6b;border-radius:999px;' +
             'padding:3px 10px">\ud83d\udce7 <b style="user-select:all">' + esc(src.feed_addr) + '</b> ' +
             '<button class="btn ghost sm" style="padding:2px 8px" ' +
-            'onclick="copyText(\'' + esc(src.feed_addr) + '\', this)">Copy</button></span>'
+            'onclick="event.stopPropagation();copyText(\'' + esc(src.feed_addr) + '\', this)">Copy</button></span>'
           : '') +
         '<span style="flex:1"></span>' +
-        '<button class="btn ghost sm" onclick="bldPreview(\'' + esc(src.id) + '\')">Preview</button>' +
-        '<button class="btn ghost sm" onclick="bldRemove(\'' + esc(src.id) + '\',\'' + esc(src.name) + '\')">✕</button></div>' +
+        '<button class="btn ghost sm" onclick="event.stopPropagation();bldPreview(\'' + esc(src.id) + '\')">Preview</button>' +
+        '<button class="btn ghost sm" onclick="event.stopPropagation();bldRemove(\'' + esc(src.id) + '\',\'' + esc(src.name) + '\')">✕</button></div>' +
+        '<div id="bld-det-' + esc(src.id) + '" style="display:' + (open ? 'block' : 'none') + '">' +
         '<div class="row" style="margin-top:6px"><label class="f" style="margin:0">Vendor label</label>' +
           '<input class="f" style="max-width:240px" value="' + esc(src.vendor || '') + '"' +
           ' onchange="bldVendor(\'' + esc(src.id) + '\',this.value)"></div>' +
@@ -886,7 +900,8 @@ function drawBuilder(){
           }).join('') +
         '</div>' +
         '<div id="bld-prev-' + esc(src.id) + '"></div>' +
-      '</div>').join('') || '') +
+        '</div>' +
+      '</div>'; }).join('') || '') +
     '<div id="bld-vinfo"></div>' +
     '<div class="row" style="margin-top:14px">' +
       '<button class="btn green" onclick="bldBuild()">⚒ Build the catalog</button>' +
@@ -940,6 +955,7 @@ async function bldUpload(){
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({name: name, vendor: name})});
       say('✓ ' + (out.message || 'Created.'), 'ok');
+      window._bldJustAdded = name;
       $('bld-vendor').value = '';
       await loadBuilder();
     }catch(e){ say(e.message, 'bad'); }
@@ -959,6 +975,7 @@ async function bldUpload(){
     say('✓ ' + f.name + ' — ' + out.rows + ' rows, ' + out.mapped + ' fields recognised' +
         (out.missing.length ? ('; still needs ' + out.missing.join(', ')) : ' — ready.'),
         out.missing.length ? 'info' : 'ok');
+    window._bldJustAdded = (out.name || $('bld-vendor').value.trim() || f.name);
     await loadBuilder();
   }catch(e){ say(e.message, 'bad'); }
 }

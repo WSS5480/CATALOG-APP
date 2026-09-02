@@ -95,6 +95,10 @@
   .ticks label:last-child{border-bottom:0}
   .ticks label.off{opacity:.5;cursor:not-allowed}
   .ticks input{width:17px;height:17px;flex:none}
+  .ticks.compact label{padding:4px 9px;font-size:12.5px;gap:7px;border-bottom:1px solid #f0f2f7}
+  .ticks.compact input{width:14px;height:14px}
+  #s-users .t td{vertical-align:top;text-align:left}
+  .btn.danger{background:#b3261e;color:#fff}
   /* tick lists can live inside tables — the grid's wide-input styling must
      never reach their checkboxes */
   table.t td .ticks input{width:17px;min-width:17px;height:17px}
@@ -129,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v28</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v29</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -519,14 +523,23 @@ function drawGroups(){
       '<label class="f" style="margin:0;text-transform:none;font-weight:600">Pending orders</label>' +
       sel('gp-pen-' + i, [['','Inherit'],['none','None'],['read','Read only'],
         ['write','Read + write'],['delete','Full (delete too)']], pp.pending || '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Approver</label>' +
+      sel('gp-apr-' + i, yn, 'approver' in pp ? (pp.approver ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Purchasing Admin</label>' +
+      sel('gp-pur-' + i, yn, 'purchasing' in pp ? (pp.purchasing ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Vendor page</label>' +
+      sel('gp-vnd-' + i, yn, 'vendorpage' in pp ? (pp.vendorpage ? 'yes' : 'no') : '') +
       '<label class="f" style="margin:0 0 0 12px;text-transform:none;font-weight:600">Monthly budget $</label>' +
       '<input id="gp-bud-' + i + '" placeholder="50000 (blank = none)" value="' + esc(g.budget || '') + '"' +
       ' style="max-width:140px;padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">';
-    ['gp-cat-','gp-ord-','gp-pen-','gp-bud-'].forEach(pfx => $(pfx + i).addEventListener('change', () => {
+    ['gp-cat-','gp-ord-','gp-pen-','gp-apr-','gp-pur-','gp-vnd-','gp-bud-'].forEach(pfx => $(pfx + i).addEventListener('change', () => {
       const perms = {};
       if($('gp-cat-' + i).value) perms.catalog = $('gp-cat-' + i).value === 'yes';
       if($('gp-ord-' + i).value) perms.order = $('gp-ord-' + i).value === 'yes';
       if($('gp-pen-' + i).value) perms.pending = $('gp-pen-' + i).value;
+      if($('gp-apr-' + i).value) perms.approver = $('gp-apr-' + i).value === 'yes';
+      if($('gp-pur-' + i).value) perms.purchasing = $('gp-pur-' + i).value === 'yes';
+      if($('gp-vnd-' + i).value) perms.vendorpage = $('gp-vnd-' + i).value === 'yes';
       g.perms = perms;
       g.budget = $('gp-bud-' + i).value.trim();
       saveGroup(g);
@@ -639,18 +652,20 @@ function tickList(cls, i, names, have, empty){
 function pageTicks(cls, i, pp){
   const explicit = PAGES.some(([k]) => k in pp);
   const on = k => explicit ? (k === 'pending' ? (pp.pending || 'none') !== 'none' : !!pp[k]) : false;
-  return '<div style="min-width:135px">' + PAGES.map(([k, label]) =>
-    '<label class="small" style="display:block;cursor:pointer"><input type="checkbox" class="' +
-    cls + i + '" value="' + k + '"' + (on(k) ? ' checked' : '') + '> ' + label + '</label>')
-    .join('') +
-    '<div class="muted small" style="margin-top:2px">nothing ticked = from groups</div></div>';
+  return '<div style="min-width:150px"><div class="ticks compact" style="max-height:150px">' +
+    PAGES.map(([k, label]) =>
+    '<label><input type="checkbox" class="' + cls + i + '" value="' + k + '"' +
+    (on(k) ? ' checked' : '') + '><span><span class="nm">' + label + '</span></span></label>')
+    .join('') + '</div>' +
+    '<div class="muted small" style="margin-top:3px">nothing ticked = from groups</div></div>';
 }
 
 function accessTicks(cls, i, pp){
   const lv = {none:0, read:1, write:2, delete:3}[pp.pending] ?? -1;   // -1 = inherit
-  return '<div style="min-width:80px">' + [['read',1],['write',2],['delete',3]].map(([k, n]) =>
-    '<label class="small" style="display:block;cursor:pointer"><input type="checkbox" class="' +
-    cls + i + '" value="' + k + '"' + (lv >= n ? ' checked' : '') + '> ' + k + '</label>')
+  return '<div class="ticks compact" style="min-width:86px;max-height:150px">' +
+    [['read',1],['write',2],['delete',3]].map(([k, n]) =>
+    '<label><input type="checkbox" class="' + cls + i + '" value="' + k + '"' +
+    (lv >= n ? ' checked' : '') + '><span><span class="nm">' + k + '</span></span></label>')
     .join('') + '</div>';
 }
 
@@ -712,7 +727,7 @@ function drawUsers(){
       '<td>' + pageTicks('upg', i, p.perms || {}) + '</td>' +
       '<td>' + accessTicks('uac', i, p.perms || {}) + '</td>' +
       '<td style="white-space:nowrap"><button class="btn sm" data-usave="' + i + '">Save</button> ' +
-        '<button class="btn ghost sm" data-drop="' + esc(p.email) + '" title="Remove">✕</button></td></tr>'
+        '<button class="btn sm danger" data-drop="' + esc(p.email) + '">Remove</button></td></tr>'
     ).join('') + '</tbody></table></div>';
 
   const wire = (sel, fn) => box.querySelectorAll(sel).forEach(el =>

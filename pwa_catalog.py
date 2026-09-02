@@ -192,14 +192,23 @@ PWA_JS = """
     /* Bottom LEFT on purpose. The catalog already has a cart button bottom
        right at the top of the stacking order; anything put beside it is
        invisible to a thumb even though it looks fine on screen. */
-    '#installBar{position:fixed;left:14px;bottom:calc(14px + env(safe-area-inset-bottom));' +
-    'z-index:2147482900;display:none;align-items:center;gap:8px;background:' + THEME + ';color:#fff;' +
-    'border-radius:999px;padding:10px 8px 10px 16px;font:600 14px system-ui,-apple-system,' +
-    'Segoe UI,sans-serif;box-shadow:0 6px 22px rgba(10,20,40,.28);cursor:pointer}' +
+    '#installBar{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));' +
+    'z-index:2147482900;display:none;align-items:center;gap:13px;background:#fff;color:#1b2130;' +
+    'border-radius:16px;padding:12px 14px;font:14px system-ui,-apple-system,Segoe UI,sans-serif;' +
+    'box-shadow:0 10px 34px rgba(10,20,40,.3);border:1px solid #e7eaf2}' +
     '#installBar.show{display:flex}' +
+    'body.has-installbar #cat-admin-link,body.has-installbar #__dtabs,'+
+    'body.has-installbar #qcFab{bottom:calc(86px + env(safe-area-inset-bottom))!important}' +
     'body.qc-open #installBar{display:none!important}' +   /* cart is full screen */
-    '#installBar .x{width:26px;height:26px;border-radius:50%;border:0;background:rgba(255,255,255,.16);' +
-    'color:#fff;font:700 15px/1 system-ui;cursor:pointer}' +
+    '#installBar img{width:40px;height:40px;border-radius:10px;flex:none;background:' + THEME + '}' +
+    '#installBar .tx{min-width:0}' +
+    '#installBar .tx b{display:block;font-size:15px;font-weight:800}' +
+    '#installBar .tx span{display:block;font-size:12.5px;color:#5a6273;margin-top:1px}' +
+    '#installBar .sp{margin-left:auto}' +
+    '#installBar .go{border:0;border-radius:999px;background:#e0592a;color:#fff;font:800 14px system-ui;' +
+    'padding:10px 20px;cursor:pointer;flex:none}' +
+    '#installBar .x{width:28px;height:28px;border-radius:50%;border:0;background:#f0f2f7;' +
+    'color:#5a6273;font:700 15px/1 system-ui;cursor:pointer;flex:none}' +
     '#installHow{position:fixed;inset:0;z-index:2147483600;display:none;align-items:flex-end;' +
     'justify-content:center;background:rgba(10,18,34,.5)}' +
     '#installHow.show{display:flex}' +
@@ -215,7 +224,11 @@ PWA_JS = """
 
   var bar = document.createElement('div');
   bar.id = 'installBar';
-  bar.innerHTML = '<span>\\u2b07\\ufe0e Install app</span>' +
+  bar.innerHTML = '<img src="/icon-192.png" alt="">' +
+                  '<div class="tx"><b>Install ' + NAME + '</b>' +
+                  '<span>Runs full screen, works like an app.</span></div>' +
+                  '<span class="sp"></span>' +
+                  '<button class="go" type="button">Install</button>' +
                   '<button class="x" type="button" aria-label="Not now">\\u00d7</button>';
   var sheet = document.createElement('div');
   sheet.id = 'installHow';
@@ -229,11 +242,14 @@ PWA_JS = """
   function attach() {
     if (!document.body) return;
     document.body.appendChild(bar);
+    new MutationObserver(function () {
+      document.body.classList.toggle('has-installbar', bar.classList.contains('show'));
+    }).observe(bar, {attributes: true, attributeFilter: ['class']});
     document.body.appendChild(sheet);
     bar.querySelector('.x').addEventListener('click', function (e) {
       e.stopPropagation(); bar.classList.remove('show'); snooze();
     });
-    bar.addEventListener('click', open);
+    bar.querySelector('.go').addEventListener('click', function (e) { e.stopPropagation(); open(); });
     sheet.addEventListener('click', function (e) {
       if (e.target === sheet || e.target.tagName === 'BUTTON') sheet.classList.remove('show');
     });
@@ -252,6 +268,7 @@ PWA_JS = """
      pill, ask the browser what is actually on top at that spot and step above
      whatever is in the way. */
   function place() {
+    return;   /* full-width banner needs no corner-dodging */
     try {
       bar.style.bottom = 'calc(14px + env(safe-area-inset-bottom))';
       for (var pass = 0; pass < 4; pass++) {

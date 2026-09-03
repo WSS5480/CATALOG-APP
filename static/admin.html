@@ -133,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v40</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v41</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1142,7 +1142,60 @@ function bldFeedBox(src){
         : stLine) +
     '</div>' +
     (cfg || tail ? '<div class="row" style="margin-top:7px">' + cfg + tail + '</div>' : '') +
+    bldEtlBlock(src, f) +
     '</div>';
+}
+
+function bldEtlRow(id, st){
+  st = st || {};
+  const ops = [['subtract','−'],['percent_off','− %'],['add','+'],['multiply','×']];
+  return '<div class="row" style="gap:6px;margin-top:6px;flex-basis:100%">' +
+    '<input class="f fd-eout-' + esc(id) + '" placeholder="new column (e.g. Price)" value="' + esc(st.out || '') + '" style="max-width:170px">' +
+    '<span class="small" style="font-weight:800">=</span>' +
+    '<input class="f fd-ea-' + esc(id) + '" placeholder="column A (e.g. unitPrice)" value="' + esc(st.a || '') + '" style="max-width:190px">' +
+    '<select class="f fd-eop-' + esc(id) + '" style="max-width:90px;padding:7px 9px">' +
+      ops.map(o => '<option value="' + o[0] + '"' + ((st.op || 'subtract') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+    '</select>' +
+    '<input class="f fd-eb-' + esc(id) + '" placeholder="column B, or a number" value="' + esc(st.b || '') + '" style="max-width:190px">' +
+    '<button class="btn ghost sm" onclick="this.parentElement.remove()" title="remove step">✕</button>' +
+    '</div>';
+}
+
+function bldEtlBlock(src, f){
+  const id = src.id;
+  const rows = ((f && f.etl) || []).map(st => bldEtlRow(id, st)).join('');
+  return '<div style="margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
+    '<b class="small">ETL steps</b> <span class="muted small">— computed columns, the same math your ETL ' +
+    'app does. Name the output <b>Price</b> and it becomes the promo: Price = RegularCost − Discount. ' +
+    'Blank or zero discount = no promo.</span>' +
+    '<div id="fd-etl-' + esc(id) + '">' + rows + '</div>' +
+    '<button class="btn ghost sm" style="margin-top:6px" onclick="bldEtlAdd(\'' + esc(id) + '\')">＋ step</button>' +
+    '</div>' +
+    '<div class="row" style="margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
+    '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-photos-' + esc(id) + '"' +
+      ((f && f.photos_on) ? ' checked' : '') + '> <b>Host photos on this app</b> — vendor image links are ' +
+      'copied into this app\'s own database and the catalog serves them from Render.</label>' +
+    '<input class="f" id="fd-photos-col-' + esc(id) + '" placeholder="image column (blank = the mapped Photo column)"' +
+      ' value="' + esc((f && f.photos_col) || '') + '" style="max-width:280px">' +
+    '<button class="btn ghost sm" onclick="bldPhotosRun(this,\'' + esc(id) + '\')">Host photos now</button>' +
+    '<button class="btn sm" onclick="bldFeedSave(\'' + esc(id) + '\')">Save</button>' +
+    '</div>';
+}
+
+function bldEtlAdd(id){
+  const box = $('fd-etl-' + id); if(!box) return;
+  box.insertAdjacentHTML('beforeend', bldEtlRow(id, {}));
+}
+
+async function bldPhotosRun(btn, id){
+  try{
+    btn.disabled = true; btn.textContent = 'Starting…';
+    const r = await api('/api/admin/builder/photos/run', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id})});
+    say((r && r.message) || 'Hosting photos in the background — watch the card.', 'ok');
+    setTimeout(loadBuilder, 2500);
+  }catch(e){ say(e.message, 'bad'); }
+  btn.disabled = false; btn.textContent = 'Host photos now';
 }
 
 function bldFeedType(id, t){
@@ -1201,6 +1254,14 @@ async function bldFeedSave(id){
                     feed.password = ($('fd-pass-' + id) || {value:''}).value;
                     feed.path = g('path'); feed.pattern = g('pattern'); }
   if(t === 'email'){ feed.from_contains = g('from'); feed.subject_contains = g('subj'); }
+  const eo = [...document.querySelectorAll('.fd-eout-' + id)].map(e => e.value.trim());
+  const ea = [...document.querySelectorAll('.fd-ea-' + id)].map(e => e.value.trim());
+  const ep = [...document.querySelectorAll('.fd-eop-' + id)].map(e => e.value);
+  const eb = [...document.querySelectorAll('.fd-eb-' + id)].map(e => e.value.trim());
+  feed.etl = eo.map((o, j) => ({out: o, a: ea[j] || '', op: ep[j] || 'subtract', b: eb[j] || ''}))
+             .filter(st => st.out && st.a && st.b);
+  feed.photos_on = ($('fd-photos-' + id) || {checked:false}).checked;
+  feed.photos_col = ($('fd-photos-col-' + id) || {value:''}).value.trim();
   try{
     await api('/api/admin/builder/feed', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id, feed: feed})});

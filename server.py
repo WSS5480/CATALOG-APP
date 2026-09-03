@@ -41,6 +41,7 @@ import json
 import os
 import secrets
 import time
+import threading
 from urllib.parse import quote
 
 import httpx
@@ -128,7 +129,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "40"
+APP_VERSION = "41"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -521,6 +522,22 @@ _IMG_NAME = None
 async def image_passthrough(name: str):
     global _IMG_NAME
     import re
+    # Photos this app hosts itself (the ETL area's photo mirror) are keyed by a
+    # 24-char content hash. Serve those from our own database first; anything
+    # else is an ETL-hosted filename and proxies through as before.
+    iid = name[:-4] if name.lower().endswith((".jpg", ".png")) else \
+        (name[:-5] if name.lower().endswith((".jpeg", ".webp")) else name)
+    if re.fullmatch(r"[0-9a-f]{24}", iid) and os.environ.get("CATALOG_DATABASE_URL", "").strip():
+        try:
+            from sqlalchemy import text
+            with _builder_engine().connect() as c:
+                row = c.execute(text("select ctype, body from cat_images where iid=:i"),
+                                {"i": iid}).first()
+        except Exception:
+            row = None
+        if row is not None and row[1] is not None:
+            return Response(bytes(row[1]), media_type=str(row[0] or "image/jpeg"),
+                            headers={"Cache-Control": "public, max-age=31536000, immutable"})
     if _IMG_NAME is None:
         _IMG_NAME = re.compile(r"^[0-9a-f]{8,64}\.(?:jpg|jpeg|png|webp)$")
     if not _IMG_NAME.match(name):
@@ -715,6 +732,50 @@ async def orders_delete(coll: str, doc_id: str, request: Request):
         c.execute(text("delete from cat_orders where id=:i and coll=:o and customer=:c"),
                   {"i": doc_id, "o": coll, "c": cust})
     return {"ok": True}
+
+
+@app.post("/api/admin/builder/photos/run")
+async def builder_photos_run(request: Request):
+    """Mirror a source's photos now, in the background, then rebuild so the
+    catalog starts pointing at the hosted copies."""
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json() or {}
+    sid = str(body.get("id") or "")
+    from sqlalchemy import text
+    eng = _builder_engine()
+    with eng.connect() as c:
+        row = c.execute(text("select * from cat_sources where id=:i and customer=:c"),
+                        {"i": sid, "c": cust}).mappings().first()
+    if not row:
+        raise HTTPException(404, "No such source.")
+
+    def _note(msg, running=True):
+        try:
+            with eng.begin() as c:
+                c.execute(text("update cat_sources set feed_status=:s where id=:i"),
+                          {"s": json.dumps({"running": running, "note": msg,
+                                            "last_run": time.strftime("%Y-%m-%d %H:%M"),
+                                            "last_ts": time.time(), "ok": not running}),
+                           "i": sid})
+        except Exception:
+            pass
+
+    def _job():
+        try:
+            def prog(i, got, tag=""):
+                _note(f"Hosting photos — {i} checked, {got} saved… {tag}")
+            summary = _photos_mirror(eng, cust, row, progress=prog)
+            try:
+                _builder_do_build(eng, cust)
+                summary += " · catalog rebuilt"
+            except Exception as be:
+                summary += f" · rebuild: {str(be)[:100]}"
+            _note(summary, running=False)
+        except Exception as e:
+            _note(f"Photo hosting failed: {str(e)[:200]}", running=False)
+
+    threading.Thread(target=_job, daemon=True).start()
+    return {"ok": True, "message": "Hosting photos in the background — watch the card."}
 
 
 @app.post("/api/app/appdb/export")
@@ -2058,6 +2119,14 @@ def _builder_migrate(engine):
                 freight_min_by_brand text default '',
                 freight_qty_or_cost text default '',
                 primary key (customer, vendor))""",
+        """create table if not exists cat_images(
+                iid text primary key,
+                customer text not null,
+                url text not null,
+                ctype text default 'image/jpeg',
+                body bytea,
+                size integer default 0,
+                fetched_at timestamp default current_timestamp)""",
         # upgrades for stores created before these columns existed
         "alter table cat_sources add column if not exists feed text default '{}'",
         "alter table cat_sources add column if not exists feed_status text default '{}'",
@@ -2364,6 +2433,119 @@ async def builder_preview(request: Request, id: str = ""):
     return {"columns": list(out.columns), "rows": json.loads(out.to_json(orient="records"))}
 
 
+def _builder_apply_etl(df, steps):
+    """The small ETL area: a few named computed columns per source, the same
+    math the Domo ETL does — Promo = Regular minus the discount, and friends.
+    A step's b side is a column when one matches, otherwise a plain number."""
+    import pandas as pd
+
+    def numcol(x):
+        x = str(x or "").strip()
+        if not x:
+            return None
+        if x in df.columns:
+            return pd.to_numeric(df[x].astype(str).str.replace(r"[^0-9.\-]", "", regex=True),
+                                 errors="coerce")
+        try:
+            return float(x)
+        except Exception:
+            return None
+    for st in (steps or [])[:12]:
+        if not isinstance(st, dict):
+            continue
+        out = str(st.get("out") or "").strip()
+        op = str(st.get("op") or "").strip()
+        A = numcol(st.get("a"))
+        B = numcol(st.get("b"))
+        if not out or A is None or B is None:
+            continue
+        if op == "subtract":
+            R = A - B
+        elif op == "percent_off":
+            R = A * (1 - B / 100.0)
+        elif op == "add":
+            R = A + B
+        elif op == "multiply":
+            R = A * B
+        else:
+            continue
+        R = R.round(2)
+        # Discount math semantics: no discount means no promo — the cell stays
+        # blank instead of repeating the regular price.
+        if op in ("subtract", "percent_off") and hasattr(B, "where"):
+            R = R.where(B.fillna(0) > 0)
+        R = R.where(R.notna() & (R > 0))
+        df[out] = R.map(lambda v: "" if pd.isna(v) else ("%.2f" % v))
+    return df
+
+
+def _photos_iid(url: str) -> str:
+    return hashlib.sha1(str(url).strip().encode("utf-8", "replace")).hexdigest()[:24]
+
+
+def _photos_mirror(eng, cust: str, row, progress=None) -> str:
+    """Pull every photo the source's image column names and keep a copy in
+    this app's own database, so the catalog serves them from Render instead
+    of leaning on the vendor's links. Returns a one-line summary."""
+    import pandas as pd
+    from sqlalchemy import text
+    cfg = _feed_of(row)
+    df = pd.read_sql_table(row["table_name"], eng)
+    try:
+        m = json.loads(row["mapping"] or "{}")
+    except Exception:
+        m = {}
+    col = str(cfg.get("photos_col") or "").strip() or str(m.get("ItemImage2") or "")
+    if not col or col not in df.columns:
+        low = {str(c).lower(): str(c) for c in df.columns}
+        col = next((low[c] for c in low
+                    if "image" in c or "photo" in c or "picture" in c), "")
+    if not col:
+        raise ValueError("No image-URL column found — pick one on the card.")
+    urls = [u for u in df[col].astype(str).str.strip().unique().tolist()
+            if u.lower().startswith(("http://", "https://"))]
+    if not urls:
+        return "no web photo links in this source"
+    have = set()
+    from sqlalchemy import bindparam
+    with eng.connect() as c:
+        for i in range(0, len(urls), 500):
+            batch = [_photos_iid(u) for u in urls[i:i + 500]]
+            q = text("select iid from cat_images where customer=:c and iid in :ids") \
+                .bindparams(bindparam("ids", expanding=True))
+            rs = c.execute(q, {"c": cust, "ids": batch}).all()
+            have.update(r[0] for r in rs)
+    todo = [u for u in urls if _photos_iid(u) not in have][:4000]
+    got, bad = 0, 0
+    if todo:
+        tmo = httpx.Timeout(25.0, connect=10.0)
+        with httpx.Client(timeout=tmo, follow_redirects=True) as cl:
+            for i, u in enumerate(todo, 1):
+                try:
+                    r = cl.get(u)
+                    ct = r.headers.get("content-type", "").split(";")[0].strip().lower()
+                    okc = r.status_code == 200 and len(r.content) and                         len(r.content) <= 3 * 1024 * 1024 and                         (ct.startswith("image/") or u.lower().split("?")[0]
+                         .endswith((".jpg", ".jpeg", ".png", ".gif", ".webp")))
+                    if okc:
+                        if not ct.startswith("image/"):
+                            ct = "image/jpeg"
+                        with eng.begin() as c:
+                            c.execute(text("insert into cat_images(iid,customer,url,ctype,body,size) "
+                                           "values(:i,:c,:u,:t,:b,:s)"),
+                                      {"i": _photos_iid(u), "c": cust, "u": u[:900],
+                                       "t": ct[:60], "b": r.content, "s": len(r.content)})
+                        got += 1
+                    else:
+                        bad += 1
+                except Exception:
+                    bad += 1
+                if progress and (i % 25 == 0 or i == len(todo)):
+                    progress(i, got, f"photos ({len(todo)} to fetch)")
+                time.sleep(0.15)
+    return (f"photos: {got} hosted" + (f", {bad} failed" if bad else "") +
+            (f", {len(have)} already here" if have else ""))
+
+
 def _builder_do_build(eng, cust: str):
     """Append every ready source into one catalog table. Raises ValueError with
     a human sentence when it cannot. Keeps the current serving switch."""
@@ -2388,14 +2570,22 @@ def _builder_do_build(eng, cust: str):
         raise ValueError("Not built — these sources still have required fields with no "
                          "column: " + " · ".join(blocked[:4]))
     frames, per = [], []
+    photo_have = None
     for r in srcs:
         df = pd.read_sql_table(r["table_name"], eng)
+        fd = _feed_of(r)
+        if fd.get("etl"):
+            df = _builder_apply_etl(df, fd.get("etl"))
         m = json.loads(r["mapping"] or "{}")
         out = pd.DataFrame()
         for name, _req, _h in BUILDER_FIELDS:
             src = m.get(name)
             if src and src in df.columns:
                 out[name] = df[src].astype(str)
+            elif name in df.columns:
+                # an ETL step may write a column under the canonical name —
+                # it flows straight into the build without extra mapping
+                out[name] = df[name].astype(str)
             elif name == "Vendor" and r["vendor_label"]:
                 out[name] = r["vendor_label"]
             else:
@@ -2410,6 +2600,20 @@ def _builder_do_build(eng, cust: str):
                     c2.execute(text("update cat_sources set vendor_label=:v, name=:v "
                                     "where id=:i and customer=:c"),
                                {"v": uniq[0][:80], "i": r["id"], "c": cust})
+        if fd.get("photos_on"):
+            if photo_have is None:
+                with eng.connect() as c2r:
+                    photo_have = {x[0] for x in c2r.execute(
+                        text("select iid from cat_images where customer=:c"),
+                        {"c": cust}).all()}
+            def _loc(u):
+                u = str(u or "").strip()
+                if u.lower().startswith(("http://", "https://")):
+                    i2 = _photos_iid(u)
+                    if i2 in photo_have:
+                        return "/api/images/" + i2
+                return u
+            out["ItemImage2"] = out["ItemImage2"].map(_loc)
         frames.append(out)
         per.append({"source": r["name"], "rows": int(len(out))})
     allf = pd.concat(frames, ignore_index=True)
@@ -2529,7 +2733,8 @@ async def _builder_rows_local(ident: str, request: Request):
         except Exception:
             lim = 100000
         df = df.head(lim)
-        return JSONResponse(json.loads(df.to_json(orient="records")))
+        recs = json.loads(df.to_json(orient="records"))
+        return JSONResponse(_absolutize_images(recs, _self_base(request)))
     except HTTPException:
         return None
     except Exception:
@@ -4188,6 +4393,17 @@ def _feed_run_source(eng, row) -> dict:
             else:
                 out.update(ok=True, changed=True, sha=sha, rows=int(len(df)),
                            note=f"Pulled {fname} — {len(df)} rows.")
+        if cfg.get("photos_on") and out.get("ok") and out.get("changed"):
+            try:
+                fresh = None
+                with eng.connect() as c:
+                    fresh = c.execute(text("select * from cat_sources where id=:i"),
+                                      {"i": row["id"]}).mappings().first()
+                note2 = _photos_mirror(eng, str(row["customer"]), fresh or row,
+                                       progress=_progress)
+                out["note"] = out["note"].rstrip(".") + " · " + note2
+            except Exception as pe:
+                out["note"] = out["note"] + f" · photos failed: {str(pe)[:120]}"
         # Freight by store rides along on every successful API check — it is
         # not part of the file, so it refreshes even when the file is unchanged.
         if kind == "api" and cfg.get("frt_on") and out.get("ok"):
@@ -4378,8 +4594,28 @@ async def builder_feed_save(request: Request):
                 keep["every_hours"] = max(1, min(int(cfg.get("every_hours") or 24), 168))
             except Exception:
                 keep["every_hours"] = 24
+        # The small ETL area and the photo host ride on every feed type —
+        # manual uploads use them exactly like API pulls.
+        steps = []
+        for st in (cfg.get("etl") or [])[:12]:
+            if not isinstance(st, dict):
+                continue
+            o = str(st.get("out") or "").strip()[:60]
+            op = str(st.get("op") or "").strip()
+            av = str(st.get("a") or "").strip()[:80]
+            bv = str(st.get("b") or "").strip()[:80]
+            if o and av and op in ("subtract", "percent_off", "add", "multiply"):
+                steps.append({"out": o, "op": op, "a": av, "b": bv})
+        if steps:
+            keep["etl"] = steps
+        if bool(cfg.get("photos_on")):
+            keep["photos_on"] = True
+            keep["photos_col"] = str(cfg.get("photos_col") or "").strip()[:80]
+        stored = keep if kind != "manual" else (
+            {k: keep[k] for k in ("type", "etl", "photos_on", "photos_col") if k in keep}
+            if ("etl" in keep or "photos_on" in keep) else {})
         c.execute(text("update cat_sources set feed=:f where id=:i"),
-                  {"f": json.dumps({} if kind == "manual" else keep), "i": sid})
+                  {"f": json.dumps(stored), "i": sid})
     return {"ok": True}
 
 

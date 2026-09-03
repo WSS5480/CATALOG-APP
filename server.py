@@ -85,6 +85,8 @@ DATASETS = {
 }
 
 app = FastAPI(title="Catalog / Order Form")
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=2048)
 
 # A 37,000-row catalog as raw JSON is a fifteen-megabyte page load; gzipped it
 # is under two. The mapping app got this the first time "loads real slow" was
@@ -129,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "59"
+APP_VERSION = "60"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -428,6 +430,14 @@ async def rows(ident: str, request: Request):
     aux = await _aux_rows_local(ident, request)
     if aux is not None:
         return aux
+    if not ETL_BASE:
+        # Nothing to proxy to. A signed-out session gets a 401 the page can
+        # act on (bounce to /login); anything else gets an empty list. The
+        # old behavior fell through to the ETL client, whose "ETL_BASE_URL
+        # is not set" 500 the page treated as a transient error and retried.
+        if (await _whoami(request)) is None:
+            raise HTTPException(401, "Not signed in.")
+        return JSONResponse([])
     params = dict(request.query_params)
     asked = params.pop("profile", "").strip()
     my = await _my_datasets(request)
@@ -613,6 +623,23 @@ async def orders_list(coll: str, request: Request):
     with _builder_engine().connect() as c:
         rows = c.execute(text("select id, content from cat_orders where coll=:o and customer=:c "
                               "order by created_at"), {"o": coll, "c": cust}).all()
+    need_filter = False
+    if coll == "CatalogEdits":
+        sc_f = (who.get("scope") or {})
+        need_filter = not (sc_f.get("all") or who.get("admin") or sc_f.get("vendors_all"))
+    if not need_filter:
+        # The stored content is already JSON — hand it back without the
+        # parse/re-serialize round trip (thousands of order docs add up).
+        parts = []
+        for rid, content in rows:
+            c = (content or "").strip() or "{}"
+            if not (c.startswith("{") and c.endswith("}")):
+                try:
+                    c = json.dumps(json.loads(c))
+                except Exception:
+                    c = "{}"
+            parts.append('{"id":%s,"content":%s}' % (json.dumps(str(rid)), c))
+        return Response("[" + ",".join(parts) + "]", media_type="application/json")
     out = []
     for rid, content in rows:
         try:
@@ -2360,6 +2387,9 @@ async def brand_manifest():
 _BDB = {"engine": None}
 
 
+_BDF_CACHE: dict = {}   # customer -> ((table, built_at, rows), DataFrame)
+
+
 def _builder_engine():
     url = os.environ.get("CATALOG_DATABASE_URL", "").strip()
     if not url:
@@ -3158,7 +3188,15 @@ async def _builder_rows_local(ident: str, request: Request):
                               {"c": cust}).mappings().first()
         if not built:
             return None
-        df = pd.read_sql_table(built["table_name"], eng)
+        _ck = (str(built["table_name"]), str(built["built_at"]), int(built["row_count"] or 0))
+        _hit = _BDF_CACHE.get(cust)
+        if _hit is not None and _hit[0] == _ck:
+            df = _hit[1]
+        else:
+            df = pd.read_sql_table(built["table_name"], eng)
+            _BDF_CACHE[cust] = (_ck, df)
+            if len(_BDF_CACHE) > 20:
+                _BDF_CACHE.pop(next(iter(_BDF_CACHE)))
         # Access still means something here: a person whose reach is a set of
         # vendors sees exactly those vendors of the built catalog — and "all
         # except these" stays durable as new vendors arrive.

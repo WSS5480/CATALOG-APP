@@ -131,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "66"
+APP_VERSION = "67"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
     # The installed-app name lives in pwa_catalog.py, a file that is easy

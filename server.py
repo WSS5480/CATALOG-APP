@@ -129,7 +129,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "43"
+APP_VERSION = "44"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -2437,6 +2437,36 @@ async def builder_preview(request: Request, id: str = ""):
     return {"columns": list(out.columns), "rows": json.loads(out.to_json(orient="records"))}
 
 
+# Every schema field has a type, and the build converts to it: text is
+# trimmed, decimals come out as 1234.50 (currency signs and commas cleaned
+# off), whole numbers as plain integers. A blank stays blank — except
+# DisplayOrder, where blank means "sort last": 99999.
+_BTYPES = {
+    "ModelNum": ("text", ""), "ItemName": ("text", ""), "Vendor": ("text", ""),
+    "RegularCost": ("decimal", ""), "Price": ("decimal", ""),
+    "ItemImage2": ("text", ""), "Brand": ("text", ""), "Category": ("text", ""),
+    "SubCategory": ("text", ""), "Collection": ("text", ""), "Color": ("text", ""),
+    "DisplayOrder": ("integer", "99999"), "QtyAvailable": ("integer", ""),
+}
+
+
+def _btype_convert(series, kind, blank):
+    """One built column to its schema type. 'nan'/'None'/'null' strings (an
+    API frame's empties after astype(str)) count as blank."""
+    import pandas as pd
+    s = series.astype(str).str.strip()
+    s = s.mask(s.str.lower().isin(("nan", "none", "null")), "")
+    if kind == "decimal":
+        n = pd.to_numeric(s.str.replace(r"[^0-9.\-]", "", regex=True), errors="coerce")
+        s = n.map(lambda v: "" if pd.isna(v) else ("%.2f" % v))
+    elif kind == "integer":
+        n = pd.to_numeric(s.str.replace(r"[^0-9.\-]", "", regex=True), errors="coerce")
+        s = n.map(lambda v: "" if pd.isna(v) else str(int(round(v))))
+    if blank:
+        s = s.mask(s == "", blank)
+    return s
+
+
 def _builder_apply_etl(df, steps):
     """The small ETL area: a few named computed columns per source, the same
     math the Domo ETL does — Promo = Regular minus the discount, and friends.
@@ -2459,6 +2489,21 @@ def _builder_apply_etl(df, steps):
             continue
         out = str(st.get("out") or "").strip()
         op = str(st.get("op") or "").strip()
+        if op == "fill_blank":
+            # if blank -> B: keeps A's value, fills the empties (and the
+            # 'nan' strings an API frame leaves) with a column or a constant
+            av = str(st.get("a") or "").strip()
+            bv = str(st.get("b") or "").strip()
+            if not out or av not in df.columns:
+                continue
+            araw = df[av].astype(str).str.strip()
+            araw = araw.mask(araw.str.lower().isin(("nan", "none", "null")), "")
+            if bv in df.columns:
+                braw = df[bv].astype(str).str.strip()
+                df[out] = araw.mask(araw == "", braw)
+            else:
+                df[out] = araw.mask(araw == "", bv)
+            continue
         A = numcol(st.get("a"))
         B = numcol(st.get("b"))
         if not out or A is None or B is None:
@@ -2606,6 +2651,9 @@ def _builder_do_build(eng, cust: str):
                 out[name] = r["vendor_label"]
             else:
                 out[name] = ""
+        for name, _req, _h in BUILDER_FIELDS:
+            kind, blank = _BTYPES.get(name, ("text", ""))
+            out[name] = _btype_convert(out[name], kind, blank)
         out = out[out["ModelNum"].astype(str).str.strip() != ""]
         # A source named at upload time ("VENDOR 1") adopts the real vendor the
         # moment its rows show exactly one — the line reads like the catalog.
@@ -4620,7 +4668,7 @@ async def builder_feed_save(request: Request):
             op = str(st.get("op") or "").strip()
             av = str(st.get("a") or "").strip()[:80]
             bv = str(st.get("b") or "").strip()[:80]
-            if o and av and op in ("subtract", "percent_off", "add", "multiply"):
+            if o and av and op in ("subtract", "percent_off", "add", "multiply", "fill_blank"):
                 steps.append({"out": o, "op": op, "a": av, "b": bv})
         if steps:
             keep["etl"] = steps

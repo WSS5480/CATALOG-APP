@@ -133,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v51</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v52</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -224,10 +224,11 @@
 
       <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:14px;background:var(--panel)">
         <h4 style="margin:0 0 6px;font-size:14.5px">Locations &amp; owners</h4>
-        <p class="cs" style="margin-bottom:10px">The registry the order form reads — every location, its
-          group, and who owns each (the same schema as the Domo StoreMapping dataset, so that file
-          uploads here as-is). Owners' emails ride on every order from their location or group.
-          Uploading a file replaces the whole list.</p>
+        <p class="cs" style="margin-bottom:10px">The registry the order form reads. The schema is built in:
+          GroupID, Group, LocationID, LocationName, LocationManagersName, LocationEmail,
+          GroupManagersName, GroupEmail — your Domo StoreMapping export loads as-is too.
+          Upload a file, match column to column (just like the Catalog Builder), then assign
+          the rest line by line below. Uploading replaces the whole list.</p>
         <div class="row" style="margin-bottom:10px">
           <input type="file" id="loc-file" accept=".csv,.xlsx,.xls" style="font-size:13px">
           <button class="btn sm" onclick="locUpload()">Upload &amp; replace</button>
@@ -836,11 +837,14 @@ function bldToggle(id){
 
 let LOCS = [];
 const LOC_COLS = [
-  ['group_id','Group'], ['group_name','Group name'], ['loc_num','Location #'],
-  ['loc_name','Location name'], ['loc_owner_name','Location owner'],
-  ['loc_owner_email','Owner email'], ['group_owner_name','Group owner'],
-  ['group_owner_email','Group owner email'], ['pd_email','Purchasing director']
+  ['group_id','GroupID'], ['group_name','Group'], ['loc_num','LocationID'],
+  ['loc_name','LocationName'], ['loc_owner_name','LocationManagersName'],
+  ['loc_owner_email','LocationEmail'], ['group_owner_name','GroupManagersName'],
+  ['group_owner_email','GroupEmail']
 ];
+const LOC_SCHEMA = ['GroupID','Group','LocationID','LocationName',
+                    'LocationManagersName','LocationEmail','GroupManagersName','GroupEmail'];
+let _locB64 = null, _locName = '';
 async function loadLocs(){
   const box = $('loc-body'); if(!box) return;
   try{
@@ -892,10 +896,39 @@ async function locUpload(){
   const buf = await f[0].arrayBuffer();
   let bin = ''; const u8 = new Uint8Array(buf);
   for(let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  _locB64 = btoa(bin); _locName = f[0].name;
   try{
     const j = await api('/api/admin/locations/upload', {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({filename: f[0].name, content_b64: btoa(bin)})});
+      body: JSON.stringify({filename: _locName, content_b64: _locB64, probe: true})});
+    locMapUI(j);
+  }catch(e){ say(e.message, 'bad'); }
+}
+function locMapUI(p){
+  const box = $('loc-body'); if(!box) return;
+  const opts = c => '<option value="">— skip —</option>' + (p.columns || []).map(x =>
+    '<option value="' + esc(x) + '"' + (x === c ? ' selected' : '') + '>' + esc(x) + '</option>').join('');
+  box.innerHTML =
+    '<div style="border:1px dashed var(--line);border-radius:10px;padding:12px;background:#fbfcff">' +
+    '<b class="small">Match the file\'s columns</b> <span class="muted small">— ' + (p.rows || 0) +
+    ' rows found. Each schema field picked its own match; fix any, then load. After loading, edit the rest line by line.</span>' +
+    '<div class="two" style="margin-top:9px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))">' +
+    LOC_SCHEMA.map(f =>
+      '<div class="fg" style="margin-bottom:7px"><label class="f">' + esc(f) + '</label>' +
+      '<select class="f loc-map" data-lf="' + esc(f) + '" style="padding:7px 9px;font-size:13px">' +
+      opts((p.automap || {})[f] || '') + '</select></div>').join('') +
+    '</div>' +
+    '<div class="row" style="margin-top:8px">' +
+    '<button class="btn sm" onclick="locLoadMapped()">Load ' + (p.rows || 0) + ' rows with this matching</button>' +
+    '<button class="btn ghost sm" onclick="loadLocs()">Cancel</button></div></div>';
+}
+async function locLoadMapped(){
+  const mapping = {};
+  document.querySelectorAll('.loc-map').forEach(s => { mapping[s.getAttribute('data-lf')] = s.value; });
+  try{
+    const j = await api('/api/admin/locations/upload', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({filename: _locName, content_b64: _locB64, mapping: mapping})});
     say('✓ ' + (j.message || 'Loaded.'), 'ok');
     await loadLocs();
   }catch(e){ say(e.message, 'bad'); }

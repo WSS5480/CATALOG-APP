@@ -133,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v43</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v44</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -889,7 +889,10 @@ function drawBuilder(){
             const dark = f.required && !cur && !(f.name === 'Vendor' && src.vendor);
             return '<div class="fg" style="margin-bottom:8px"><label class="f"' +
               (dark ? ' style="color:#c0392b"' : '') + '>' + esc(f.name === 'Price' ? 'Promo Cost' : f.name) +
-              (f.required ? ' *' : '') + '</label>' +
+              (f.required ? ' *' : '') +
+              '<span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0"> · ' +
+              ({RegularCost:'decimal', Price:'decimal', DisplayOrder:'whole № (blank → 99999)',
+                QtyAvailable:'whole №'}[f.name] || 'text') + '</span></label>' +
               '<select class="f" style="padding:7px 9px;font-size:13.5px"' +
               ' onchange="bldMap(\'' + esc(src.id) + '\',\'' + esc(f.name) + '\',this.value)">' +
               '<option value="">— not in this file —</option>' +
@@ -1152,7 +1155,7 @@ function bldEtlRow(id, st){
   st = st || {};
   const cols = ((window._bldCols || {})[id] || []).slice()
     .sort((a, b) => String(a).toLowerCase().localeCompare(String(b).toLowerCase()));
-  const ops = [['subtract','−'],['percent_off','− %'],['add','+'],['multiply','×']];
+  const ops = [['subtract','−'],['percent_off','− %'],['add','+'],['multiply','×'],['fill_blank','if blank →']];
   const copt = cur => '<option value=""' + (cur ? '' : ' selected') + '>— pick a column —</option>' +
     cols.map(c => '<option value="' + esc(c) + '"' + (String(c) === String(cur || '') ? ' selected' : '') + '>' +
       esc(c) + '</option>').join('');
@@ -1183,7 +1186,9 @@ function bldEtlBlock(src, f){
     '<b class="small">ETL steps</b> <span class="muted small">— computed columns, the same math your ETL ' +
     'app does. Name the output <b>Promo Cost</b> and it becomes the promo: Promo Cost = RegularCost − ' +
     'Discount. The store always shows the lesser of Regular and Promo — a blank promo just means no ' +
-    'sale, which is most vendors most of the time.</span>' +
+    'sale, which is most vendors most of the time. Every schema field is typed and the build converts ' +
+    'to it automatically — prices to decimals, Display Order and stock to whole numbers (a blank ' +
+    'Display Order becomes 99999, sorting last). “if blank →” fills empties with a column or a value.</span>' +
     '<div id="fd-etl-' + esc(id) + '">' + rows + '</div>' +
     '<button class="btn ghost sm" style="margin-top:6px" onclick="bldEtlAdd(\'' + esc(id) + '\')">＋ step</button> ' +
     '<button class="btn sm" style="margin-top:6px" onclick="bldFeedSave(\'' + esc(id) + '\')">Save steps</button>' +

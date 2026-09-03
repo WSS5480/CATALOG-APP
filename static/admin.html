@@ -133,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v53</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v54</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -250,6 +250,23 @@
         catalog, and emails you if a file arrives with schema trouble. The storefront serves the
         result from this app's own database.</p>
       <div id="bld-body" class="center">Loading…</div>
+
+      <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:14px;background:var(--panel)">
+        <h4 style="margin:0 0 6px;font-size:14.5px">Mailbox for email feeds</h4>
+        <p class="cs" style="margin-bottom:10px">The inbox this app checks for vendors' emailed
+          files. Enter any owner's mail account here — it lives in this app's own database, so
+          nobody's personal email has to sit in the Render account. Saved settings win over the
+          Render environment variables; clear all the boxes and Save to go back to those.</p>
+        <div class="row">
+          <input class="f" id="mb-host" placeholder="imap.mail.com" style="max-width:220px">
+          <input class="f" id="mb-port" placeholder="993" style="max-width:80px">
+          <input class="f" id="mb-user" placeholder="feeds@company.com" style="max-width:240px">
+          <input class="f" id="mb-pass" type="password" placeholder="password" style="max-width:180px">
+          <button class="btn sm" onclick="mbSave()">Save</button>
+          <button class="btn ghost sm" onclick="mbTest(this)">Test connection</button>
+          <span class="small muted" id="mb-src"></span>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -936,6 +953,40 @@ async function locLoadMapped(){
 }
 setTimeout(loadLocs, 600);
 
+async function loadMailbox(){
+  try{
+    const m = await api('/api/admin/mailbox');
+    if($('mb-host')) $('mb-host').value = m.host || '';
+    if($('mb-port')) $('mb-port').value = m.port || 993;
+    if($('mb-user')) $('mb-user').value = m.user || '';
+    if($('mb-pass')) $('mb-pass').value = m.password || '';
+    const t = m.source === 'app' ? ('✓ using these settings (' + (m.effective_user || m.user) + ')')
+          : m.source === 'render-env' ? 'using the Render environment variables (' + (m.effective_user || '') + ')'
+          : 'not connected yet';
+    if($('mb-src')) $('mb-src').textContent = t;
+  }catch(e){}
+}
+async function mbSave(){
+  try{
+    const j = await api('/api/admin/mailbox', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({host: $('mb-host').value, port: $('mb-port').value,
+                            user: $('mb-user').value, password: $('mb-pass').value})});
+    say('✓ ' + (j.message || 'Saved.'), 'ok');
+    await loadMailbox(); await loadBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+async function mbTest(btn){
+  btn.disabled = true; btn.textContent = 'Testing…';
+  try{
+    const j = await api('/api/admin/mailbox/test', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: '{}'});
+    say('✓ ' + (j.message || 'Connected.'), 'ok');
+  }catch(e){ say(e.message, 'bad'); }
+  btn.disabled = false; btn.textContent = 'Test connection';
+}
+setTimeout(loadMailbox, 800);
+
 async function loadBuilder(){
   try{ BLD = await api('/api/admin/builder'); }
   catch(e){ $('bld-body').innerHTML = '<div class="center">' + esc(e.message) + '</div>'; return; }
@@ -1237,9 +1288,9 @@ function bldFeedBox(src){
         'onclick="copyText(\'' + esc(src.feed_addr || '') + '\', this)">Copy</button><br><span class="muted">It lands in your connected mailbox and only this source ' +
         'picks it up. Or fill “sender contains” below to match by sender instead.</span></div>'
       : '<div class="small" style="color:#7a4b00;background:#fff4e5;border-radius:8px;' +
-        'padding:7px 10px;flex-basis:100%">Mailbox not connected yet — on Render, this ' +
-        'service → Environment: add EMAIL_IMAP_HOST, EMAIL_IMAP_USER and EMAIL_IMAP_PASS ' +
-        '(and EMAIL_IMAP_PORT if it is not 993).</div>') +
+        'padding:7px 10px;flex-basis:100%">Mailbox not connected yet — fill in the ' +
+        '<b>Mailbox for email feeds</b> box at the bottom of this tab (host, user, ' +
+        'password) and press Save. No Render settings needed.</div>') +
         inp('from', 'sender contains (optional), e.g. @vendor1.com', f.from_contains, '250px') +
         inp('subj', 'subject contains (optional)', f.subject_contains, '220px');
   }

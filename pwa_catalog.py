@@ -15,7 +15,7 @@ from fastapi import APIRouter, Response
 
 router = APIRouter(tags=["install"])
 
-APP_NAME = "Buddy's Catalog"
+APP_NAME = "Product Catalog"
 APP_SHORT = "Catalog"          # what sits under the icon on a phone
 APP_DESC = "Browse the catalog and place store orders."
 THEME = "#16213f"                  # the phone's status bar while open

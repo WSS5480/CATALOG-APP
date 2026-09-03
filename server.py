@@ -131,9 +131,14 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "60"
+APP_VERSION = "61"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
+    # The installed-app name lives in pwa_catalog.py, a file that is easy
+    # to miss in an upload. Pin it here so the manifest is right whenever
+    # server.py deploys, whatever vintage of that module sits beside it.
+    import pwa_catalog as _pwa_mod
+    _pwa_mod.APP_NAME = "Product Catalog"
 except Exception:                      # missing file must never kill the app
     _pwa_router = None
     def _pwa_inject(x): return x

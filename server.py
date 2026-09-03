@@ -129,7 +129,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "41"
+APP_VERSION = "42"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -2578,14 +2578,26 @@ def _builder_do_build(eng, cust: str):
             df = _builder_apply_etl(df, fd.get("etl"))
         m = json.loads(r["mapping"] or "{}")
         out = pd.DataFrame()
+        norms = {}
+        for c0 in df.columns:
+            norms.setdefault(_bnorm(c0), str(c0))
+        _fall = {"Price": ("promocost", "promo", "promoprice", "saleprice", "salecost"),
+                 "QtyAvailable": ("qtyavailable", "qtyavail")}
         for name, _req, _h in BUILDER_FIELDS:
             src = m.get(name)
             if src and src in df.columns:
                 out[name] = df[src].astype(str)
-            elif name in df.columns:
-                # an ETL step may write a column under the canonical name —
-                # it flows straight into the build without extra mapping
-                out[name] = df[name].astype(str)
+                continue
+            # an ETL step may write its column under the canonical name or a
+            # recognisable one ("Promo Cost", "Sale Price") — it flows into
+            # the build without extra mapping
+            picked = ""
+            for cn in (_bnorm(name),) + _fall.get(name, ()):
+                if cn in norms:
+                    picked = norms[cn]
+                    break
+            if picked:
+                out[name] = df[picked].astype(str)
             elif name == "Vendor" and r["vendor_label"]:
                 out[name] = r["vendor_label"]
             else:

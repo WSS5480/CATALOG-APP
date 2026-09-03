@@ -129,7 +129,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "53"
+APP_VERSION = "54"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -788,6 +788,70 @@ def _locations_sync_people(eng, cust: str) -> int:
             mk(l["group_owner_email"], str(l["group_owner_name"] or "").strip() or
                ("GROUP " + str(l["group_id"] or "")), "DM", "DISTRICT", l["group_id"])
     return made
+
+
+@app.get("/api/admin/mailbox")
+async def mailbox_get(request: Request):
+    await _builder_admin(request)
+    st = _mailbox_stored()
+    stored = bool(str(st.get("host") or "").strip() and str(st.get("user") or "").strip()
+                  and str(st.get("password") or ""))
+    env_ok = bool(os.environ.get("EMAIL_IMAP_HOST", "").strip()
+                  and os.environ.get("EMAIL_IMAP_USER", "").strip()
+                  and os.environ.get("EMAIL_IMAP_PASS", "").strip())
+    host, port, user, pw = _email_env()
+    return {"host": str(st.get("host") or ""), "port": st.get("port") or 993,
+            "user": str(st.get("user") or ""),
+            "password": _PW_KEPT if str(st.get("password") or "") else "",
+            "source": ("app" if stored else ("render-env" if env_ok else "none")),
+            "effective_user": user if (host and user and pw) else ""}
+
+
+@app.post("/api/admin/mailbox")
+async def mailbox_save(request: Request):
+    await _builder_admin(request)
+    body = await request.json() or {}
+    old = _mailbox_stored()
+    pw = str(body.get("password") or "")
+    st = {"host": str(body.get("host") or "").strip()[:200],
+          "user": str(body.get("user") or "").strip()[:200],
+          "password": old.get("password", "") if pw == _PW_KEPT else pw}
+    try:
+        st["port"] = max(1, min(int(body.get("port") or 993), 65535))
+    except Exception:
+        st["port"] = 993
+    if not (st["host"] or st["user"] or st["password"]):
+        st = {}          # cleared — back to the environment variables, if any
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("delete from cat_kv where k='mailbox'"))
+        if st:
+            c.execute(text("insert into cat_kv(k,v) values('mailbox',:v)"),
+                      {"v": json.dumps(st)})
+    return {"ok": True,
+            "message": ("Mailbox saved — email feeds use it from the next check."
+                        if st else "Cleared — email feeds use the Render environment "
+                                   "variables again, if set.")}
+
+
+@app.post("/api/admin/mailbox/test")
+async def mailbox_test(request: Request):
+    await _builder_admin(request)
+    host, port, user, pw = _email_env()
+    if not (host and user and pw):
+        raise HTTPException(400, "Nothing to test — fill in host, user and password first.")
+    import imaplib
+    try:
+        def _try():
+            m = imaplib.IMAP4_SSL(host, port, timeout=20)
+            m.login(user, pw)
+            n = m.select("INBOX", readonly=True)
+            m.logout()
+            return n
+        await asyncio.to_thread(_try)
+    except Exception as e:
+        raise HTTPException(400, f"Could not sign in: {str(e)[:180]}")
+    return {"ok": True, "message": f"Signed in as {user} and opened the inbox."}
 
 
 @app.get("/api/admin/locations")
@@ -4048,7 +4112,30 @@ def _feed_status_of(row) -> dict:
     return s if isinstance(s, dict) else {}
 
 
+def _mailbox_stored() -> dict:
+    """The mailbox saved on the admin page — the owner's own, so nobody's
+    personal address has to live in the Render account. Falls back to the
+    EMAIL_IMAP_* environment variables when nothing is saved."""
+    try:
+        from sqlalchemy import text
+        with _builder_engine().connect() as c:
+            row = c.execute(text("select v from cat_kv where k='mailbox'")).first()
+        d = json.loads(row[0]) if row and row[0] else {}
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
 def _email_env():
+    st = _mailbox_stored()
+    if str(st.get("host") or "").strip() and str(st.get("user") or "").strip() \
+            and str(st.get("password") or ""):
+        try:
+            port = int(st.get("port") or 993)
+        except Exception:
+            port = 993
+        return (str(st["host"]).strip(), port, str(st["user"]).strip(),
+                str(st["password"]))
     return (os.environ.get("EMAIL_IMAP_HOST", "").strip(),
             int(os.environ.get("EMAIL_IMAP_PORT", "993") or 993),
             os.environ.get("EMAIL_IMAP_USER", "").strip(),

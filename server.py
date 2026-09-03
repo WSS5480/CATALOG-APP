@@ -129,7 +129,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "44"
+APP_VERSION = "45"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -734,6 +734,64 @@ async def orders_delete(coll: str, doc_id: str, request: Request):
     return {"ok": True}
 
 
+@app.get("/api/admin/builder/photos/compare")
+async def builder_photos_compare(request: Request):
+    """Vendor original next to the hosted copy, so a person can look and
+    decide there is no visible difference before trusting it everywhere."""
+    sc, cust, _label = await _builder_admin(request)
+    sid = str(request.query_params.get("id") or "")
+    from sqlalchemy import text, bindparam
+    import pandas as pd
+    eng = _builder_engine()
+    with eng.connect() as c:
+        row = c.execute(text("select * from cat_sources where id=:i and customer=:c"),
+                        {"i": sid, "c": cust}).mappings().first()
+    if not row:
+        raise HTTPException(404, "No such source.")
+    df = pd.read_sql_table(row["table_name"], eng)
+    try:
+        m = json.loads(row["mapping"] or "{}")
+    except Exception:
+        m = {}
+    cfg = _feed_of(row)
+    col = str(cfg.get("photos_col") or "").strip() or str(m.get("ItemImage2") or "")
+    if not col or col not in df.columns:
+        low = {str(x).lower(): str(x) for x in df.columns}
+        col = next((low[x] for x in low if "image" in x or "photo" in x), "")
+    if not col:
+        raise HTTPException(400, "No image column on this source.")
+    urls = [u for u in df[col].astype(str).str.strip().unique().tolist()
+            if u.lower().startswith(("http://", "https://"))]
+    iids = {u: _photos_iid(u) for u in urls}
+    with eng.connect() as c:
+        q = text("select iid, size, ctype, rev from cat_images where customer=:c and iid in :ids") \
+            .bindparams(bindparam("ids", expanding=True))
+        have = {r0[0]: (int(r0[1] or 0), str(r0[2] or ""), int(r0[3] or 1))
+                for batch_i in range(0, len(urls), 500)
+                for r0 in c.execute(q, {"c": cust,
+                                        "ids": [iids[u] for u in urls[batch_i:batch_i + 500]]}).all()}
+    import random
+    pairs = [(u, iids[u]) for u in urls if iids[u] in have]
+    random.shuffle(pairs)
+    pairs = pairs[:8]
+    cards = "".join(
+        f'''<div style="background:#fff;border-radius:12px;padding:14px;box-shadow:0 1px 5px rgba(0,0,0,.08)">
+        <div style="display:flex;gap:12px">
+          <div style="flex:1;text-align:center"><div style="font-weight:700;font-size:12px;color:#666;margin-bottom:6px">VENDOR ORIGINAL</div>
+            <img src="{u}" style="max-width:100%;height:260px;object-fit:contain;background:#f7f7f9;border-radius:8px" loading="lazy"></div>
+          <div style="flex:1;text-align:center"><div style="font-weight:700;font-size:12px;color:#12925f;margin-bottom:6px">HOSTED HERE — {have[i][0] // 1024} KB</div>
+            <img src="/api/images/{i}{'?r=%d' % have[i][2] if have[i][2] > 1 else ''}" style="max-width:100%;height:260px;object-fit:contain;background:#f7f7f9;border-radius:8px" loading="lazy"></div>
+        </div></div>'''
+        for u, i in pairs)
+    page = ('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>Photo compare</title><body style="margin:0;background:#f2f3f7;font-family:system-ui,Segoe UI,Arial;padding:18px">'
+            f'<h2 style="color:#16213f;margin:0 0 4px">Photo compare — {row["name"]}</h2>'
+            '<div style="color:#666;font-size:13px;margin-bottom:14px">Left: the vendor\'s original link. '
+            'Right: the copy this app hosts (shrunk for the catalog). If you cannot tell them apart, it worked.</div>'
+            f'<div style="display:grid;gap:14px;max-width:1100px">{cards or "<p>No hosted photos yet for this source.</p>"}</div>')
+    return Response(page, media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
 @app.post("/api/admin/builder/photos/run")
 async def builder_photos_run(request: Request):
     """Mirror a source's photos now, in the background, then rebuild so the
@@ -741,6 +799,7 @@ async def builder_photos_run(request: Request):
     sc, cust, _label = await _builder_admin(request)
     body = await request.json() or {}
     sid = str(body.get("id") or "")
+    redo = bool(body.get("redo"))
     from sqlalchemy import text
     eng = _builder_engine()
     with eng.connect() as c:
@@ -764,7 +823,7 @@ async def builder_photos_run(request: Request):
         try:
             def prog(i, got, tag=""):
                 _note(f"Hosting photos — {i} checked, {got} saved… {tag}")
-            summary = _photos_mirror(eng, cust, row, progress=prog)
+            summary = _photos_mirror(eng, cust, row, progress=prog, redo=redo)
             try:
                 _builder_do_build(eng, cust)
                 summary += " · catalog rebuilt"
@@ -2126,7 +2185,9 @@ def _builder_migrate(engine):
                 ctype text default 'image/jpeg',
                 body bytea,
                 size integer default 0,
+                rev integer default 1,
                 fetched_at timestamp default current_timestamp)""",
+        "alter table cat_images add column if not exists rev integer default 1",
         # upgrades for stores created before these columns existed
         "alter table cat_sources add column if not exists feed text default '{}'",
         "alter table cat_sources add column if not exists feed_status text default '{}'",
@@ -2357,10 +2418,12 @@ async def builder_upload(request: Request):
     mapping = _builder_automap(df.columns)
     from sqlalchemy import text
     with eng.begin() as c:
+        # every vendor added hosts (and shrinks) its photos from the start
         c.execute(text("insert into cat_sources(id,customer,name,filename,vendor_label,"
-                       "table_name,mapping,row_count) values(:i,:c,:n,:f,:v,:t,:m,:r)"),
+                       "table_name,mapping,row_count,feed) values(:i,:c,:n,:f,:v,:t,:m,:r,:fd)"),
                   {"i": sid, "c": cust, "n": (vendor or filename.rsplit(".", 1)[0])[:80], "f": filename[:120],
-                   "v": vendor[:80], "t": table, "m": json.dumps(mapping), "r": int(len(df))})
+                   "v": vendor[:80], "t": table, "m": json.dumps(mapping), "r": int(len(df)),
+                   "fd": json.dumps({"type": "manual", "photos_on": True})})
     return {"ok": True, "id": sid, "rows": int(len(df)),
             "mapped": len(mapping), "missing": _builder_missing(mapping, vendor)}
 
@@ -2528,11 +2591,44 @@ def _builder_apply_etl(df, steps):
     return df
 
 
+def _photo_shrink(raw: bytes, ctype: str):
+    """A catalog card needs ~800px, not a vendor's multi-megabyte original.
+    Downscale and re-encode; keep whichever is smaller. Anything Pillow cannot
+    read (or an animated gif) is stored exactly as it came."""
+    try:
+        from PIL import Image
+        import io as _io
+        if "gif" in (ctype or "").lower():
+            return raw, ctype
+        im = Image.open(_io.BytesIO(raw))
+        if getattr(im, "is_animated", False):
+            return raw, ctype
+        im.load()
+        w, h = im.size
+        if max(w, h) > 800:
+            im.thumbnail((800, 800), Image.LANCZOS)
+        buf = _io.BytesIO()
+        has_alpha = (im.mode in ("RGBA", "LA", "P") and "transparency" in im.info) or                     im.mode == "RGBA" and im.getextrema()[3][0] < 255
+        if has_alpha:
+            im.save(buf, format="PNG", optimize=True)
+            out, oct_ = buf.getvalue(), "image/png"
+        else:
+            if im.mode not in ("RGB", "L"):
+                im = im.convert("RGB")
+            im.save(buf, format="JPEG", quality=82, optimize=True, progressive=True)
+            out, oct_ = buf.getvalue(), "image/jpeg"
+        if len(out) < len(raw):
+            return out, oct_
+        return raw, ctype
+    except Exception:
+        return raw, ctype
+
+
 def _photos_iid(url: str) -> str:
     return hashlib.sha1(str(url).strip().encode("utf-8", "replace")).hexdigest()[:24]
 
 
-def _photos_mirror(eng, cust: str, row, progress=None) -> str:
+def _photos_mirror(eng, cust: str, row, progress=None, redo=False) -> str:
     """Pull every photo the source's image column names and keep a copy in
     this app's own database, so the catalog serves them from Render instead
     of leaning on the vendor's links. Returns a one-line summary."""
@@ -2564,7 +2660,7 @@ def _photos_mirror(eng, cust: str, row, progress=None) -> str:
                 .bindparams(bindparam("ids", expanding=True))
             rs = c.execute(q, {"c": cust, "ids": batch}).all()
             have.update(r[0] for r in rs)
-    todo = [u for u in urls if _photos_iid(u) not in have][:4000]
+    todo = ([u for u in urls] if redo else [u for u in urls if _photos_iid(u) not in have])[:4000]
     got, bad = 0, 0
     if todo:
         tmo = httpx.Timeout(25.0, connect=10.0)
@@ -2578,11 +2674,25 @@ def _photos_mirror(eng, cust: str, row, progress=None) -> str:
                     if okc:
                         if not ct.startswith("image/"):
                             ct = "image/jpeg"
+                        body2, ct2 = _photo_shrink(r.content, ct)
+                        iid2 = _photos_iid(u)
                         with eng.begin() as c:
-                            c.execute(text("insert into cat_images(iid,customer,url,ctype,body,size) "
-                                           "values(:i,:c,:u,:t,:b,:s)"),
-                                      {"i": _photos_iid(u), "c": cust, "u": u[:900],
-                                       "t": ct[:60], "b": r.content, "s": len(r.content)})
+                            if redo or iid2 in have:
+                                c.execute(text("update cat_images set body=:b, ctype=:t, size=:s, "
+                                               "rev=coalesce(rev,1)+1 where iid=:i and customer=:c"),
+                                          {"b": body2, "t": ct2[:60], "s": len(body2),
+                                           "i": iid2, "c": cust})
+                                if c.execute(text("select 1 from cat_images where iid=:i and customer=:c"),
+                                             {"i": iid2, "c": cust}).first() is None:
+                                    c.execute(text("insert into cat_images(iid,customer,url,ctype,body,size,rev) "
+                                                   "values(:i,:c,:u,:t,:b,:s,1)"),
+                                              {"i": iid2, "c": cust, "u": u[:900],
+                                               "t": ct2[:60], "b": body2, "s": len(body2)})
+                            else:
+                                c.execute(text("insert into cat_images(iid,customer,url,ctype,body,size,rev) "
+                                               "values(:i,:c,:u,:t,:b,:s,1)"),
+                                          {"i": iid2, "c": cust, "u": u[:900],
+                                           "t": ct2[:60], "b": body2, "s": len(body2)})
                         got += 1
                     else:
                         bad += 1
@@ -2667,15 +2777,16 @@ def _builder_do_build(eng, cust: str):
         if fd.get("photos_on"):
             if photo_have is None:
                 with eng.connect() as c2r:
-                    photo_have = {x[0] for x in c2r.execute(
-                        text("select iid from cat_images where customer=:c"),
+                    photo_have = {x[0]: int(x[1] or 1) for x in c2r.execute(
+                        text("select iid, rev from cat_images where customer=:c"),
                         {"c": cust}).all()}
             def _loc(u):
                 u = str(u or "").strip()
                 if u.lower().startswith(("http://", "https://")):
                     i2 = _photos_iid(u)
-                    if i2 in photo_have:
-                        return "/api/images/" + i2
+                    rv = photo_have.get(i2)
+                    if rv:
+                        return "/api/images/" + i2 + ("" if rv <= 1 else "?r=%d" % rv)
                 return u
             out["ItemImage2"] = out["ItemImage2"].map(_loc)
         frames.append(out)

@@ -131,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "62"
+APP_VERSION = "63"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
     # The installed-app name lives in pwa_catalog.py, a file that is easy
@@ -2047,7 +2047,7 @@ def _tabs_block(sc: dict) -> bytes:
     pr = dict(_PERM_DEFAULT)
     pr.update(_clean_perms((sc or {}).get("perms") or {}))
     if (sc or {}).get("all"):
-        pr.update(approver=True, purchasing=True, vendorpage=True)
+        pr.update(approver=True, purchasing=True, vendorpage=True, stats=True)
     allowed = []
     if pr.get("catalog", True):
         allowed.append("catalog")
@@ -2061,6 +2061,8 @@ def _tabs_block(sc: dict) -> bytes:
         allowed.append("purchasing")
     if pr.get("vendorpage"):
         allowed.append("vendorpage")
+    if pr.get("stats"):
+        allowed.append("stats")
     if _scope_administers(sc or {}):
         allowed.append("setup")
     js = ("<script>(function(){var A=" + json.dumps(allowed) + ";"
@@ -3340,7 +3342,8 @@ def _person(email: str):
 # and Pending orders (none / read / write / delete-anything). Nothing set
 # anywhere means everything — you limit by setting less on a group or a person.
 _PERM_DEFAULT = {"catalog": True, "order": True, "pending": "delete",
-                 "approver": False, "purchasing": False, "vendorpage": False}
+                 "approver": False, "purchasing": False, "vendorpage": False,
+                 "stats": False}
 _PENDING_LEVELS = {"none": 0, "read": 1, "write": 2, "delete": 3}
 _ROLES = ("AUTO", "ADMIN", "PD", "DM", "STORE", "VENDOR", "NONE")
 
@@ -3352,13 +3355,14 @@ def _role_defaults(role) -> dict:
     out = dict(_PERM_DEFAULT)
     if r == "NONE":
         return {"catalog": False, "order": False, "pending": "none",
-                "approver": False, "purchasing": False, "vendorpage": False}
+                "approver": False, "purchasing": False, "vendorpage": False,
+                "stats": False}
     if r == "VENDOR":
         out.update(order=False, pending="none", vendorpage=True)
     elif r == "DM":
-        out.update(approver=True)
+        out.update(approver=True, stats=True)
     elif r == "PD":
-        out.update(approver=True, purchasing=True, vendorpage=True)
+        out.update(approver=True, purchasing=True, vendorpage=True, stats=True)
     return out
 
 
@@ -3366,7 +3370,7 @@ def _clean_perms(d) -> dict:
     out = {}
     if not isinstance(d, dict):
         return out
-    for k in ("catalog", "order", "approver", "purchasing", "vendorpage"):
+    for k in ("catalog", "order", "approver", "purchasing", "vendorpage", "stats"):
         v = d.get(k)
         if isinstance(v, bool):
             out[k] = v
@@ -3588,7 +3592,7 @@ def _person_scope(p) -> dict:
     cust = str(p["customer"] or "").strip() or _builder_only_customer()
     if _is_admin_row(p):
         pr = dict(_PERM_DEFAULT)
-        pr.update(approver=True, purchasing=True, vendorpage=True)
+        pr.update(approver=True, purchasing=True, vendorpage=True, stats=True)
         return {"all": True, "customer": cust, "vendors_all": True, "vendors": [],
                 "perms": pr, "role": "ADMIN"}
     dl, sl = _person_memberships(p)

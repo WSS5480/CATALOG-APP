@@ -133,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v42</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v43</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -888,7 +888,7 @@ function drawBuilder(){
             const cur = src.mapping[f.name] || '';
             const dark = f.required && !cur && !(f.name === 'Vendor' && src.vendor);
             return '<div class="fg" style="margin-bottom:8px"><label class="f"' +
-              (dark ? ' style="color:#c0392b"' : '') + '>' + esc(f.name) +
+              (dark ? ' style="color:#c0392b"' : '') + '>' + esc(f.name === 'Price' ? 'Promo Cost' : f.name) +
               (f.required ? ' *' : '') + '</label>' +
               '<select class="f" style="padding:7px 9px;font-size:13.5px"' +
               ' onchange="bldMap(\'' + esc(src.id) + '\',\'' + esc(f.name) + '\',this.value)">' +
@@ -1181,8 +1181,9 @@ function bldEtlBlock(src, f){
   const rows = ((f && f.etl) || []).map(st => bldEtlRow(id, st)).join('');
   return '<div style="margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
     '<b class="small">ETL steps</b> <span class="muted small">— computed columns, the same math your ETL ' +
-    'app does. Name the output <b>Price</b> and it becomes the promo: Price = RegularCost − Discount. ' +
-    'Blank or zero discount = no promo.</span>' +
+    'app does. Name the output <b>Promo Cost</b> and it becomes the promo: Promo Cost = RegularCost − ' +
+    'Discount. The store always shows the lesser of Regular and Promo — a blank promo just means no ' +
+    'sale, which is most vendors most of the time.</span>' +
     '<div id="fd-etl-' + esc(id) + '">' + rows + '</div>' +
     '<button class="btn ghost sm" style="margin-top:6px" onclick="bldEtlAdd(\'' + esc(id) + '\')">＋ step</button> ' +
     '<button class="btn sm" style="margin-top:6px" onclick="bldFeedSave(\'' + esc(id) + '\')">Save steps</button>' +

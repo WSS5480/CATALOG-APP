@@ -129,7 +129,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "50"
+APP_VERSION = "51"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -731,6 +731,131 @@ async def orders_delete(coll: str, doc_id: str, request: Request):
     with _builder_engine().begin() as c:
         c.execute(text("delete from cat_orders where id=:i and coll=:o and customer=:c"),
                   {"i": doc_id, "o": coll, "c": cust})
+    return {"ok": True}
+
+
+_LOC_FIELDS = [
+    # storage column, canonical (Domo) header, accepted header aliases
+    ("group_id",           "DistrictID",            ("districtid", "district_id", "group", "groupid", "groupnumber", "groupno")),
+    ("group_name",         "District",              ("district", "groupname", "districtname")),
+    ("loc_num",            "StoreNum",              ("storenum", "location", "locationnum", "locationnumber", "locnum", "store", "storenumber")),
+    ("loc_name",           "StoreName",             ("storename", "locationname", "locname")),
+    ("loc_owner_name",     "GeneralManagersName",   ("generalmanagersname", "generalmanager", "locationowner", "locationownername", "owner", "gm", "gmname")),
+    ("loc_owner_email",    "ManagerEmail",          ("manageremail", "locationowneremail", "owneremail", "gmemail")),
+    ("loc_email",          "StoreEmail",            ("storeemail", "locationemail")),
+    ("group_owner_name",   "DistrictManager",       ("districtmanager", "groupowner", "groupownername", "dm", "dmname")),
+    ("group_owner_email",  "DistrictManagerEmail",  ("districtmanageremail", "groupowneremail", "dmemail")),
+    ("pd_email",           "PurchasingDirector",    ("purchasingdirector", "purchasingdirectoremail", "pdemail")),
+    ("owner2_email",       "ManagerEmail2",         ("manageremail2", "locationowneremail2", "owner2email")),
+    ("group_owner2_email", "DistrictManagerEmail2", ("districtmanageremail2", "groupowneremail2", "dm2email")),
+]
+
+
+@app.get("/api/admin/locations")
+async def locations_list(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    from sqlalchemy import text
+    with _builder_engine().connect() as c:
+        rows = c.execute(text("select * from cat_locations where customer=:c "
+                              "order by group_id, loc_num"), {"c": cust}).mappings().all()
+    return {"rows": [dict(r) for r in rows]}
+
+
+@app.get("/api/admin/locations/template")
+async def locations_template(request: Request):
+    await _builder_admin(request)
+    heads = ",".join(h for _, h, _a in _LOC_FIELDS)
+    sample = "9197,DISTRICT 9197,571,571 - GARLAND,Delia Soto,delia@company.com,"\
+             "store571@company.com,Chris Jones,chris@company.com,"\
+             "steve.smith@buddyrents.com,,"
+    return Response(heads + "\n" + sample + "\n", media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=locations.csv"})
+
+
+@app.post("/api/admin/locations/upload")
+async def locations_upload(request: Request):
+    """Build the whole registry from one file — the Domo StoreMapping schema,
+    header names taken loosely (Group/Location wording works too). The upload
+    REPLACES the registry, exactly like re-uploading the dataset did."""
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json()
+    raw = base64.b64decode(str((body or {}).get("content_b64") or ""), validate=False)
+    df = _builder_read_frame(str((body or {}).get("filename") or "locations.csv"), raw)
+    by_norm = {}
+    for c in df.columns:
+        by_norm.setdefault(_bnorm(c), c)
+    picked = {}
+    for col, canon, aliases in _LOC_FIELDS:
+        src = None
+        for cand in (_bnorm(canon),) + tuple(aliases):
+            if cand in by_norm:
+                src = by_norm[cand]
+                break
+        picked[col] = src
+    if not picked["loc_num"]:
+        raise HTTPException(400, "No location column found — the file needs StoreNum "
+                                 "(or Location / LocationNum). Download the schema "
+                                 "template to see the headers.")
+    from sqlalchemy import text
+    eng = _builder_engine()
+    n, seen = 0, set()
+    with eng.begin() as c:
+        c.execute(text("delete from cat_locations where customer=:c"), {"c": cust})
+        for _, r in df.iterrows():
+            vals = {col: (str(r[src]).strip() if src else "") for col, src in picked.items()}
+            for col in vals:
+                if vals[col].lower() in ("nan", "none", "null"):
+                    vals[col] = ""
+            if not vals["loc_num"]:
+                continue
+            k = (vals["group_id"], vals["loc_num"])
+            if k in seen:
+                continue
+            seen.add(k)
+            vals["customer"] = cust
+            c.execute(text("insert into cat_locations(customer,group_id,group_name,loc_num,"
+                           "loc_name,loc_owner_name,loc_owner_email,loc_email,group_owner_name,"
+                           "group_owner_email,pd_email,owner2_email,group_owner2_email) values "
+                           "(:customer,:group_id,:group_name,:loc_num,:loc_name,:loc_owner_name,"
+                           ":loc_owner_email,:loc_email,:group_owner_name,:group_owner_email,"
+                           ":pd_email,:owner2_email,:group_owner2_email)"), vals)
+            n += 1
+    mapped = [canon for (col, canon, _a) in _LOC_FIELDS if picked[col]]
+    return {"ok": True, "rows": n,
+            "message": f"{n} locations loaded ({len(mapped)} of {len(_LOC_FIELDS)} "
+                       f"schema fields matched). The order form reads them now."}
+
+
+@app.post("/api/admin/locations/row")
+async def locations_row(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json() or {}
+    vals = {col: str(body.get(col) or "").strip()[:120] for col, _cn, _a in _LOC_FIELDS}
+    if not vals["loc_num"]:
+        raise HTTPException(400, "The location number is required.")
+    vals["customer"] = cust
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("delete from cat_locations where customer=:customer and "
+                       "group_id=:group_id and loc_num=:loc_num"), 
+                  {"customer": cust, "group_id": vals["group_id"], "loc_num": vals["loc_num"]})
+        c.execute(text("insert into cat_locations(customer,group_id,group_name,loc_num,"
+                       "loc_name,loc_owner_name,loc_owner_email,loc_email,group_owner_name,"
+                       "group_owner_email,pd_email,owner2_email,group_owner2_email) values "
+                       "(:customer,:group_id,:group_name,:loc_num,:loc_name,:loc_owner_name,"
+                       ":loc_owner_email,:loc_email,:group_owner_name,:group_owner_email,"
+                       ":pd_email,:owner2_email,:group_owner2_email)"), vals)
+    return {"ok": True}
+
+
+@app.post("/api/admin/locations/delete")
+async def locations_delete(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json() or {}
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("delete from cat_locations where customer=:c and group_id=:g and loc_num=:l"),
+                  {"c": cust, "g": str(body.get("group_id") or ""), "l": str(body.get("loc_num") or "")})
     return {"ok": True}
 
 
@@ -2181,6 +2306,21 @@ def _builder_migrate(engine):
                 freight_min_by_brand text default '',
                 freight_qty_or_cost text default '',
                 primary key (customer, vendor))""",
+        """create table if not exists cat_locations(
+                customer text not null,
+                group_id text default '',
+                group_name text default '',
+                loc_num text not null,
+                loc_name text default '',
+                loc_owner_name text default '',
+                loc_owner_email text default '',
+                loc_email text default '',
+                group_owner_name text default '',
+                group_owner_email text default '',
+                pd_email text default '',
+                owner2_email text default '',
+                group_owner2_email text default '',
+                primary key (customer, group_id, loc_num))""",
         """create table if not exists cat_images(
                 iid text primary key,
                 customer text not null,
@@ -3506,6 +3646,35 @@ async def _aux_rows_local(ident: str, request: Request):
                              "FreightMinQtyorTotalCost": r["freight_qty_or_cost"] if r else ""})
             df = pd.DataFrame(recs)
         else:
+            with eng.connect() as c:
+                locs = c.execute(text("select * from cat_locations where customer=:c "
+                                      "order by group_id, loc_num"), {"c": cust}).mappings().all()
+            if locs:
+                recs = [{"DistrictID": l["group_id"], "District": l["group_name"],
+                         "StoreNum": l["loc_num"], "StoreName": l["loc_name"],
+                         "GeneralManagersName": l["loc_owner_name"],
+                         "ManagerEmail": l["loc_owner_email"],
+                         "StoreEmail": l["loc_email"],
+                         "DistrictManager": l["group_owner_name"],
+                         "DistrictManagerEmail": l["group_owner_email"],
+                         "PurchasingDirector": l["pd_email"],
+                         "ManagerEmail2": l["owner2_email"],
+                         "DistrictManagerEmail2": l["group_owner2_email"],
+                         "RegionID": ""} for l in locs]
+                df = pd.DataFrame(recs)
+                params = dict(request.query_params)
+                want = [c.strip() for c in (params.get("groupby") or params.get("fields") or "")
+                        .split(",") if c.strip()]
+                if want:
+                    by_norm = {}
+                    for c in df.columns:
+                        by_norm.setdefault(_bnorm(c), c)
+                    have = list(dict.fromkeys(by_norm[_bnorm(w)] for w in want if _bnorm(w) in by_norm))
+                    if have:
+                        df = df[have]
+                        if params.get("groupby"):
+                            df = df.drop_duplicates()
+                return JSONResponse(json.loads(df.to_json(orient="records")))
             with eng.connect() as c:
                 ppl = c.execute(text("select * from cat_people order by group2, user_label"))\
                         .mappings().all()

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Admin — Product Catalog</title>
+<script id="qc-authbounce">(function(){if(window.__qcAuthB)return;window.__qcAuthB=1;var _f=window.fetch,_sent=0;window.fetch=function(u,o){return _f.apply(this,arguments).then(function(r){try{var s=(typeof u==='string')?u:((u&&u.url)||'');if(r&&r.status===401&&s.indexOf('/api/')===0&&s.indexOf('/api/auth/')!==0&&location.pathname.indexOf('/login')!==0&&!_sent){_sent=1;location.href='/login';}}catch(_e){}return r;});};})();</script>
 <style>
   :root{--navy:#0C447C;--navy2:#08294c;--ink:#1b2130;--muted:#6b7690;--line:#e3e7f0;
         --bg:#eef1f7;--good:#12925f;--warn:#e0592a;--paper:#fff;--panel:#fbfcfe}
@@ -133,7 +134,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v59</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v60</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>

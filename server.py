@@ -129,7 +129,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "42"
+APP_VERSION = "43"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -2153,7 +2153,11 @@ BUILDER_FIELDS = [
     ("ItemName",     True,  "Product name on the card"),
     ("Vendor",       True,  "Who supplies it — filled from the label below if the file has no column"),
     ("RegularCost",  True,  "List cost"),
-    ("Price",        False, "Promotional cost, where there is one"),
+    # The store always displays the LESSER of RegularCost and this promo, and
+    # never a blank: no promo simply means the regular price shows. Most
+    # vendors leave it empty outside a sale — that is the normal state.
+    ("Price",        False, "Promo Cost — the store shows the lesser of Regular and Promo; "
+                            "blank just means no sale"),
     ("ItemImage2",   False, "Image URL the card shows"),
     ("Brand",        False, ""), ("Category", False, ""), ("SubCategory", False, ""),
     ("Collection",   False, ""), ("Color", False, ""),

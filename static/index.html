@@ -2576,7 +2576,7 @@ body.qc-open #whoAmI{display:none !important;}
     document.body.classList.add('qc-topmenu');
     var btn = document.createElement('button');
     btn.id = 'qcMenuBtn'; btn.type = 'button';
-    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v65</span>';
+    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v66</span>';
     btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
     btn.style.cssText = 'position:fixed;top:60px;left:18px;z-index:1200;background:#16213f;color:#fff;' +
       'border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:11px 18px;font-weight:800;' +
@@ -3344,7 +3344,7 @@ body.qc-topmenu #__dtabs{bottom:auto!important}
  function ensure(){
   if(el('qcStatsView'))return;
   var v=document.createElement('div'); v.id='qcStatsView';
-  v.style.cssText='display:none;max-width:1240px;margin:0 auto;padding:70px 18px 40px;font-family:inherit;';
+  v.style.cssText='display:none;width:100%;box-sizing:border-box;margin:0;padding:70px 24px 40px;font-family:inherit;';
   v.innerHTML=
    '<h2 style="color:#16213f;margin:0 0 12px;">Stats</h2>'
   +'<div id="stDeny" style="display:none;background:#fff4e5;border:1px solid #f0b450;color:#7a4b00;border-radius:10px;padding:14px;font-weight:600;">You do not have access to Stats. Ask your administrator.</div>'
@@ -3407,7 +3407,7 @@ body.qc-topmenu #__dtabs{bottom:auto!important}
   function card(title,val,fmt){
    var top=vs.slice().sort(function(a,b){return val(byV[b])-val(byV[a]);}).slice(0,10);
    var mx=top.length?val(byV[top[0]]):0;
-   var h='<div style="background:#fff;border:1px solid #eef0f6;border-radius:12px;padding:14px 16px;">'
+   var h='<div style="background:#fff;border:1px solid #eef0f6;border-radius:12px;padding:14px 16px;min-width:0;">'
     +'<div style="font-weight:800;color:#0C447C;margin-bottom:10px;">'+title+'</div>';
    if(!top.length)h+='<div style="color:#888;">No data in this view.</div>';
    top.forEach(function(v){var x=val(byV[v]);var pc=mx?Math.max(4,Math.round(100*x/mx)):0;
@@ -3426,7 +3426,7 @@ body.qc-topmenu #__dtabs{bottom:auto!important}
   el('stLegend').innerHTML='';
  }
  function table(title,rows,firstCol){
-  var h='<div style="background:#fff;border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,.12);overflow-x:auto;">'
+  var h='<div style="background:#fff;border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,.12);overflow-x:auto;min-width:0;">'
    +'<div style="font-weight:800;color:#16213f;margin-bottom:8px;">'+title+'</div>'
    +'<table style="width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap;">'
    +'<tr style="background:#16213f;color:#fff;"><th style="padding:7px 9px;text-align:left;">'+firstCol+'</th><th style="padding:7px 9px;text-align:right;">Orders</th><th style="padding:7px 9px;text-align:right;">Units</th><th style="padding:7px 9px;text-align:right;">$</th><th style="padding:7px 9px;text-align:right;">$ / Unit</th><th style="padding:7px 9px;text-align:right;">% of $</th></tr>';

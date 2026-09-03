@@ -1630,7 +1630,7 @@ function renderCart() {
   function isSale(p){ var rc=num(p.RegularCost), pc=num(p.PromoCost); return (rc>0 && pc>0 && pc<rc); }
   window.__catPrice=price; window.__catIsSale=isSale;
   window.__ensureSubToggle=function(){ var h=document.querySelector('#manageLinesPanel h2'); if(!h) return; var t=document.getElementById('__subTog'); if(!t){ t=document.createElement('label'); t.id='__subTog'; t.style.cssText='margin-left:14px;font-size:.8rem;font-weight:600;color:#0C447C;cursor:pointer;'; var c=document.createElement('input'); c.type='checkbox'; c.id='__subTogCb'; c.style.marginRight='4px'; c.onchange=function(){ window._submittedView=!!c.checked; try{ var _t2=document.querySelector('#manageLinesPanel h2'); if(_t2&&_t2.childNodes[0]) _t2.childNodes[0].nodeValue=(c.checked?'Submitted Orders ':'Purchasing Admin '); }catch(_n){} try{ if(typeof window.mngLoad==='function') window.mngLoad(); else if(window.mngRender) window.mngRender(); }catch(e){} }; t.appendChild(c); t.appendChild(document.createTextNode('Show Submitted Orders')); h.appendChild(t); } t.style.display=''; var cb=document.getElementById('__subTogCb'); if(cb) cb.checked=!!window._submittedView; };
-  window.__showView=function(view){ try{ var cat=document.getElementById('catalogView'); var modal=document.getElementById('orderFormModal'); var secs=document.querySelectorAll('.form-section'); function hide(el){ if(el) el.style.setProperty('display','none','important'); } function show(el){ if(el) el.style.setProperty('display','block','important'); } if(view==='catalog'||view==='order'||view==='pending'){ window._approvalView=false; window._submittedView=false; try{(document.getElementById('orderFormModalBox')||document.body).querySelectorAll('h2').forEach(function(h){h.style.display='';});}catch(_uh){} try{var _st0=document.getElementById('__subTog');if(_st0)_st0.style.display='none';}catch(_e0){} } if(view==='catalog'){ hide(modal); show(cat); } else if(view==='order'){ hide(cat); show(modal); for(var i=0;i<secs.length;i++){ if(secs[i].id==='pendingOrdersPanel') hide(secs[i]); else show(secs[i]); } } else if(view==='pending'){ hide(cat); show(modal); for(var j=0;j<secs.length;j++){ if(secs[j].id==='pendingOrdersPanel') show(secs[j]); else hide(secs[j]); } try{ window.loadPendingOrders&&window.loadPendingOrders(); }catch(e){} } else if(view==='approver'||view==='purchasing'){ hide(cat); show(modal); window._approvalView=(view==='approver'); window._submittedView=false; for(var m2=0;m2<secs.length;m2++){ if(secs[m2].id==='manageLinesPanel') show(secs[m2]); else hide(secs[m2]); } try{ var _pl=document.getElementById('manageLinesPanel'); (document.getElementById('orderFormModalBox')||document.body).querySelectorAll('h2').forEach(function(h){ if(_pl&&!_pl.contains(h)) h.style.display='none'; else h.style.display=''; }); }catch(_h2){} try{ var _mb=document.getElementById('mngBody'); if(_mb) _mb.style.display='block'; var _mc=document.getElementById('mngCaret'); if(_mc) _mc.innerHTML='&#9662;'; var _t=document.querySelector('#manageLinesPanel h2'); if(_t&&_t.childNodes[0]) _t.childNodes[0].nodeValue=(view==='approver'?'Approver \u2014 Review & Approve ':'Purchasing Admin '); }catch(_tt){} try{ if(view==='purchasing'){ window.__ensureSubToggle&&window.__ensureSubToggle(); } }catch(_e5){} try{ if(typeof window.mngLoad==='function') window.mngLoad(); else if(window.mngRender) window.mngRender(); }catch(_e6){} } var tb=document.querySelectorAll('#__mtabs button'); for(var k=0;k<tb.length;k++){ var on=(tb[k].getAttribute('data-v')===view); tb[k].style.background=on?'#fff':'transparent'; tb[k].style.color=on?'#0C447C':'#fff'; } }catch(e){} };
+  window.__showView=function(view){ try{ var cat=document.getElementById('catalogView'); var modal=document.getElementById('orderFormModal'); var secs=document.querySelectorAll('.form-section'); function hide(el){ if(el) el.style.setProperty('display','none','important'); } function show(el){ if(el) el.style.setProperty('display','block','important'); } if(view==='catalog'||view==='order'||view==='pending'){ window._approvalView=false; window._submittedView=false; window._purchasingView=false; try{(document.getElementById('orderFormModalBox')||document.body).querySelectorAll('h2').forEach(function(h){h.style.display='';});}catch(_uh){} try{var _st0=document.getElementById('__subTog');if(_st0)_st0.style.display='none';}catch(_e0){} } if(view==='catalog'){ hide(modal); show(cat); } else if(view==='order'){ hide(cat); show(modal); for(var i=0;i<secs.length;i++){ if(secs[i].id==='pendingOrdersPanel') hide(secs[i]); else show(secs[i]); } } else if(view==='pending'){ hide(cat); show(modal); for(var j=0;j<secs.length;j++){ if(secs[j].id==='pendingOrdersPanel') show(secs[j]); else hide(secs[j]); } try{ window.loadPendingOrders&&window.loadPendingOrders(); }catch(e){} } else if(view==='approver'||view==='purchasing'){ hide(cat); show(modal); window._approvalView=(view==='approver'); window._purchasingView=(view==='purchasing'); window._submittedView=false; for(var m2=0;m2<secs.length;m2++){ if(secs[m2].id==='manageLinesPanel') show(secs[m2]); else hide(secs[m2]); } try{ var _pl=document.getElementById('manageLinesPanel'); (document.getElementById('orderFormModalBox')||document.body).querySelectorAll('h2').forEach(function(h){ if(_pl&&!_pl.contains(h)) h.style.display='none'; else h.style.display=''; }); }catch(_h2){} try{ var _mb=document.getElementById('mngBody'); if(_mb) _mb.style.display='block'; var _mc=document.getElementById('mngCaret'); if(_mc) _mc.innerHTML='&#9662;'; var _t=document.querySelector('#manageLinesPanel h2'); if(_t&&_t.childNodes[0]) _t.childNodes[0].nodeValue=(view==='approver'?'Approver \u2014 Review & Approve ':'Purchasing Admin '); }catch(_tt){} try{ if(view==='purchasing'){ window.__ensureSubToggle&&window.__ensureSubToggle(); } }catch(_e5){} try{ if(typeof window.mngLoad==='function') window.mngLoad(); else if(window.mngRender) window.mngRender(); }catch(_e6){} } var tb=document.querySelectorAll('#__mtabs button'); for(var k=0;k<tb.length;k++){ var on=(tb[k].getAttribute('data-v')===view); tb[k].style.background=on?'#fff':'transparent'; tb[k].style.color=on?'#0C447C':'#fff'; } }catch(e){} };
   setTimeout(function(){ try{ var plat=((new URLSearchParams(location.search)).get('platform')||'').toLowerCase(); var isMobile=/ios|android|iphone|ipad/.test(plat)||/iphone|ipad|android|mobile/i.test(navigator.userAgent||''); if(!isMobile) return; if(document.getElementById('__mtabs')) return; try{ var _ms=document.createElement('style'); _ms.id='__mstyle'; _ms.textContent='html,body{overflow-x:hidden !important;max-width:100% !important;} body{display:block !important;} body>*{max-width:100% !important;box-sizing:border-box !important;} #orderFormModal,#orderFormModalBox,#catalogView{position:static !important;left:auto !important;right:auto !important;transform:none !important;margin-left:0 !important;margin-right:0 !important;width:auto !important;max-width:100% !important;box-sizing:border-box !important;} .form-row{flex-direction:column !important;} .form-group{flex:1 1 100% !important;width:100% !important;min-width:0 !important;max-width:100% !important;} .form-section{overflow-x:auto !important;max-width:100% !important;box-sizing:border-box !important;padding:8px !important;} input,select,textarea{max-width:100% !important;box-sizing:border-box !important;font-size:14px !important;} .form-group label{font-size:11px !important;} h2{font-size:1rem !important;} table{display:block !important;overflow-x:auto !important;max-width:100% !important;}'; document.head.appendChild(_ms); }catch(e){} var bar=document.createElement('div'); bar.id='__mtabs'; bar.style.cssText='display:flex;flex-direction:row;align-items:stretch;width:100%;position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#16213f;box-shadow:0 2px 6px rgba(0,0,0,0.3);box-sizing:border-box;'; [['catalog','Catalog'],['order','Order Form'],['pending','Pending'],['approver','Approver'],['purchasing','Purchasing']].forEach(function(t){ var b=document.createElement('button'); b.setAttribute('data-v',t[0]); b.textContent=t[1]; b.style.cssText='flex:1 1 0;min-width:0;white-space:nowrap;border:none;background:transparent;color:#fff;padding:14px 2px;font-size:0.8rem;font-weight:700;cursor:pointer;'; b.onclick=function(){ window.__showView(t[0]); }; bar.appendChild(b); }); document.body.insertBefore(bar, document.body.firstChild); try{ document.body.style.setProperty('padding-top','50px','important'); }catch(e){} window.__showView('catalog'); }catch(e){} },1800);
   var allProducts = [];
   var catList=[], catShown=0, CAT_BATCH=40;
@@ -2011,7 +2011,7 @@ body.qc-open #orderFormModal .btn-danger{border-radius:8px!important;padding:3px
  else { document.body.appendChild(fab); } })();
  var closeBtn=document.createElement('button');closeBtn.id='qcClose';closeBtn.type='button';closeBtn.textContent='\u2715 Close';
  function box(){return $('orderFormModalBox');}
- function openD(){ var mo=document.getElementById('orderFormModal'); if(mo){ if(mo.parentNode!==document.body){ window._qcHome={p:mo.parentNode,s:mo.nextSibling}; document.body.appendChild(mo); } if(window._qcStyle==null) window._qcStyle=mo.getAttribute('style')||''; var P={display:'block',position:'fixed',top:'0px',right:'0px',bottom:'0px',left:'auto','width':'min(600px,96vw)','max-width':'96vw',height:'auto','z-index':'998',overflow:'auto',background:'#f5f6fa','box-shadow':'-14px 0 44px rgba(14,23,48,.3)',padding:'12px',margin:'0',transform:'none'}; for(var kk in P){ mo.style.setProperty(kk,P[kk],'important'); } } var b=box(); if(b&&closeBtn.parentNode!==b)b.insertBefore(closeBtn,b.firstChild); try{ window._approvalView=false; window._submittedView=false; document.querySelectorAll('#orderFormModalBox .form-section').forEach(function(sx){ sx.style.removeProperty('display'); }); var _bx9=document.getElementById('orderFormModalBox'); if(_bx9){ _bx9.querySelectorAll('h2').forEach(function(h){ h.style.display=''; }); } var _mp9=document.getElementById('manageLinesPanel'); if(_mp9){ _mp9.style.setProperty('display','none','important'); var _t9=_mp9.querySelector('h2'); if(_t9&&_t9.childNodes[0]) _t9.childNodes[0].nodeValue='Edit Submit Orders '; } }catch(_rs9){} document.body.classList.add('qc-open'); }
+ function openD(){ var mo=document.getElementById('orderFormModal'); if(mo){ if(mo.parentNode!==document.body){ window._qcHome={p:mo.parentNode,s:mo.nextSibling}; document.body.appendChild(mo); } if(window._qcStyle==null) window._qcStyle=mo.getAttribute('style')||''; var P={display:'block',position:'fixed',top:'0px',right:'0px',bottom:'0px',left:'auto','width':'min(600px,96vw)','max-width':'96vw',height:'auto','z-index':'998',overflow:'auto',background:'#f5f6fa','box-shadow':'-14px 0 44px rgba(14,23,48,.3)',padding:'12px',margin:'0',transform:'none'}; for(var kk in P){ mo.style.setProperty(kk,P[kk],'important'); } } var b=box(); if(b&&closeBtn.parentNode!==b)b.insertBefore(closeBtn,b.firstChild); try{ window._approvalView=false; window._submittedView=false; window._purchasingView=false; document.querySelectorAll('#orderFormModalBox .form-section').forEach(function(sx){ sx.style.removeProperty('display'); }); var _bx9=document.getElementById('orderFormModalBox'); if(_bx9){ _bx9.querySelectorAll('h2').forEach(function(h){ h.style.display=''; }); } var _mp9=document.getElementById('manageLinesPanel'); if(_mp9){ _mp9.style.setProperty('display','none','important'); var _t9=_mp9.querySelector('h2'); if(_t9&&_t9.childNodes[0]) _t9.childNodes[0].nodeValue='Edit Submit Orders '; } }catch(_rs9){} document.body.classList.add('qc-open'); }
  function closeD(){ document.body.classList.remove('qc-open'); var mo=document.getElementById('orderFormModal'); if(mo){ if(window._qcStyle!=null){ mo.setAttribute('style',window._qcStyle); window._qcStyle=null; } if(window._qcHome&&mo.parentNode===document.body){ try{ window._qcHome.p.insertBefore(mo,window._qcHome.s); }catch(eH){} window._qcHome=null; } } }
  function _qcToggle(ev){ if(ev){ try{ ev.preventDefault(); ev.stopImmediatePropagation(); }catch(eS){} } if(document.body.classList.contains('qc-open'))closeD();else openD(); }
  function _qcHover(){ var fm=$('freightMin'); var m=(fm&&fm.textContent||'').trim(); if(!m){ try{ var cc=JSON.parse(localStorage.getItem('ddx_order_form_cart')||'[]'); m=cc.length?(cc.length+' item'+(cc.length>1?'s':'')+' in cart'):'Cart is empty'; }catch(e){ m='Cart'; } } var pend=/more to go/i.test(m); say(m,pend?'#f5a623':'#12925f',pend?'#1b2130':'#fff',true); }
@@ -2574,7 +2574,7 @@ body.qc-open #whoAmI{display:none !important;}
       b.onclick = function(){ location.href = t[0]; };
       bar.appendChild(b);
     });
-    var vch=document.createElement('span'); vch.textContent='v35'; vch.title='build version';
+    var vch=document.createElement('span'); vch.textContent='v36'; vch.title='build version';
     vch.style.cssText='color:#9fb3d9;font-size:11px;font-weight:700;align-self:center;padding:0 10px 0 4px;';
     bar.appendChild(vch);
     document.body.appendChild(bar);
@@ -2818,7 +2818,8 @@ body.qc-open #whoAmI{display:none !important;}
 })();</script>
 
 
-<style id="qc-total-css">#mngTable tr.qc-total td:first-child,#pendingOrdersTable tr.qc-total td:first-child{white-space:nowrap!important;overflow:visible!important;max-width:none!important;text-align:left!important;position:relative;z-index:1}</style>
+<style id="qc-total-css">#orderFormModal:not(.overlay){max-width:100%!important;min-width:0!important;box-sizing:border-box}#orderFormModalBox{max-width:100%;min-width:0}.form-section{max-width:100%;overflow-x:auto;box-sizing:border-box}#manageLinesPanel{max-width:100%;overflow-x:auto}#qcConsol table{width:100%;border-collapse:collapse;font-size:.85rem}#qcConsol th{background:#232f55;color:#fff;padding:8px 6px;text-align:left;white-space:nowrap}#qcConsol td{padding:7px 6px;border-bottom:1px solid #e8eaf2;vertical-align:middle}#qcConsol tr[data-k]{cursor:pointer}#qcConsol tr[data-k]:hover td{background:#f4f7ff}
+#mngTable tr.qc-total td:first-child,#pendingOrdersTable tr.qc-total td:first-child{white-space:nowrap!important;overflow:visible!important;max-width:none!important;text-align:left!important;position:relative;z-index:1}</style>
 <script id="qc-imgzoom">window.__qcImgZoom=function(src){var o=document.getElementById('qcImgZoom');if(!o){o=document.createElement('div');o.id='qcImgZoom';o.style.cssText='position:fixed;inset:0;z-index:2147483600;background:rgba(10,16,32,.82);display:none;align-items:center;justify-content:center;cursor:zoom-out;';o.innerHTML='<img style="max-width:92vw;max-height:92vh;object-fit:contain;border-radius:10px;background:#fff;padding:8px;">';o.onclick=function(){o.style.display='none';};document.body.appendChild(o);}o.querySelector('img').src=src;o.style.display='flex';};</script>
 <script id="qc-addline">
 /* The Domo review panel, ported: one locked order, the vendor's whole catalog
@@ -2837,7 +2838,7 @@ body.qc-open #whoAmI{display:none !important;}
    try{var e=document.querySelector('#whoAmI .email');var m=e&&e.getAttribute('data-email');if(m)return m;}catch(_a){}
    try{return (new URLSearchParams(location.search)).get('userEmail')||'';}catch(_b){} return '';}
  function msg(t,bad){var m=el('alMsg');if(!m)return;m.textContent=t;m.style.color=bad?'#b3261e':'#12925f';m.style.display=t?'block':'none';}
- var orders={}, newLines=[], lockedKey='', loading=false;
+ var orders={}, newLines=[], lockedKey='', loading=false, consolDirty=true, _lastSubv=null;
 
  async function loadOrders(){
    var r=await fetch(BASE+'?_cb='+Date.now(),{credentials:'include',headers:{'Accept':'application/json'}});
@@ -2936,7 +2937,7 @@ body.qc-open #whoAmI{display:none !important;}
        if(!r.ok)throw new Error('HTTP '+r.status);
      }
      msg('Added '+newLines.length+' line'+(newLines.length>1?'s':'')+' to '+ok+'.');
-     newLines=[]; renderLines(); orders=await loadOrders();
+     newLines=[]; renderLines(); orders=await loadOrders(); consolDirty=true;
      try{if(typeof window.mngLoad==='function')window.mngLoad();}catch(_r){}
    }catch(e){msg('Add failed: '+e.message,1);}
    btn.disabled=false; btn.textContent='Add to Order';
@@ -2957,14 +2958,14 @@ body.qc-open #whoAmI{display:none !important;}
        if(!r.ok)throw new Error('HTTP '+r.status);
        d.content=c;
      }
-     b.textContent='✓ Approved'; msg('Order '+ok+' approved.');
+     b.textContent='✓ Approved'; msg('Order '+ok+' approved.'); consolDirty=true;
      try{if(typeof window.mngLoad==='function')window.mngLoad();}catch(_r){}
    }catch(e){b.disabled=false;b.textContent='✓ Approve This Order';msg('Approve failed: '+e.message,1);}
  }
  function wire(){
    el('alOrder').onchange=function(){newLines=[];renderLines();el('alSearch').value='';
      el('alSearch').placeholder=this.value?('Search '+String(((orders[this.value]||[{}])[0].content||{}).Vendor||'')+' models...'):'Pick an order first...';
-     el('alResults').style.display='none';};
+     el('alResults').style.display='none';if(this.value){setFilter(this.value);}};
    el('alSearch').oninput=function(){search(this.value);};
    el('alSave').onclick=save;
    el('qcAlApprove').onclick=approve;
@@ -2972,7 +2973,7 @@ body.qc-open #whoAmI{display:none !important;}
  async function populate(){
    if(loading)return; loading=true;
    try{
-     orders=await loadOrders();
+     orders=await loadOrders(); consolDirty=true;
      var sel=el('alOrder'); if(!sel){loading=false;return;}
      var subv=!!window._submittedView;
      var keys=Object.keys(orders).filter(function(k){var st=String((orders[k][0].content||{}).Status||'');return subv?(st==='Submitted'):(st!=='Submitted');}).sort();
@@ -2981,6 +2982,29 @@ body.qc-open #whoAmI{display:none !important;}
        return '<option value="'+esc(k)+'">'+esc(k)+' — store '+esc(c.StoreNum||'')+' ('+orders[k].length+' lines)</option>';}).join('');
    }catch(_e){}
    loading=false;
+ }
+ function setFilter(v){var ms=el('mngSearch');if(!ms)return;ms.value=v;try{ms.dispatchEvent(new Event('input'));}catch(_e){}}
+ function mkConsol(mt){var d=document.createElement('div');d.id='qcConsol';d.style.cssText='display:none;margin-top:8px;border:1px solid #e2e5ee;border-radius:10px;overflow:hidden;background:#fff;';mt.parentNode.insertBefore(d,mt);return d;}
+ function mkBack(mt){var d=document.createElement('div');d.id='qcBackAll';d.style.cssText='display:none;margin:8px 0;';d.innerHTML='<button type="button" style="background:#232f55;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:800;cursor:pointer;">◀ All Orders</button>';d.querySelector('button').onclick=function(){setFilter('');};mt.parentNode.insertBefore(d,mt);return d;}
+ function buildConsol(){
+   var co=el('qcConsol'); if(!co)return;
+   var subv=!!window._submittedView;
+   var keys=Object.keys(orders).filter(function(k){var st=String((orders[k][0].content||{}).Status||'');return subv?(st==='Submitted'):(st!=='Submitted');}).sort();
+   var DLR=String.fromCharCode(36);
+   var html='<div style="padding:8px 10px;background:#f5f7fb;font-weight:700;color:#456;font-size:.78rem;">'+keys.length+' order'+(keys.length===1?'':'s')+' — hit Review to open one to edit, '+(subv?'revert':'approve or submit')+'</div>'
+     +'<table><thead><tr><th>Order #</th><th>Store</th><th>Vendor</th><th style="text-align:right">Lines</th><th style="text-align:right">Qty</th><th style="text-align:right">Order Total</th><th>Status</th><th>Approved</th><th></th></tr></thead><tbody>';
+   keys.forEach(function(k){
+     var ds=orders[k], c0=ds[0].content||{}, q=0, t=0;
+     ds.forEach(function(dd){var cc=dd.content||{};var qn=parseFloat(cc.OrderQuantity);if(!isNaN(qn))q+=qn;var tn=parseFloat(cc.LineTotal);if(!isNaN(tn))t+=tn;});
+     html+='<tr data-k="'+esc(k)+'"><td style="font-weight:700;">'+esc(k)+'</td><td>'+esc(c0.StoreNum||'')+(c0.StoreName?' — '+esc(c0.StoreName):'')+'</td><td>'+esc(c0.Vendor||'')+'</td>'
+       +'<td style="text-align:right">'+ds.length+'</td><td style="text-align:right">'+q+'</td><td style="text-align:right;font-weight:700;">'+DLR+t.toFixed(2)+'</td>'
+       +'<td>'+esc(String(c0.Status||'')||'Pending')+'</td><td style="text-align:center;color:#12925f;font-weight:800;">'+(String(c0.RegionalApproval||'')==='Yes'?'✓':'')+'</td>'
+       +'<td style="text-align:right"><button type="button" data-rv="'+esc(k)+'" style="background:#e0592a;color:#fff;border:none;border-radius:7px;padding:6px 14px;font-weight:800;cursor:pointer;">Review</button></td></tr>';
+   });
+   html+='</tbody></table>'+(keys.length?'':'<div style="padding:14px;color:#666;">No orders here right now.</div>');
+   co.innerHTML=html;
+   co.querySelectorAll('tr[data-k]').forEach(function(tr){tr.onclick=function(){setFilter(tr.getAttribute('data-k'));};});
+   co.querySelectorAll('button[data-rv]').forEach(function(bt){bt.onclick=function(ev){ev.stopPropagation();setFilter(bt.getAttribute('data-rv'));};});
  }
  var populated=false;
  setInterval(function(){try{
@@ -3004,6 +3028,25 @@ body.qc-open #whoAmI{display:none !important;}
      }
    }else if(lockedKey){
      lockedKey=''; sel.disabled=false; sel.style.background=''; populate();
+   }
+   var gated=!!(window._approvalView||window._purchasingView);
+   var mt=document.getElementById('mngTable');
+   var co=el('qcConsol'), bb=el('qcBackAll');
+   if(gated&&mt){
+     if(!co)co=mkConsol(mt);
+     if(!bb)bb=mkBack(mt);
+     var subv2=!!window._submittedView;
+     if(subv2!==_lastSubv){_lastSubv=subv2;consolDirty=true;}
+     if(consolDirty&&Object.keys(orders).length){buildConsol();consolDirty=false;}
+     var oneOpen=(vk.length===1);
+     co.style.display=oneOpen?'none':'';
+     bb.style.display=oneOpen?'':'none';
+     mt.style.display=oneOpen?'':'none';
+     mt.setAttribute('data-qchid',oneOpen?'0':'1');
+   }else{
+     if(co)co.style.display='none';
+     if(bb)bb.style.display='none';
+     if(mt&&mt.getAttribute('data-qchid')==='1'){mt.style.display='';mt.setAttribute('data-qchid','0');}
    }
  }catch(_e){}},700);
 })();

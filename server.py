@@ -129,7 +129,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "56"
+APP_VERSION = "58"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -601,7 +601,11 @@ async def orders_list(coll: str, request: Request):
         return await etl_get(f"/api/app/collections/{coll}/documents/")
     who, cust = ready
     if coll == "CatalogEdits":
-        if not _edits_access(who):
+        # Reading the edit log is what lets the storefront honor vendor-edit
+        # precedence, so anyone who can see the catalog may read it. Writing
+        # stays gated to vendors and admins below.
+        sc0 = (who.get("scope") or {})
+        if not (_edits_access(who) or (sc0.get("perms") or _PERM_DEFAULT).get("catalog", True)):
             raise HTTPException(403, "You do not have access to vendor edits.")
     elif _pending_level(who.get("scope")) < 1:
         raise HTTPException(403, "You do not have access to pending orders.")
@@ -616,6 +620,20 @@ async def orders_list(coll: str, request: Request):
         except Exception:
             body = {}
         out.append({"id": rid, "content": body})
+    if coll == "CatalogEdits":
+        # A vendors-scoped viewer sees exactly the edits for the vendors they
+        # can see — the same rule the built catalog rows follow.
+        sc = (who.get("scope") or {})
+        if not (sc.get("all") or who.get("admin") or sc.get("vendors_all")):
+            vend = {str(v).strip().upper() for v in (sc.get("vendors") or []) if str(v).strip()}
+            mode = str(sc.get("vendors_mode") or "")
+
+            def _vis(d):
+                v = str((d.get("content") or {}).get("Vendor") or "").strip().upper()
+                if mode == "except":
+                    return v not in vend
+                return (v in vend) if vend else False
+            out = [d for d in out if _vis(d)]
     return out
 
 

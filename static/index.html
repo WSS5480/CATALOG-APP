@@ -2574,7 +2574,7 @@ body.qc-open #whoAmI{display:none !important;}
       b.onclick = function(){ location.href = t[0]; };
       bar.appendChild(b);
     });
-    var vch=document.createElement('span'); vch.textContent='v37'; vch.title='build version';
+    var vch=document.createElement('span'); vch.textContent='v38'; vch.title='build version';
     vch.style.cssText='color:#9fb3d9;font-size:11px;font-weight:700;align-self:center;padding:0 10px 0 4px;';
     bar.appendChild(vch);
     document.body.appendChild(bar);
@@ -2984,7 +2984,7 @@ body.qc-open #whoAmI{display:none !important;}
    }catch(_e){}
    loading=false;
  }
- function setFilter(v){var ms=el('mngSearch');if(!ms)return;ms.value=v;try{ms.dispatchEvent(new Event('input',{bubbles:true}));}catch(_e){}}
+ function setFilter(v){var ms=el('mngSearch');if(!ms)return;ms.value=v;try{ms.dispatchEvent(new Event('input',{bubbles:true}));}catch(_e){}try{if(v&&typeof window.mngLoad==='function')window.mngLoad();}catch(_m){}}
  function money(n){return '$'+(Number(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
  function rowsFromOrders(){
    var out=Object.keys(orders).map(function(k){var ds=orders[k];var f=ds[0].content||{};

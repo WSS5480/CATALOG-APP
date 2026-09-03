@@ -132,7 +132,7 @@ body{background:var(--bg)!important;color:var(--ink)!important;font-family:-appl
         <option value="name">Sort: Name (A-Z)</option>
         <option value="vendor">Sort: Vendor</option>
       </select>
-      <label style="display:inline-flex;align-items:center;gap:4px;font-size:.85rem;cursor:pointer;margin-left:8px;white-space:nowrap"><input type="checkbox" id="edSaleOnly" onchange="renderGrid()"> SALE only</label><label style="display:inline-flex;align-items:center;gap:4px;font-size:.85rem;cursor:pointer;margin-left:8px;white-space:nowrap"><input type="checkbox" id="edSBOnly" onchange="renderGrid()"> Special Buys</label><label style="display:inline-flex;align-items:center;gap:4px;font-size:.85rem;cursor:pointer;margin-left:8px;white-space:nowrap"><input type="checkbox" id="edGroupOnly" onchange="renderGrid()"> Groups</label>
+      <label style="display:inline-flex;align-items:center;gap:4px;font-size:.85rem;cursor:pointer;margin-left:8px;white-space:nowrap"><input type="checkbox" id="edSaleOnly" onchange="renderGrid()"> SALE only</label><label style="display:inline-flex;align-items:center;gap:4px;font-size:.85rem;cursor:pointer;margin-left:8px;white-space:nowrap"><input type="checkbox" id="edSBOnly" onchange="renderGrid()"> Special Buys</label><label style="display:inline-flex;align-items:center;gap:4px;font-size:.85rem;cursor:pointer;margin-left:8px;white-space:nowrap"><input type="checkbox" id="edGroupOnly" onchange="renderGrid()"> Groups</label><label style="display:inline-flex;align-items:center;gap:4px;font-size:.85rem;cursor:pointer;margin-left:8px;white-space:nowrap" title="The store hides these automatically until a photo is added"><input type="checkbox" id="edNoPhotoHide" onchange="renderGrid()"> Hide items without a photo</label>
       <span class="count" id="catCount"></span>
     </div>
     <div id="grid" class="grid"><div class="loading">Loading catalog...</div></div>
@@ -296,6 +296,7 @@ function renderGrid(){
     if(($('edSaleOnly')||{}).checked){var _r1=parseFloat(p.RegularCost),_p1=parseFloat(p.PromoCost);if(!(_p1>0&&_r1>0&&_p1<_r1))return false;}
     if(($('edSBOnly')||{}).checked){var _sm1=window.__sbMap;var _se1=_sm1&&_sm1[String(p.ModelNum||'').trim().toUpperCase()];if(!(_se1&&_se1.sb))return false;}
     if(($('edGroupOnly')||{}).checked&&String(p.GroupFlag||'').trim().toLowerCase()!=='yes')return false;
+    if(($('edNoPhotoHide')||{}).checked && !/^https?:\/\//i.test(String(p.ItemImage2||'').trim())) return false;
     return true;
   });
   list.sort(function(a,b){

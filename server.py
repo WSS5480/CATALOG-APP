@@ -128,7 +128,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "37"
+APP_VERSION = "38"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -2502,10 +2502,26 @@ async def _builder_rows_local(ident: str, request: Request):
             by_norm = {}
             for c in df.columns:
                 by_norm.setdefault(_bnorm(c), c)
-            have = [by_norm[_bnorm(w)] for w in want if _bnorm(w) in by_norm]
-            have = list(dict.fromkeys(have))
-            if have:
-                df = df[have]
+            # The storefront asks in dataset names (PromoCost, QTYAvailable);
+            # the built table keeps canonical ones (Price, QtyAvailable).
+            # Answer in the names the caller asked with, so promos and stock
+            # from builder-fed vendors reach the page.
+            alias = {"promocost": ("price", "promo", "promoprice", "saleprice", "salecost"),
+                     "qtyavailable": ("qty", "qtyavail", "stock", "instock", "quantityavailable")}
+            sel = []
+            for w in want:
+                n = _bnorm(w)
+                col = by_norm.get(n)
+                if col is None:
+                    for al in alias.get(n, ()):
+                        if al in by_norm:
+                            col = by_norm[al]
+                            break
+                if col is not None and all(col != c2 for _, c2 in sel):
+                    sel.append((w, col))
+            if sel:
+                df = df[[c2 for _, c2 in sel]]
+                df.columns = [w for w, _ in sel]
                 if params.get("groupby"):
                     df = df.drop_duplicates()
         try:

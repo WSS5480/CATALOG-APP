@@ -305,7 +305,9 @@ function renderGrid(){
     return String(a.ItemName||'').localeCompare(String(b.ItemName||''));
   });
 
-  $('catCount').textContent = list.length + ' item' + (list.length===1?'':'s');
+  var _noPh = list.filter(function(p){ return !/^https?:\/\//i.test(String(p.ItemImage2||'').trim()); }).length;
+  $('catCount').textContent = list.length + ' item' + (list.length===1?'':'s') +
+    (_noPh ? (' — ' + _noPh + ' without a photo (hidden from the store until one is added)') : '');
   var grid = $('grid');
   if(!list.length){ grid.innerHTML = '<div class="empty">No items match.</div>'; return; }
 
@@ -328,7 +330,7 @@ function renderGrid(){
   }).join('');
   // stash the rendered slice so openEdit(i) maps correctly
   grid._slice = slice;
-  if(list.length > MAX){ $('catCount').textContent = list.length + ' items (showing first ' + MAX + ' — search to narrow)'; }
+  if(list.length > MAX){ $('catCount').textContent = list.length + ' items (showing first ' + MAX + ' — search to narrow)' + (_noPh ? (' — ' + _noPh + ' without a photo, hidden from the store') : ''); }
 }
 
 /* ---------- edit modal ---------- */

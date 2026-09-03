@@ -2576,7 +2576,7 @@ body.qc-open #whoAmI{display:none !important;}
     document.body.classList.add('qc-topmenu');
     var btn = document.createElement('button');
     btn.id = 'qcMenuBtn'; btn.type = 'button';
-    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v64</span>';
+    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v65</span>';
     btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
     btn.style.cssText = 'position:fixed;top:60px;left:18px;z-index:1200;background:#16213f;color:#fff;' +
       'border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:11px 18px;font-weight:800;' +
@@ -3357,8 +3357,10 @@ body.qc-topmenu #__dtabs{bottom:auto!important}
   +'<select id="stLoc" style="padding:9px;border:1px solid #d7dbe6;border-radius:9px;font-size:13px;max-width:220px;"><option value="">All Locations</option></select>'
   +'<select id="stPeriod" style="padding:9px;border:1px solid #d7dbe6;border-radius:9px;font-size:13px;"><option value="ytd">YTD</option><option value="tm">This month</option><option value="lm">Last month</option><option value="l3">Last 3 months</option><option value="l12">Last 12 months</option><option value="all">All time</option></select>'
   +'<button id="stReload" type="button" style="padding:9px 14px;border:0;border-radius:9px;background:#0C447C;color:#fff;font-weight:700;cursor:pointer;">&#10227; Reload</button>'
+  +'<button id="stSbBtn" type="button" style="padding:9px 14px;border:0;border-radius:9px;background:#12925f;color:#fff;font-weight:700;cursor:pointer;">&#9733; Special Buys</button>'
   +'</div>'
   +'<div id="stTiles" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>'
+  +'<div id="stSb" style="display:none;margin-bottom:16px;"></div>'
   +'<div style="background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 4px rgba(0,0,0,.12);margin-bottom:16px;">'
   +'<div style="font-weight:800;color:#16213f;margin-bottom:4px;">Vendor stats</div>'
   +'<div id="stChartNote" style="color:#666;font-size:12px;margin-bottom:8px;"></div>'
@@ -3366,7 +3368,8 @@ body.qc-topmenu #__dtabs{bottom:auto!important}
   +'<div id="stTables" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;"></div>'
   +'</div>';
   document.body.appendChild(v);
-  el('stReload').onclick=function(){load(true);};
+  el('stReload').onclick=function(){load(true);SB=null;};
+  el('stSbBtn').onclick=function(){var b=el('stSb');var on=b.style.display==='none';b.style.display=on?'block':'none';el('stSbBtn').innerHTML=on?'&#9733; Hide Special Buys':'&#9733; Special Buys';if(on)loadSb();};
   ['stStatus','stVendor','stAp','stLoc','stPeriod'].forEach(function(id){el(id).onchange=render;});
   el('stSearch').oninput=function(){clearTimeout(_deb);_deb=setTimeout(render,250);};
  }
@@ -3445,6 +3448,7 @@ body.qc-topmenu #__dtabs{bottom:auto!important}
   el('stTables').innerHTML=table('By Vendor',agg(rows,function(r){return r.v;}),'Vendor')
     +table('By Location',agg(rows,function(r){return r.locLab;}),'Location')
     +table('By Approver',agg(rows,function(r){return r.ap||'—';}),'Approver');
+  try{renderSb();}catch(_sb){}
  }
  function opts(id,vals,fmt){var sel=el(id),cur=sel.value;sel.innerHTML=sel.options[0].outerHTML+vals.map(function(x){return '<option value="'+esc(x)+'">'+esc(fmt?fmt(x):x)+'</option>';}).join('');sel.value=cur;}
  function load(force){
@@ -3457,7 +3461,7 @@ body.qc-topmenu #__dtabs{bottom:auto!important}
     if(isNaN(an)){var up=parseFloat(c.UnitPrice);an=(isNaN(up)||isNaN(qn))?0:up*qn;}
     var dd=String(c.DistrictID==null?'':c.DistrictID),ss=String(c.StoreNum==null?'':c.StoreNum);
     return {ord:String(c.OrderNumber||''),v:String(c.Vendor||'').trim()||'—',d:dd,s:ss,loc:dd+'|'+ss,locLab:locLabel(dd,ss),
-     ap:String(c.ApprovedBy||'').trim(),qty:isNaN(qn)?0:qn,amt:isNaN(an)?0:an,when:whenOf(c),
+     ap:String(c.ApprovedBy||'').trim(),m:String(c.ModelNum||'').trim().toUpperCase(),qty:isNaN(qn)?0:qn,amt:isNaN(an)?0:an,when:whenOf(c),
      status:String(c.Status||''),approved:/^y/i.test(String(c.RegionalApproval||'')),
      txt:(String(c.OrderNumber||'')+' '+String(c.Vendor||'')+' '+String(c.ModelNum||'')+' '+String(c.ItemName||'')).toLowerCase()};
    }).filter(Boolean);
@@ -3468,6 +3472,72 @@ body.qc-topmenu #__dtabs{bottom:auto!important}
    var sel=el('stLoc');var cur=sel.value;sel.innerHTML=sel.options[0].outerHTML+lk.map(function(k){return '<option value="'+esc(k)+'">'+esc(locs[k])+'</option>';}).join('');sel.value=cur;
    render();
   }).catch(function(){el('stChart').innerHTML='<div style="color:#b3261e;padding:20px;">Could not load orders.</div>';});
+ }
+ var SB=null;
+ function sbUrl(){return '/api/app/collections/CatalogEdits/documents/';}
+ function loadSb(){
+  if(SB){renderSb();return;}
+  el('stSb').innerHTML='<div style="background:#fff;border-radius:12px;padding:16px;color:#888;">Loading special buys&#8230;</div>';
+  fetch(sbUrl()+'?_cb='+Date.now(),{credentials:'include'}).then(function(r){return r.ok?r.json():[];}).then(function(docs){
+   if(!Array.isArray(docs))docs=[];
+   var m={};
+   docs.forEach(function(d){var c=d.content||{};if(c._deleted||c.DEL)return;
+    var k=String(c.ModelNum||'').trim().toUpperCase();if(!k)return;
+    var at=String(c.EditedAt||'');var cur=m[k];
+    if(!cur||at>cur.at)m[k]={at:at,sb:String(c.SpecialBuy||'')==='YES',v:String(c.Vendor||'').trim(),name:String(c.ItemName||''),
+     qty:parseInt(c.SpecialBuyQty,10)||0,start:String(c.SpecialBuyStart||''),exp:String(c.ExpirationDate||''),
+     promo:parseFloat(c.PromoCost),model:k};
+   });
+   SB=Object.keys(m).map(function(k){return m[k];}).filter(function(x){return x.sb;});
+   renderSb();
+  }).catch(function(){el('stSb').innerHTML='<div style="background:#fff;border-radius:12px;padding:16px;color:#b3261e;">Could not load special buys.</div>';});
+ }
+ function renderSb(){
+  var box=el('stSb');if(!box||box.style.display==='none'||!SB)return;
+  var vf=el('stVendor').value,q=(el('stSearch').value||'').trim().toLowerCase();
+  var list=SB.filter(function(x){
+   if(vf&&x.v!==vf)return false;
+   if(q&&((x.v+' '+x.model+' '+x.name).toLowerCase().indexOf(q)<0))return false;
+   return true;
+  });
+  var today=new Date();today.setHours(0,0,0,0);
+  var tq=0,tb=0,td=0;
+  var rows=list.map(function(x){
+   var st=x.start?new Date(x.start+'T00:00:00'):null;
+   var bought=0,dol=0;
+   (L||[]).forEach(function(r){if(r.m!==x.model)return;if(st&&(!r.when||r.when<st))return;bought+=r.qty;dol+=r.amt;});
+   var days=null;if(x.exp){var e=new Date(x.exp+'T00:00:00');if(!isNaN(e))days=Math.round((e-today)/86400000);}
+   tq+=x.qty;tb+=bought;td+=dol;
+   return {x:x,bought:bought,dol:dol,days:days};
+  }).sort(function(a,b){return b.dol-a.dol;});
+  var h='<div style="background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 4px rgba(0,0,0,.12);">'
+   +'<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:baseline;margin-bottom:10px;">'
+   +'<div style="font-weight:800;color:#16213f;">Special Buys &#8212; offered vs bought</div>'
+   +'<span style="color:#666;font-size:12px;">Bought counts every order line placed since each buy started.</span></div>'
+   +'<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">'
+   +tile('SPECIAL BUYS',String(rows.length))+tile('QTY OFFERED',String(tq))+tile('QTY BOUGHT',String(tb))+tile('$ BOUGHT',money0(td))
+   +'</div>';
+  if(!rows.length)h+='<div style="color:#888;">No special buys match this view.</div>';
+  else{
+   h+='<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap;">'
+    +'<tr style="background:#16213f;color:#fff;"><th style="padding:7px 9px;text-align:left;">Item</th><th style="padding:7px 9px;text-align:right;">Sale $</th><th style="padding:7px 9px;text-align:right;">Offered</th><th style="padding:7px 9px;text-align:right;">Bought</th><th style="padding:7px 9px;min-width:160px;">Sold</th><th style="padding:7px 9px;text-align:right;">Left</th><th style="padding:7px 9px;text-align:right;">$ Bought</th><th style="padding:7px 9px;">Status</th></tr>';
+   rows.forEach(function(rr,i){var x=rr.x;var pc=x.qty?Math.min(100,Math.round(100*rr.bought/x.qty)):0;var left=x.qty?Math.max(0,x.qty-rr.bought):null;
+    var stat=(rr.days!=null&&rr.days<0)?'<span style="background:#eee;color:#666;border-radius:9px;padding:2px 9px;font-size:11px;font-weight:700;">ENDED</span>'
+     :(x.qty&&left===0?'<span style="background:#fdecea;color:#b3261e;border-radius:9px;padding:2px 9px;font-size:11px;font-weight:700;">SOLD OUT</span>'
+     :'<span style="background:#e8f5e9;color:#1b5e20;border-radius:9px;padding:2px 9px;font-size:11px;font-weight:700;">ACTIVE'+(rr.days!=null?(' &#183; '+(rr.days===0?'last day':rr.days+'d left')):'')+'</span>');
+    h+='<tr style="background:'+(i%2?'#f4f6fb':'#fff')+';">'
+     +'<td style="padding:6px 9px;max-width:340px;overflow:hidden;text-overflow:ellipsis;" title="'+esc(x.v+' | '+x.model+' | '+x.name)+'">'+esc(x.v)+' &#8226; '+esc(x.model)+' &#8212; '+esc(x.name)+'</td>'
+     +'<td style="padding:6px 9px;text-align:right;">'+(isNaN(x.promo)?'&#8212;':money(x.promo))+'</td>'
+     +'<td style="padding:6px 9px;text-align:right;">'+(x.qty||'&#8212;')+'</td>'
+     +'<td style="padding:6px 9px;text-align:right;font-weight:700;">'+rr.bought+'</td>'
+     +'<td style="padding:6px 9px;"><div style="background:#eef1f7;border-radius:999px;height:12px;overflow:hidden;"><div style="width:'+(x.qty&&pc>0?Math.max(4,pc):0)+'%;height:100%;border-radius:999px;background:linear-gradient(90deg,#2f8f2f,#6fce53);" title="'+pc+'% sold"></div></div></td>'
+     +'<td style="padding:6px 9px;text-align:right;">'+(left==null?'&#8212;':left)+'</td>'
+     +'<td style="padding:6px 9px;text-align:right;font-weight:700;">'+money(rr.dol)+'</td>'
+     +'<td style="padding:6px 9px;">'+stat+'</td></tr>';
+   });
+   h+='</table></div>';
+  }
+  box.innerHTML=h+'</div>';
  }
  window.__qcStatsShow=function(){
   ensure();

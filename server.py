@@ -129,7 +129,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "47"
+APP_VERSION = "48"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -808,14 +808,16 @@ async def builder_photos_run(request: Request):
     if not row:
         raise HTTPException(404, "No such source.")
 
-    def _note(msg, running=True):
+    def _note(msg, running=True, extra=None):
         try:
+            body = {"running": running, "note": msg,
+                    "last_run": time.strftime("%Y-%m-%d %H:%M"),
+                    "last_ts": time.time(), "ok": not running}
+            if extra:
+                body.update(extra)
             with eng.begin() as c:
                 c.execute(text("update cat_sources set feed_status=:s where id=:i"),
-                          {"s": json.dumps({"running": running, "note": msg,
-                                            "last_run": time.strftime("%Y-%m-%d %H:%M"),
-                                            "last_ts": time.time(), "ok": not running}),
-                           "i": sid})
+                          {"s": json.dumps(body), "i": sid})
         except Exception:
             pass
 
@@ -823,13 +825,14 @@ async def builder_photos_run(request: Request):
         try:
             def prog(i, got, tag=""):
                 _note(f"Hosting photos — {i} checked, {got} saved… {tag}")
-            summary = _photos_mirror(eng, cust, row, progress=prog, redo=redo)
+            summary, _pt, _ph = _photos_mirror(eng, cust, row, progress=prog, redo=redo)
             try:
                 _builder_do_build(eng, cust)
                 summary += " · catalog rebuilt"
             except Exception as be:
                 summary += f" · rebuild: {str(be)[:100]}"
-            _note(summary, running=False)
+            _note(summary, running=False,
+                  extra={"photos_total": _pt, "photos_hosted": _ph})
         except Exception as e:
             _note(f"Photo hosting failed: {str(e)[:200]}", running=False)
 
@@ -2650,7 +2653,7 @@ def _photos_mirror(eng, cust: str, row, progress=None, redo=False) -> str:
     urls = [u for u in df[col].astype(str).str.strip().unique().tolist()
             if u.lower().startswith(("http://", "https://"))]
     if not urls:
-        return "no web photo links in this source"
+        return ("no web photo links in this source", 0, 0)
     have = set()
     from sqlalchemy import bindparam
     with eng.connect() as c:
@@ -2701,8 +2704,9 @@ def _photos_mirror(eng, cust: str, row, progress=None, redo=False) -> str:
                 if progress and (i % 25 == 0 or i == len(todo)):
                     progress(i, got, f"photos ({len(todo)} to fetch)")
                 time.sleep(0.15)
-    return (f"photos: {got} hosted" + (f", {bad} failed" if bad else "") +
-            (f", {len(have)} already here" if have else ""))
+    hosted_now = len(have) + got
+    return (f"photos: {hosted_now} of {len(urls)} hosted" +
+            (f", {bad} failed" if bad else ""), len(urls), hosted_now)
 
 
 def _builder_do_build(eng, cust: str):
@@ -4574,9 +4578,11 @@ def _feed_run_source(eng, row) -> dict:
                 with eng.connect() as c:
                     fresh = c.execute(text("select * from cat_sources where id=:i"),
                                       {"i": row["id"]}).mappings().first()
-                note2 = _photos_mirror(eng, str(row["customer"]), fresh or row,
-                                       progress=_progress)
+                note2, _pt, _ph = _photos_mirror(eng, str(row["customer"]), fresh or row,
+                                                 progress=_progress)
                 out["note"] = out["note"].rstrip(".") + " · " + note2
+                out["photos_total"] = _pt
+                out["photos_hosted"] = _ph
             except Exception as pe:
                 out["note"] = out["note"] + f" · photos failed: {str(pe)[:120]}"
         # Freight by store rides along on every successful API check — it is

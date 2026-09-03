@@ -128,7 +128,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "36"
+APP_VERSION = "37"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -555,13 +555,38 @@ async def _orders_ready(request: Request):
     return who, cust
 
 
+def _edits_access(who) -> bool:
+    """CatalogEdits is the vendor-edit log: vendor reps and catalog admins use
+    it, so it is gated by the Vendor-page permission instead of order perms."""
+    sc = (who.get("scope") or {})
+    if sc.get("all") or who.get("admin"):
+        return True
+    if ((sc.get("perms") or _PERM_DEFAULT).get("vendorpage")):
+        return True
+    return str(sc.get("role") or "").strip().lower() == "vendor"
+
+
+def _edits_vendor_ok(who, vendor) -> bool:
+    """A vendor-scoped person may only touch edits for their own vendors."""
+    sc = (who.get("scope") or {})
+    if sc.get("all") or who.get("admin"):
+        return True
+    if sc.get("vendors_all", True):
+        return True
+    vs = [str(v).strip().upper() for v in (sc.get("vendors") or []) if str(v).strip()]
+    return (not vs) or (str(vendor or "").strip().upper() in vs)
+
+
 @app.get("/api/app/collections/{coll}/documents/")
 async def orders_list(coll: str, request: Request):
     ready = await _orders_ready(request)
     if ready is None:
         return await etl_get(f"/api/app/collections/{coll}/documents/")
     who, cust = ready
-    if _pending_level(who.get("scope")) < 1:
+    if coll == "CatalogEdits":
+        if not _edits_access(who):
+            raise HTTPException(403, "You do not have access to vendor edits.")
+    elif _pending_level(who.get("scope")) < 1:
         raise HTTPException(403, "You do not have access to pending orders.")
     from sqlalchemy import text
     with _builder_engine().connect() as c:
@@ -584,16 +609,22 @@ async def orders_create(coll: str, request: Request):
     if ready is None:
         return await etl_send("POST", f"/api/app/collections/{coll}/documents/", payload)
     who, cust = ready
-    if not (who.get("scope") or {}).get("perms", _PERM_DEFAULT).get("order", True):
-        raise HTTPException(403, "You do not have access to the order form.")
     content = (payload or {}).get("content")
     if not isinstance(content, dict):
         content = payload if isinstance(payload, dict) else {}
-    content.setdefault("SubmittedBy", who.get("email", ""))
+    if coll == "CatalogEdits":
+        if not _edits_access(who):
+            raise HTTPException(403, "You do not have access to vendor edits.")
+        if not _edits_vendor_ok(who, content.get("Vendor")):
+            raise HTTPException(403, "That vendor is outside your access.")
+    else:
+        if not (who.get("scope") or {}).get("perms", _PERM_DEFAULT).get("order", True):
+            raise HTTPException(403, "You do not have access to the order form.")
+        content.setdefault("SubmittedBy", who.get("email", ""))
     # Budgets: a location or group past its monthly number still submits, but
     # every line is flagged over budget — and only an administrator can approve.
     try:
-        p = _person(str(who.get("email") or ""))
+        p = _person(str(who.get("email") or "")) if coll != "CatalogEdits" else None
         if p is not None and not _is_admin_row(p):
             notes = _budget_check(_builder_engine(), cust, p, content)
             if notes:
@@ -618,9 +649,16 @@ async def orders_update(coll: str, doc_id: str, request: Request):
     if ready is None:
         return await etl_send("PUT", f"/api/app/collections/{coll}/documents/{doc_id}", payload)
     who, cust = ready
-    if _pending_level(who.get("scope")) < 2:
+    content0 = (payload or {}).get("content")
+    if coll == "CatalogEdits":
+        if not _edits_access(who):
+            raise HTTPException(403, "You do not have access to vendor edits.")
+        _v = (content0 or {}).get("Vendor") if isinstance(content0, dict) else None
+        if not _edits_vendor_ok(who, _v):
+            raise HTTPException(403, "That vendor is outside your access.")
+    elif _pending_level(who.get("scope")) < 2:
         raise HTTPException(403, "You may look at pending orders, but not change them.")
-    content = (payload or {}).get("content")
+    content = content0
     if not isinstance(content, dict):
         content = payload if isinstance(payload, dict) else {}
     from sqlalchemy import text
@@ -657,12 +695,34 @@ async def orders_delete(coll: str, doc_id: str, request: Request):
     if ready is None:
         return await etl_send("DELETE", f"/api/app/collections/{coll}/documents/{doc_id}")
     who, cust = ready
-    if _pending_level(who.get("scope")) < 3:
-        raise HTTPException(403, "You do not have delete access on pending orders.")
     from sqlalchemy import text
+    if coll == "CatalogEdits":
+        if not _edits_access(who):
+            raise HTTPException(403, "You do not have access to vendor edits.")
+        with _builder_engine().connect() as c:
+            row = c.execute(text("select content from cat_orders where id=:i and coll=:o and customer=:c"),
+                            {"i": doc_id, "o": coll, "c": cust}).first()
+        if row is not None:
+            try:
+                _oc = json.loads(row[0] or "{}")
+            except Exception:
+                _oc = {}
+            if not _edits_vendor_ok(who, _oc.get("Vendor")):
+                raise HTTPException(403, "That vendor is outside your access.")
+    elif _pending_level(who.get("scope")) < 3:
+        raise HTTPException(403, "You do not have delete access on pending orders.")
     with _builder_engine().begin() as c:
         c.execute(text("delete from cat_orders where id=:i and coll=:o and customer=:c"),
                   {"i": doc_id, "o": coll, "c": cust})
+    return {"ok": True}
+
+
+@app.post("/api/app/appdb/export")
+async def appdb_export(request: Request):
+    # The Domo editor nudges an AppDB-to-dataset export after each save. Here
+    # the app reads edits straight from its own database, so there is nothing
+    # to export — succeed so the editor's save flow stays byte-identical.
+    await _me_scope(request)
     return {"ok": True}
 
 
@@ -1671,6 +1731,33 @@ async def vendor_page(request: Request):
         return Response("<h1>Vendor editor not installed</h1><p>Upload "
                         "<code>vendor.html</code> to the static folder.</p>",
                         status_code=500, media_type="text/html")
+    email = ""
+    try:
+        _w = await _whoami(request)
+        email = str((_w or {}).get("email") or "")
+    except Exception:
+        email = ""
+    label = ""
+    try:
+        p = _person(email)
+        if p is not None:
+            label = str(p["user_label"] or "")
+    except Exception:
+        label = ""
+    lock = ""
+    try:
+        if not sc.get("all") and not sc.get("vendors_all", True):
+            vs = [str(v).strip() for v in (sc.get("vendors") or []) if str(v).strip()]
+            lock = "||".join(vs)
+    except Exception:
+        lock = ""
+    inj = ('<script id="cat-user">window.__CAT_USER=%s;window.__CAT_LOCKVENDOR=%s;</script>'
+           % (json.dumps({"name": label, "email": email}),
+              json.dumps(lock))).encode()
+    if b"</head>" in body:
+        body = body.replace(b"</head>", inj + b"</head>", 1)
+    else:
+        body = inj + body
     return Response(_pwa_inject(body), media_type="text/html",
                     headers={"Cache-Control": "no-cache"})
 

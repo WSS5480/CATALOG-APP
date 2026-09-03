@@ -2576,7 +2576,7 @@ body.qc-open #whoAmI{display:none !important;}
     document.body.classList.add('qc-topmenu');
     var btn = document.createElement('button');
     btn.id = 'qcMenuBtn'; btn.type = 'button';
-    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v66</span>';
+    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v67</span>';
     btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
     btn.style.cssText = 'position:fixed;top:60px;left:18px;z-index:1200;background:#16213f;color:#fff;' +
       'border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:11px 18px;font-weight:800;' +
@@ -3483,8 +3483,12 @@ body.qc-topmenu #__dtabs{bottom:auto!important}
    var m={};
    docs.forEach(function(d){var c=d.content||{};if(c._deleted||c.DEL)return;
     var k=String(c.ModelNum||'').trim().toUpperCase();if(!k)return;
+    // Same rule as the storefront badges: an edit that says nothing about a
+    // special buy (no SpecialBuy flag, no expiration) never displaces one.
+    var _sb=String(c.SpecialBuy||'')==='YES', _ex=String(c.ExpirationDate||'').trim();
+    if(!_sb&&!_ex)return;
     var at=String(c.EditedAt||'');var cur=m[k];
-    if(!cur||at>cur.at)m[k]={at:at,sb:String(c.SpecialBuy||'')==='YES',v:String(c.Vendor||'').trim(),name:String(c.ItemName||''),
+    if(!cur||at>cur.at)m[k]={at:at,sb:_sb,v:String(c.Vendor||'').trim(),name:String(c.ItemName||''),
      qty:parseInt(c.SpecialBuyQty,10)||0,start:String(c.SpecialBuyStart||''),exp:String(c.ExpirationDate||''),
      promo:parseFloat(c.PromoCost),model:k};
    });

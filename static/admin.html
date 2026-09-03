@@ -133,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v47</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v48</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1201,6 +1201,12 @@ function bldEtlBlock(src, f){
       ' value="' + esc((f && f.photos_col) || '') + '" style="max-width:280px">' +
     '<button class="btn ghost sm" onclick="bldPhotosRun(this,\'' + esc(id) + '\')">Host photos now</button>' +
     '<button class="btn sm" onclick="bldFeedSave(\'' + esc(id) + '\')">Save</button>' +
+    (function(st){
+      if(!st || typeof st.photos_total === 'undefined') return '';
+      var done = (st.photos_hosted|0) >= (st.photos_total|0) && (st.photos_total|0) > 0;
+      return '<span class="tag ' + (done ? 'ok' : 'part') + '" style="align-self:center">' +
+        (st.photos_hosted|0) + ' of ' + (st.photos_total|0) + ' photos hosted</span>';
+    })(src.feed_status) +
     '</div>';
 }
 

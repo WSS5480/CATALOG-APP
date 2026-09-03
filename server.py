@@ -129,7 +129,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "54"
+APP_VERSION = "55"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -1343,6 +1343,9 @@ ADMIN_GUIDE = b"""
   <ol>
     <li><b>Build the catalog.</b> On the <b>Catalog Builder</b> tab, drop each vendor&#39;s
       file in &mdash; or give the source a feed (API, SFTP or email) and it refreshes itself.
+      Email feeds read the inbox saved in the <b>Mailbox for email feeds</b> box at the bottom
+      of that tab &mdash; any owner&#39;s account, kept in this app&#39;s own database, no
+      Render settings needed.
       Match the columns it could not guess, use <b>ETL steps</b> for computed columns
       (Promo Cost = RegularCost &minus; Discount), and photos copy themselves onto this app
       as they arrive. Then press <b>Build the catalog</b>.</li>
@@ -4751,9 +4754,8 @@ def _feed_address(sid: str) -> str:
 def _feed_fetch_email(cfg: dict, sid: str = ""):
     host, port, user, pw = _email_env()
     if not (host and user and pw):
-        raise ValueError("Connect a mailbox first: on this service's Environment page in Render, "
-                         "set EMAIL_IMAP_HOST, EMAIL_IMAP_USER and EMAIL_IMAP_PASS "
-                         "(and EMAIL_IMAP_PORT if it is not 993).")
+        raise ValueError("Connect a mailbox first: fill in the 'Mailbox for email feeds' "
+                         "box at the bottom of the Catalog Builder tab and press Save.")
     frm = str(cfg.get("from_contains") or "").strip()
     subj = str(cfg.get("subject_contains") or "").strip()
     addr = _feed_address(sid)

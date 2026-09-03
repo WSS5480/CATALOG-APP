@@ -2551,15 +2551,15 @@ body.qc-open #whoAmI{display:none !important;}
     document.body.classList.add('qc-topmenu');
     var btn = document.createElement('button');
     btn.id = 'qcMenuBtn'; btn.type = 'button';
-    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v48</span>';
+    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v49</span>';
     btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
-    btn.style.cssText = 'position:fixed;top:12px;left:12px;z-index:1200;background:#16213f;color:#fff;' +
-      'border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:10px 18px;font-weight:800;' +
-      'font-size:13.5px;cursor:pointer;box-shadow:0 6px 18px rgba(14,23,48,.35);font-family:inherit;letter-spacing:.3px;' +
+    btn.style.cssText = 'position:fixed;top:60px;left:18px;z-index:1200;background:#16213f;color:#fff;' +
+      'border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:11px 18px;font-weight:800;' +
+      'font-size:14px;cursor:pointer;box-shadow:0 6px 18px rgba(14,23,48,.35);font-family:inherit;letter-spacing:.3px;' +
       'display:inline-flex;align-items:center;gap:9px;line-height:1;';
     var bar = document.createElement('div');
     bar.id = '__dtabs';
-    bar.style.cssText = 'position:fixed;top:58px;left:12px;z-index:1200;display:none;flex-direction:column;' +
+    bar.style.cssText = 'position:fixed;top:112px;left:18px;z-index:1200;display:none;flex-direction:column;' +
       'align-items:stretch;gap:2px;background:#16213f;border-radius:14px;padding:10px;width:240px;max-width:84vw;' +
       'box-shadow:0 18px 48px rgba(14,23,48,.45);font-family:inherit;max-height:calc(100vh - 78px);overflow:auto;';
     function setOpen(o){ bar.style.display = o ? 'flex' : 'none'; btn.setAttribute('aria-expanded', o ? 'true' : 'false'); }
@@ -2583,6 +2583,23 @@ body.qc-open #whoAmI{display:none !important;}
       b.onclick = function(){ location.href = t[0]; };
       bar.appendChild(b);
     });
+    function place(){
+      try{
+        var se = document.getElementById('catSearch');
+        if (se && se.offsetParent && window.scrollY < 60){
+          var r = se.getBoundingClientRect();
+          btn.style.top = Math.round(r.top) + 'px';
+          btn.style.height = Math.round(r.height) + 'px';
+          bar.style.top = Math.round(r.top + r.height + 8) + 'px';
+        } else if (!se || !se.offsetParent){
+          btn.style.top = '60px'; btn.style.height = '';
+          bar.style.top = '112px';
+        }
+      }catch(_p){}
+    }
+    setTimeout(place, 300); setTimeout(place, 1500); setTimeout(place, 3500);
+    window.addEventListener('resize', place);
+    setInterval(place, 2500);
     btn.onclick = function(e){ e.stopPropagation(); setOpen(bar.style.display === 'none'); };
     document.addEventListener('click', function(e){ if(bar.style.display !== 'none' && !bar.contains(e.target) && e.target !== btn) setOpen(false); }, true);
     document.addEventListener('keydown', function(e){ if(e.key === 'Escape') setOpen(false); });
@@ -3246,10 +3263,10 @@ if(hit.sb&&hit.qty){var tq=parseInt(hit.qty,10);if(!isNaN(tq)){var od=(window.QC
 load();setInterval(load,600000);setInterval(deco,1500);
 })();</script>
 <style id="qc-topmenu-css">
-body.qc-topmenu #catalogView .cat-toolbar{padding-left:132px!important}
+body.qc-topmenu #catalogView .cat-toolbar{padding-left:150px!important}
 #__dtabs #whoAmI .email::after{color:#cfd8ea}
 #__dtabs #whoAmI{border-left:none!important;border-top:1px solid rgba(255,255,255,.22)!important;margin:8px 0 0!important;padding:10px 4px 2px!important;display:flex!important;flex-wrap:wrap!important;align-items:center!important;gap:8px!important;width:100%!important;box-sizing:border-box!important;}
-body.has-installbar #__dtabs{bottom:auto!important;top:58px!important}
+body.has-installbar #__dtabs{bottom:auto!important;top:112px!important}
 body.qc-topmenu #__dtabs{bottom:auto!important}
 </style>
 <script id="qc-deeplink">(function(){try{var m=/[#&]v=([a-z]+)/.exec(location.hash||'');if(!m)return;var v=m[1];[1200,2600,4200].forEach(function(d){setTimeout(function(){try{if(typeof window.__showView==='function')window.__showView(v);}catch(_e){}},d);});}catch(e){}})();</script>

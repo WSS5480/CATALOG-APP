@@ -490,7 +490,7 @@ window.__APPCFG_READY.then(function(){
         var vis = mdocs.filter(function(d){ if(!showDel && isDel(d)) return false; if(!window._submittedView && String(d.content.Status||"")==="Submitted") return false; if(window._submittedView && String(d.content.Status||"")!=="Submitted") return false; if(window._userHasScope){ var _dd=String((d.content.District!=null?d.content.District:(d.content.DistrictID||""))), _ss=String(d.content.StoreNum||""); if(!(window._dmDistricts[_dd]||window._myStores[_dd+"|"+_ss])) return false; } if(!q) return true; return JSON.stringify(d.content).toLowerCase().indexOf(q)>-1; });
         vis.sort(function(a,b){var x=String(a.content.OrderNumber!=null?a.content.OrderNumber:''),y=String(b.content.OrderNumber!=null?b.content.OrderNumber:'');return x<y?-1:(x>y?1:0);});
         var _curOrd=null,_gq=0,_ga=0,_gf=0,_grp=[];
-        function _mngFlush(){ if(_curOrd===null) return; var _ord=_curOrd, _docs=_grp.slice(); var DLR=String.fromCharCode(36); var trT=document.createElement('tr'); trT.style.cssText='font-weight:bold; background:#eef2fb; border-top:2px solid #0C447C;'; [['Order '+_curOrd+' Total','left'],['',''],['',''],['',''],['',''],[String(_gq),'right'],['',''],[DLR+_gf.toFixed(2),'right'],[DLR+_ga.toFixed(2),'right'],['',''],['',''],['',''],['',''],['','']].forEach(function(p){ var td=document.createElement('td'); td.textContent=p[0]; if(p[1])td.style.textAlign=p[1]; trT.appendChild(td); }); var _poTd=trT.children[10]; if(_poTd && !window._approvalView){ _poTd.textContent=''; var _poIn=document.createElement('input'); _poIn.type='text'; _poIn.value=(_docs[0]&&_docs[0].content?(_docs[0].content.PONum||''):''); _poIn.placeholder='PO #'; _poIn.style.cssText='width:160px; font-weight:normal;'; if(window._submittedView){ _poIn.readOnly=true; _poIn.disabled=true; _poIn.style.background='#eee'; _poIn.title='PO # is read-only on the Submitted Orders page'; } _poIn.onchange=function(){ var val=_poIn.value; Promise.all(_docs.map(function(dd){ var cc=Object.assign({},dd.content); cc.PONum=val; cc._editedAt=new Date().toISOString(); cc._editedBy=(typeof mngUser==='function'?mngUser():''); return mput(dd.id,cc).then(function(){ dd.content=cc; }); })).then(function(){ if(typeof mstat==='function') mstat('PO # saved for order '+_ord,'ok'); if(window.mngRender) window.mngRender(); try{ var _bc=new BroadcastChannel("ddx_pending"); _bc.postMessage({t:"po",at:Date.now()}); }catch(_be){} try{ localStorage.setItem("ddx_pending_ping", String(Date.now())); }catch(_le){} }).catch(function(e){ if(typeof mstat==='function') mstat('PO save failed','err'); }); }; _poTd.appendChild(_poIn);if(window._submittedView){var _revB=document.createElement('button');_revB.type='button';_revB.textContent='Revert to Edit';_revB.style.cssText='margin-left:8px;padding:4px 12px;font-size:.78rem;cursor:pointer;background:#e8a33d;color:#fff;border:none;border-radius:4px;';_revB.onclick=function(){if(_revB.getAttribute('data-armed')!=='1'){_revB.setAttribute('data-armed','1');_revB.textContent='Confirm revert?';setTimeout(function(){try{_revB.setAttribute('data-armed','0');_revB.textContent='Revert to Edit';}catch(e){}},4000);return;}var _nowR=new Date().toISOString();Promise.all(_docs.map(function(dd){var cc=Object.assign({},dd.content);cc.Status='';cc._editedAt=_nowR;cc._editedBy=(typeof mngUser==='function'?mngUser():'');return mput(dd.id,cc).then(function(){dd.content=cc;});})).then(function(){if(typeof mstat==='function')mstat('Order '+_ord+' reverted to Edit/Submit','ok');if(window.mngRender)window.mngRender();try{var _bc=new BroadcastChannel('ddx_pending');_bc.postMessage({t:'revert',at:Date.now()});}catch(_be){}try{localStorage.setItem('ddx_pending_ping',String(Date.now()));}catch(_le){}}).catch(function(e){if(typeof mstat==='function')mstat('Revert failed','err');});};_poTd.appendChild(_revB);} } var _actTd=trT.children[11]; if(_actTd && !window._submittedView && !window._approvalView){ _actTd.textContent=''; var _subB=document.createElement('button'); _subB.type='button'; _subB.textContent='Submit'; _subB.className='btn btn-primary'; _subB.style.cssText='padding:4px 12px; font-size:.78rem; cursor:pointer;'; _subB.onclick=function(){ if(_subB.getAttribute('data-armed')!=='1'){ _subB.setAttribute('data-armed','1'); _subB.textContent='Confirm?'; setTimeout(function(){ try{ _subB.setAttribute('data-armed','0'); _subB.textContent='Submit'; }catch(e){} },4000); return; } var _nowI=new Date().toISOString(); Promise.all(_docs.map(function(dd){ var cc=Object.assign({},dd.content); cc.Status='Submitted'; cc.SubmittedAt=_nowI; cc.SubmittedBy=(typeof mngUser==='function'?mngUser():''); return mput(dd.id,cc).then(function(){ dd.content=cc; }); })).then(function(){ if(typeof mstat==='function') mstat('Order '+_ord+' submitted','ok'); try{ var _c0=(_docs[0]&&_docs[0].content)||{}; var _dk=String(_c0.DistrictID!=null?_c0.DistrictID:''); var _sk=String(_c0.StoreNum!=null?_c0.StoreNum:''); var _em=(window._orderEmails&&window._orderEmails[_dk+'|'+_sk])||{}; var _rec=[]; [_em.pd,_em.dm,_em.mgr,'steve.smith@buddyrents.com'].forEach(function(e){ e=String(e||'').trim(); if(e&&_rec.indexOf(e)<0)_rec.push(e); }); var _po=String(_c0.PONum||''); var _subj=String(_ord)+' '+_po; var _bl=_docs.filter(function(d){return !isDel(d);}).map(function(d){ var c=d.content||{}; return (c.Vendor||'')+' | '+(c.ModelNum||'')+' | '+(c.ItemName||'')+' | Qty '+(c.OrderQuantity||'')+' | Unit $'+(c.UnitPrice||'')+' | $'+(c.LineTotal||''); }); var _nl=String.fromCharCode(10); var _body='Order: '+_ord+_nl+'PO #: '+_po+_nl+'District: '+_dk+'  Store: '+_sk+_nl+_nl+_bl.join(_nl)+_nl+_nl+'Order Total: $'+(_docs.filter(function(d){return !isDel(d);}).reduce(function(t,d){ var c=d.content||{}; var n=parseFloat(c.LineTotal); return t+(isNaN(n)?0:n); },0).toFixed(2)); if(1){ (function(){ try{
+        function _mngFlush(){ if(_curOrd===null) return; var _ord=_curOrd, _docs=_grp.slice(); var DLR=String.fromCharCode(36); var trT=document.createElement('tr'); trT.className='qc-total'; trT.style.cssText='font-weight:bold; background:#eef2fb; border-top:2px solid #0C447C; white-space:nowrap;'; [['Order '+_curOrd+' Total','left'],['',''],['',''],['',''],['',''],[String(_gq),'right'],['',''],[DLR+_gf.toFixed(2),'right'],[DLR+_ga.toFixed(2),'right'],['',''],['',''],['',''],['',''],['','']].forEach(function(p){ var td=document.createElement('td'); td.textContent=p[0]; if(p[1])td.style.textAlign=p[1]; trT.appendChild(td); }); var _poTd=trT.children[10]; if(_poTd && !window._approvalView){ _poTd.textContent=''; var _poIn=document.createElement('input'); _poIn.type='text'; _poIn.value=(_docs[0]&&_docs[0].content?(_docs[0].content.PONum||''):''); _poIn.placeholder='PO #'; _poIn.style.cssText='width:160px; font-weight:normal;'; if(window._submittedView){ _poIn.readOnly=true; _poIn.disabled=true; _poIn.style.background='#eee'; _poIn.title='PO # is read-only on the Submitted Orders page'; } _poIn.onchange=function(){ var val=_poIn.value; Promise.all(_docs.map(function(dd){ var cc=Object.assign({},dd.content); cc.PONum=val; cc._editedAt=new Date().toISOString(); cc._editedBy=(typeof mngUser==='function'?mngUser():''); return mput(dd.id,cc).then(function(){ dd.content=cc; }); })).then(function(){ if(typeof mstat==='function') mstat('PO # saved for order '+_ord,'ok'); if(window.mngRender) window.mngRender(); try{ var _bc=new BroadcastChannel("ddx_pending"); _bc.postMessage({t:"po",at:Date.now()}); }catch(_be){} try{ localStorage.setItem("ddx_pending_ping", String(Date.now())); }catch(_le){} }).catch(function(e){ if(typeof mstat==='function') mstat('PO save failed','err'); }); }; _poTd.appendChild(_poIn);if(window._submittedView){var _revB=document.createElement('button');_revB.type='button';_revB.textContent='Revert to Edit';_revB.style.cssText='margin-left:8px;padding:4px 12px;font-size:.78rem;cursor:pointer;background:#e8a33d;color:#fff;border:none;border-radius:4px;';_revB.onclick=function(){if(_revB.getAttribute('data-armed')!=='1'){_revB.setAttribute('data-armed','1');_revB.textContent='Confirm revert?';setTimeout(function(){try{_revB.setAttribute('data-armed','0');_revB.textContent='Revert to Edit';}catch(e){}},4000);return;}var _nowR=new Date().toISOString();Promise.all(_docs.map(function(dd){var cc=Object.assign({},dd.content);cc.Status='';cc._editedAt=_nowR;cc._editedBy=(typeof mngUser==='function'?mngUser():'');return mput(dd.id,cc).then(function(){dd.content=cc;});})).then(function(){if(typeof mstat==='function')mstat('Order '+_ord+' reverted to Edit/Submit','ok');if(window.mngRender)window.mngRender();try{var _bc=new BroadcastChannel('ddx_pending');_bc.postMessage({t:'revert',at:Date.now()});}catch(_be){}try{localStorage.setItem('ddx_pending_ping',String(Date.now()));}catch(_le){}}).catch(function(e){if(typeof mstat==='function')mstat('Revert failed','err');});};_poTd.appendChild(_revB);} } var _actTd=trT.children[11]; if(_actTd && !window._submittedView && !window._approvalView){ _actTd.textContent=''; var _subB=document.createElement('button'); _subB.type='button'; _subB.textContent='Submit'; _subB.className='btn btn-primary'; _subB.style.cssText='padding:4px 12px; font-size:.78rem; cursor:pointer;'; _subB.onclick=function(){ if(_subB.getAttribute('data-armed')!=='1'){ _subB.setAttribute('data-armed','1'); _subB.textContent='Confirm?'; setTimeout(function(){ try{ _subB.setAttribute('data-armed','0'); _subB.textContent='Submit'; }catch(e){} },4000); return; } var _nowI=new Date().toISOString(); Promise.all(_docs.map(function(dd){ var cc=Object.assign({},dd.content); cc.Status='Submitted'; cc.SubmittedAt=_nowI; cc.SubmittedBy=(typeof mngUser==='function'?mngUser():''); return mput(dd.id,cc).then(function(){ dd.content=cc; }); })).then(function(){ if(typeof mstat==='function') mstat('Order '+_ord+' submitted','ok'); try{ var _c0=(_docs[0]&&_docs[0].content)||{}; var _dk=String(_c0.DistrictID!=null?_c0.DistrictID:''); var _sk=String(_c0.StoreNum!=null?_c0.StoreNum:''); var _em=(window._orderEmails&&window._orderEmails[_dk+'|'+_sk])||{}; var _rec=[]; [_em.pd,_em.dm,_em.mgr,'steve.smith@buddyrents.com'].forEach(function(e){ e=String(e||'').trim(); if(e&&_rec.indexOf(e)<0)_rec.push(e); }); var _po=String(_c0.PONum||''); var _subj=String(_ord)+' '+_po; var _bl=_docs.filter(function(d){return !isDel(d);}).map(function(d){ var c=d.content||{}; return (c.Vendor||'')+' | '+(c.ModelNum||'')+' | '+(c.ItemName||'')+' | Qty '+(c.OrderQuantity||'')+' | Unit $'+(c.UnitPrice||'')+' | $'+(c.LineTotal||''); }); var _nl=String.fromCharCode(10); var _body='Order: '+_ord+_nl+'PO #: '+_po+_nl+'District: '+_dk+'  Store: '+_sk+_nl+_nl+_bl.join(_nl)+_nl+_nl+'Order Total: $'+(_docs.filter(function(d){return !isDel(d);}).reduce(function(t,d){ var c=d.content||{}; var n=parseFloat(c.LineTotal); return t+(isNaN(n)?0:n); },0).toFixed(2)); if(1){ (function(){ try{
  var _Q=String.fromCharCode(63), _AMP=String.fromCharCode(38);
  var _live=_docs.filter(function(d){return !isDel(d);});
  var _groups={}, _ordk=[];
@@ -575,7 +575,7 @@ window.__APPCFG_READY.then(function(){
  _box.appendChild(done);
  _ov.appendChild(_box);
  document.body.appendChild(_ov);
-}catch(_me){ if(typeof mstat==='function') mstat('Email panel error: '+_me.message,'err'); } })(); } }catch(_ee){} if(window.mngRender) window.mngRender(); }).catch(function(e){ if(typeof mstat==='function') mstat('Submit failed','err'); }); }; _actTd.appendChild(_subB); } if(_actTd && window._approvalView){ _actTd.textContent=''; var _apB=document.createElement('button'); _apB.type='button'; _apB.className='btn btn-primary'; _apB.textContent='Approve'; _apB.style.cssText='padding:4px 12px; font-size:.78rem; cursor:pointer;'; _apB.onclick=function(){ _actTd.textContent=''; var _sel=document.createElement('select'); _sel.style.cssText='font-size:.8rem; padding:3px;'; ['','Yes','No'].forEach(function(o){ var op=document.createElement('option'); op.value=o; op.textContent=(o===''?'-- select --':o); _sel.appendChild(op); }); _sel.value=(_docs[0]&&_docs[0].content?(_docs[0].content.RegionalApproval||''):''); _sel.onchange=function(){ var val=_sel.value; if(!val) return; Promise.all(_docs.map(function(dd){ var cc=Object.assign({},dd.content); cc.RegionalApproval=val; cc._editedAt=new Date().toISOString(); cc._editedBy=(typeof mngUser==='function'?mngUser():''); return mput(dd.id,cc).then(function(){ dd.content=cc; }); })).then(function(){ if(typeof mstat==='function') mstat('Regional Approval ('+val+') saved for order '+_ord,'ok'); if(window.mngRender) window.mngRender(); }).catch(function(){ if(typeof mstat==='function') mstat('Approval save failed','err'); }); }; _actTd.appendChild(_sel); }; _actTd.appendChild(_apB); } body.appendChild(trT); }
+}catch(_me){ if(typeof mstat==='function') mstat('Email panel error: '+_me.message,'err'); } })(); } }catch(_ee){} if(window.mngRender) window.mngRender(); }).catch(function(e){ if(typeof mstat==='function') mstat('Submit failed','err'); }); }; _actTd.appendChild(_subB); } if(false && _actTd && window._approvalView){ _actTd.textContent=''; var _apB=document.createElement('button'); _apB.type='button'; _apB.className='btn btn-primary'; _apB.textContent='Approve'; _apB.style.cssText='padding:4px 12px; font-size:.78rem; cursor:pointer;'; _apB.onclick=function(){ _actTd.textContent=''; var _sel=document.createElement('select'); _sel.style.cssText='font-size:.8rem; padding:3px;'; ['','Yes','No'].forEach(function(o){ var op=document.createElement('option'); op.value=o; op.textContent=(o===''?'-- select --':o); _sel.appendChild(op); }); _sel.value=(_docs[0]&&_docs[0].content?(_docs[0].content.RegionalApproval||''):''); _sel.onchange=function(){ var val=_sel.value; if(!val) return; Promise.all(_docs.map(function(dd){ var cc=Object.assign({},dd.content); cc.RegionalApproval=val; cc._editedAt=new Date().toISOString(); cc._editedBy=(typeof mngUser==='function'?mngUser():''); return mput(dd.id,cc).then(function(){ dd.content=cc; }); })).then(function(){ if(typeof mstat==='function') mstat('Regional Approval ('+val+') saved for order '+_ord,'ok'); if(window.mngRender) window.mngRender(); }).catch(function(){ if(typeof mstat==='function') mstat('Approval save failed','err'); }); }; _actTd.appendChild(_sel); }; _actTd.appendChild(_apB); } body.appendChild(trT); }
         vis=vis.slice().sort(function(a,b){var A=(a&&a.content)||{},B=(b&&b.content)||{};var ra=String(A.RegionalApproval||'').trim().toLowerCase()==='yes'?1:0;var rb=String(B.RegionalApproval||'').trim().toLowerCase()==='yes'?1:0;if(ra!==rb)return rb-ra;var da=Date.parse(A.SubmittedOn||A.SubmitDate||A.OrderDate||'');var db=Date.parse(B.SubmittedOn||B.SubmitDate||B.OrderDate||'');da=isNaN(da)?0:da;db=isNaN(db)?0:db;if(da!==db)return da-db;var oa=String(A.OrderNumber||''),ob=String(B.OrderNumber||'');return oa>ob?1:(oa<ob?-1:0);}); vis.forEach(function(d){
           var c=d.content, tr=document.createElement("tr"); var _on=String(c.OrderNumber!=null?c.OrderNumber:''); if(_curOrd!==null && _on!==_curOrd){ _mngFlush(); _gq=0; _ga=0; _gf=0; _grp=[]; } _curOrd=_on; _grp.push(d); if(!isDel(d)){ _gq+=num(c.OrderQuantity); _gf+=(parseFloat(c.Freight)||0); _ga+=(num(c.UnitPrice)*num(c.OrderQuantity)+(parseFloat(c.Freight)||0)); }
           if(isDel(d)) tr.style.cssText="color:#b71c1c; background:#fff5f5;";
@@ -2363,14 +2363,14 @@ body.qc-open #whoAmI{display:none !important;}
   function fill(me){
     var d=document.getElementById('whoAmI'); if(!d)return;
     var sc=(me&&me.scope)||{};
-    d.querySelector('.email').setAttribute('data-email',(sc.email||'').replace(/["<>&]/g,''));
+    d.querySelector('.email').setAttribute('data-email',(((me&&me.email)||sc.email||'')).replace(/["<>&]/g,''));
     d.querySelector('.role').textContent=ROLES[sc.role]||sc.role||'';
   }
   function build(me){
     if(document.getElementById('whoAmI'))return;
     var d=document.createElement('div'); d.id='whoAmI';
     var sc=(me&&me.scope)||{};
-    d.innerHTML='<span class="email" data-email="'+((sc.email||'').replace(/["<>&]/g,''))+'"></span>'+
+    d.innerHTML='<span class="email" data-email="'+(((me&&me.email)||sc.email||'').replace(/["<>&]/g,''))+'"></span>'+
       '<span class="role">'+(ROLES[sc.role]||sc.role||'')+'</span>'+
       '<button type="button">Sign out</button>';
     d.querySelector('button').onclick=function(){
@@ -2574,7 +2574,7 @@ body.qc-open #whoAmI{display:none !important;}
       b.onclick = function(){ location.href = t[0]; };
       bar.appendChild(b);
     });
-    var vch=document.createElement('span'); vch.textContent='v34'; vch.title='build version';
+    var vch=document.createElement('span'); vch.textContent='v35'; vch.title='build version';
     vch.style.cssText='color:#9fb3d9;font-size:11px;font-weight:700;align-self:center;padding:0 10px 0 4px;';
     bar.appendChild(vch);
     document.body.appendChild(bar);
@@ -2817,4 +2817,195 @@ body.qc-open #whoAmI{display:none !important;}
   window.addEventListener('resize', function(){ ensureFab(); ensureFilterToggle(); });
 })();</script>
 
+
+<style id="qc-total-css">#mngTable tr.qc-total td:first-child,#pendingOrdersTable tr.qc-total td:first-child{white-space:nowrap!important;overflow:visible!important;max-width:none!important;text-align:left!important;position:relative;z-index:1}</style>
+<script id="qc-imgzoom">window.__qcImgZoom=function(src){var o=document.getElementById('qcImgZoom');if(!o){o=document.createElement('div');o.id='qcImgZoom';o.style.cssText='position:fixed;inset:0;z-index:2147483600;background:rgba(10,16,32,.82);display:none;align-items:center;justify-content:center;cursor:zoom-out;';o.innerHTML='<img style="max-width:92vw;max-height:92vh;object-fit:contain;border-radius:10px;background:#fff;padding:8px;">';o.onclick=function(){o.style.display='none';};document.body.appendChild(o);}o.querySelector('img').src=src;o.style.display='flex';};</script>
+<script id="qc-addline">
+/* The Domo review panel, ported: one locked order, the vendor's whole catalog
+   to add from (with proof of the pool), photos that zoom, and one Approve. */
+(function(){
+ if(window.__qcAddline)return; window.__qcAddline=1;
+ var BASE='/api/app/collections/OrderFormClaud/documents/';
+ function el(id){return document.getElementById(id);}
+ function esc(t){return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
+ function P(){try{return (window.__catalog&&window.__catalog.getProducts())||[];}catch(e){return [];}}
+ function _pr(p){var pr=parseFloat(p.PromoCost),rg=parseFloat(p.RegularCost);
+   if(!isNaN(pr)&&pr>0&&(isNaN(rg)||pr<rg))return pr; return isNaN(rg)?0:rg;}
+ var _me='';
+ try{fetch('/api/auth/me',{credentials:'include'}).then(function(r){return r.ok?r.json():null;}).then(function(j){if(j&&j.email)_me=String(j.email);}).catch(function(){});}catch(_f){}
+ function me(){if(_me)return _me;
+   try{var e=document.querySelector('#whoAmI .email');var m=e&&e.getAttribute('data-email');if(m)return m;}catch(_a){}
+   try{return (new URLSearchParams(location.search)).get('userEmail')||'';}catch(_b){} return '';}
+ function msg(t,bad){var m=el('alMsg');if(!m)return;m.textContent=t;m.style.color=bad?'#b3261e':'#12925f';m.style.display=t?'block':'none';}
+ var orders={}, newLines=[], lockedKey='', loading=false;
+
+ async function loadOrders(){
+   var r=await fetch(BASE+'?_cb='+Date.now(),{credentials:'include',headers:{'Accept':'application/json'}});
+   if(!r.ok)return {};
+   var docs=await r.json(); if(!Array.isArray(docs))docs=[];
+   var m={};
+   docs.forEach(function(d){var c=d.content||{};if(c._deleted||c.DEL)return;
+     var k=c.OrderNumber;if(!k)return;(m[k]=m[k]||[]).push(d);});
+   return m;
+ }
+ function ensurePanel(){
+   var host=el('manageLinesPanel'); if(!host)return null;
+   var p=el('qcAddLine');
+   if(!p){
+     p=document.createElement('div'); p.id='qcAddLine';
+     p.style.cssText='border:2px solid #12925f;border-radius:12px;padding:14px;margin:0 0 14px;background:#fff;';
+     p.innerHTML=
+       '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">'
+      +'<div style="margin:0;font-size:1.15rem;font-weight:700;">Edit Submit Orders</div>'
+      +'<button id="qcAlApprove" type="button" style="display:none;background:#12925f;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-weight:800;cursor:pointer;">✓ Approve This Order</button>'
+      +'<span id="alMsg" style="display:none;font-weight:700;font-size:.85rem;"></span></div>'
+      +'<div style="display:flex;gap:14px;flex-wrap:wrap;">'
+      +'<div style="min-width:320px;flex:1;"><label style="font-size:11px;font-weight:700;display:block;">ORDER</label>'
+      +'<select id="alOrder" style="padding:8px;border:1px solid #e8e9ef;border-radius:8px;width:100%;box-sizing:border-box;"><option value="">Loading orders...</option></select></div>'
+      +'<div style="flex:1;min-width:240px;"><label style="font-size:11px;font-weight:700;display:block;">ADD MODEL (searches the order’s vendor)</label>'
+      +'<input id="alSearch" placeholder="Pick an order first..." style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #e8e9ef;border-radius:8px;" autocomplete="off"></div></div>'
+      +'<div id="alResults" style="display:none;max-height:300px;overflow:auto;border:1px solid #eee;border-radius:8px;margin-top:8px;background:#fff;"></div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:.85rem;margin-top:10px;"><thead><tr style="background:#12925f;color:#fff;">'
+      +'<th style="padding:6px;text-align:left;">Model #</th><th style="padding:6px;text-align:left;">Item</th><th style="padding:6px;">Qty</th>'
+      +'<th style="padding:6px;">Unit Price</th><th style="padding:6px;text-align:left;">Comment</th><th style="padding:6px;">Line</th></tr></thead>'
+      +'<tbody id="alLines"></tbody></table>'
+      +'<button id="alSave" type="button" style="margin-top:10px;background:#e0592a;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-weight:800;cursor:pointer;">Add to Order</button>';
+     host.insertBefore(p, host.firstChild);
+     wire();
+   }
+   return p;
+ }
+ function renderLines(){
+   var tb=el('alLines'); if(!tb)return; tb.innerHTML='';
+   newLines.forEach(function(L,ix){
+     var tr=document.createElement('tr');
+     tr.innerHTML='<td style="padding:5px;"><b>'+esc(L.p.ModelNum)+'</b></td>'
+      +'<td style="padding:5px;">'+esc(L.p.ItemName||'')+'</td>'
+      +'<td style="padding:5px;text-align:center;"><input type="number" min="1" value="'+L.qty+'" style="width:56px;" data-q="'+ix+'"></td>'
+      +'<td style="padding:5px;text-align:right;">$'+(+L.price).toFixed(2)+'</td>'
+      +'<td style="padding:5px;"><input type="text" value="'+esc(L.comment)+'" style="width:140px;" data-c="'+ix+'"></td>'
+      +'<td style="padding:5px;text-align:right;white-space:nowrap;">$'+((+L.price)*(+L.qty)).toFixed(2)
+      +' <button type="button" data-x="'+ix+'" style="border:none;background:#b3261e;color:#fff;border-radius:5px;cursor:pointer;">×</button></td>';
+     tb.appendChild(tr);
+   });
+   tb.querySelectorAll('input[data-q]').forEach(function(i){i.oninput=function(){var L=newLines[+i.getAttribute('data-q')];if(L){L.qty=Math.max(1,parseInt(i.value,10)||1);}};i.onchange=function(){renderLines();};});
+   tb.querySelectorAll('input[data-c]').forEach(function(i){i.oninput=function(){var L=newLines[+i.getAttribute('data-c')];if(L)L.comment=i.value;};});
+   tb.querySelectorAll('button[data-x]').forEach(function(b){b.onclick=function(){newLines.splice(+b.getAttribute('data-x'),1);renderLines();};});
+ }
+ function search(q){
+   var box=el('alResults'); var ok=el('alOrder').value;
+   if(!ok){box.style.display='block';box.innerHTML='<div style="padding:10px;color:#a33;">Select an order first.</div>';return;}
+   var ven=String(((orders[ok]||[{}])[0].content||{}).Vendor||'').trim();
+   q=String(q||'').toLowerCase().trim(); if(q.length<2){box.style.display='none';return;}
+   var pool=P().filter(function(p){return String(p.Vendor||'').trim()===ven;});
+   var hits=pool.filter(function(p){return (String(p.ModelNum).toLowerCase().indexOf(q)>-1)||(String(p.ItemName||'').toLowerCase().indexOf(q)>-1);}).slice(0,30);
+   box.style.display='block';
+   box.innerHTML='<div style="padding:6px 10px;background:#f5f7fb;color:#456;font-size:.72rem;font-weight:700;">'+esc(ven)+' catalog: '+pool.length+' items — '+hits.length+' match'+(hits.length===30?' (first 30 shown)':'')+'</div>'
+     +(hits.length?'':'<div style="padding:10px;color:#666;">No matches in this vendor’s catalog.</div>');
+   hits.forEach(function(p){
+     var row=document.createElement('div');
+     row.style.cssText='display:flex;gap:10px;align-items:center;padding:6px 10px;border-bottom:1px solid #f0f0f4;cursor:pointer;';
+     var im=String(p.ItemImage2||'').trim();
+     row.innerHTML='<span style="width:46px;height:46px;border:1px dashed #d5d9e2;border-radius:6px;position:relative;flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#9aa1b2;background:#fff;">no photo'
+       +(im?'<img class="alTh" src="'+esc(im)+'" style="position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;cursor:zoom-in;background:#fff;" onerror="this.style.visibility=&quot;hidden&quot;">':'')
+       +'</span><b style="min-width:110px;">'+esc(p.ModelNum)+'</b><span style="flex:1;">'+esc(p.ItemName||'')+'</span><span>$'+_pr(p).toFixed(2)+'</span>';
+     row.onclick=function(){newLines.push({p:p,qty:1,price:_pr(p),comment:''});el('alSearch').value='';box.style.display='none';renderLines();};
+     var th=row.querySelector('.alTh');
+     if(th){th.onclick=function(ev){ev.stopPropagation();try{window.__qcImgZoom(th.src);}catch(_z){}};}
+     box.appendChild(row);
+   });
+ }
+ async function save(){
+   var ok=el('alOrder').value;
+   if(!ok||!orders[ok]){msg('Pick an order first.',1);return;}
+   if(!newLines.length){msg('Search a model and click it to stage a line first.',1);return;}
+   var t=(orders[ok][0].content||{});
+   var keep=['DistrictID','District','StoreNum','StoreName','OrderNumber','Vendor','GeneralManagersName','DistrictManagerEmail','StoreEmail','ManagerEmail','PurchasingDirector','SubmittedOn','SubmitDate','OrderDate'];
+   var btn=el('alSave'); btn.disabled=true; btn.textContent='Adding...';
+   try{
+     for(var i=0;i<newLines.length;i++){
+       var L=newLines[i]; var c={};
+       keep.forEach(function(k){if(t[k]!=null&&t[k]!=='')c[k]=t[k];});
+       c.OrderNumber=ok; c.Vendor=String(t.Vendor||L.p.Vendor||'');
+       c.ModelNum=String(L.p.ModelNum||''); c.Collection=String(L.p.Collection||'');
+       c.ItemName=String(L.p.ItemName||''); c.OrderQuantity=L.qty;
+       c.UnitPrice=L.price; c.LineTotal=(+L.price)*(+L.qty);
+       if(L.comment)c.Comment=L.comment;
+       c._addedAt=new Date().toISOString(); c._addedBy=me();
+       var r=await fetch(BASE,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:c})});
+       if(!r.ok)throw new Error('HTTP '+r.status);
+     }
+     msg('Added '+newLines.length+' line'+(newLines.length>1?'s':'')+' to '+ok+'.');
+     newLines=[]; renderLines(); orders=await loadOrders();
+     try{if(typeof window.mngLoad==='function')window.mngLoad();}catch(_r){}
+   }catch(e){msg('Add failed: '+e.message,1);}
+   btn.disabled=false; btn.textContent='Add to Order';
+ }
+ async function approve(){
+   var ok=el('alOrder').value;
+   if(!ok||!orders[ok]){msg('No order open.',1);return;}
+   var b=el('qcAlApprove'); if(b.getAttribute('data-armed')!=='1'){b.setAttribute('data-armed','1');b.textContent='Confirm approve?';
+     setTimeout(function(){try{b.setAttribute('data-armed','0');b.textContent='✓ Approve This Order';}catch(_e){}},4000);return;}
+   b.disabled=true; b.textContent='Approving...';
+   try{
+     var now=new Date().toISOString(); var who=me();
+     for(var i=0;i<orders[ok].length;i++){
+       var d=orders[ok][i]; var c=Object.assign({},d.content);
+       c.RegionalApproval='Yes'; c.ApprovedBy=who; c.ApprovedAt=now;
+       c._editedAt=now; c._editedBy=who;
+       var r=await fetch(BASE+encodeURIComponent(d.id),{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:c})});
+       if(!r.ok)throw new Error('HTTP '+r.status);
+       d.content=c;
+     }
+     b.textContent='✓ Approved'; msg('Order '+ok+' approved.');
+     try{if(typeof window.mngLoad==='function')window.mngLoad();}catch(_r){}
+   }catch(e){b.disabled=false;b.textContent='✓ Approve This Order';msg('Approve failed: '+e.message,1);}
+ }
+ function wire(){
+   el('alOrder').onchange=function(){newLines=[];renderLines();el('alSearch').value='';
+     el('alSearch').placeholder=this.value?('Search '+String(((orders[this.value]||[{}])[0].content||{}).Vendor||'')+' models...'):'Pick an order first...';
+     el('alResults').style.display='none';};
+   el('alSearch').oninput=function(){search(this.value);};
+   el('alSave').onclick=save;
+   el('qcAlApprove').onclick=approve;
+ }
+ async function populate(){
+   if(loading)return; loading=true;
+   try{
+     orders=await loadOrders();
+     var sel=el('alOrder'); if(!sel){loading=false;return;}
+     var subv=!!window._submittedView;
+     var keys=Object.keys(orders).filter(function(k){var st=String((orders[k][0].content||{}).Status||'');return subv?(st==='Submitted'):(st!=='Submitted');}).sort();
+     sel.innerHTML='<option value="">-- Select Order --</option>'+keys.map(function(k){
+       var c=orders[k][0].content||{};
+       return '<option value="'+esc(k)+'">'+esc(k)+' — store '+esc(c.StoreNum||'')+' ('+orders[k].length+' lines)</option>';}).join('');
+   }catch(_e){}
+   loading=false;
+ }
+ var populated=false;
+ setInterval(function(){try{
+   var host=el('manageLinesPanel');
+   if(!host||!host.offsetParent){populated=false;lockedKey='';return;}
+   ensurePanel();
+   if(!populated){populated=true;populate();}
+   var ap=el('qcAlApprove');
+   if(ap){var on=!!window._approvalView; ap.style.display=on?'':'none';
+     if(!on&&ap.getAttribute('data-armed')==='1'){ap.setAttribute('data-armed','0');ap.textContent='✓ Approve This Order';}}
+   var vis={}; try{document.querySelectorAll('#mngTable tr.qc-total td:first-child').forEach(function(td){var m=/^Order (.+) Total$/.exec(String(td.textContent||'').trim());if(m)vis[m[1]]=1;});}catch(_v){}
+   var vk=Object.keys(vis);
+   var cur=(vk.length===1&&orders[vk[0]])?vk[0]:'';
+   var sel=el('alOrder'); if(!sel)return;
+   if(cur){
+     if(lockedKey!==cur||sel.options.length!==1){
+       var c=orders[cur][0].content||{};
+       sel.innerHTML='<option value="'+esc(cur)+'">'+esc(cur)+' — store '+esc(c.StoreNum||'')+' ('+orders[cur].length+' lines)</option>';
+       sel.value=cur; sel.disabled=true; sel.style.background='#f0f2f7';
+       lockedKey=cur; if(sel.onchange)sel.onchange.call(sel);
+     }
+   }else if(lockedKey){
+     lockedKey=''; sel.disabled=false; sel.style.background=''; populate();
+   }
+ }catch(_e){}},700);
+})();
+</script>
 </body></html>

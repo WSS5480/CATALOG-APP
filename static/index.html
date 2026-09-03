@@ -2336,6 +2336,9 @@ body.qc-open #orderFormModalBox .qc-vf{display:none !important;}
    Store→Location relabeller cannot rewrite the middle of an email. */
 #whoAmI .email::after{content:attr(data-email)}
 #whoAmI .role{background:rgba(255,255,255,.16);border-radius:999px;padding:3px 9px;font-size:11px}
+#whoAmI .role.go{cursor:pointer;background:rgba(255,255,255,.24)}
+#whoAmI .role.go:hover{background:rgba(255,255,255,.4)}
+#whoAmI .role.plain{background:transparent;padding:3px 2px}
 #whoAmI button{border:0;background:#e0592a;color:#fff;border-radius:999px;
   padding:6px 12px;font:800 12px 'Segoe UI',system-ui,sans-serif;cursor:pointer}
 #whoAmI button:hover{background:#c94a1f}
@@ -2365,6 +2368,26 @@ body.qc-open #whoAmI{display:none !important;}
     var sc=(me&&me.scope)||{};
     d.querySelector('.email').setAttribute('data-email',(((me&&me.email)||sc.email||'')).replace(/["<>&]/g,''));
     d.querySelector('.role').textContent=ROLES[sc.role]||sc.role||'';
+    wireRole(d,sc);
+  }
+  // The role chip is drawn as a pill, so it reads as a button. Give it a job
+  // where one exists - ADMIN opens Setup, VENDOR opens Vendor Edit - and
+  // flatten it to a plain label for everyone else so nothing looks dead.
+  function wireRole(d,sc){
+    var el=d.querySelector('.role'); if(!el)return;
+    var r=String((sc&&sc.role)||'').toLowerCase();
+    var dest=((sc&&sc.all===true)||r==='admin'||r==='owner')?'/admin':(r==='vendor'?'/vendor':'');
+    if(dest){
+      el.classList.add('go'); el.classList.remove('plain');
+      el.title=(dest==='/admin')?'Open Setup':'Open Vendor Edit';
+      el.setAttribute('role','link'); el.tabIndex=0;
+      el.onclick=function(){location.href=dest;};
+      el.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();location.href=dest;}};
+    }else{
+      el.classList.remove('go'); el.classList.add('plain');
+      el.title=''; el.removeAttribute('role'); el.removeAttribute('tabindex');
+      el.onclick=null; el.onkeydown=null;
+    }
   }
   function build(me){
     if(document.getElementById('whoAmI'))return;
@@ -2378,6 +2401,7 @@ body.qc-open #whoAmI{display:none !important;}
         .then(function(){location.href='/login';})
         .catch(function(){location.href='/login';});
     };
+    wireRole(d,sc);
     document.body.appendChild(d);
     d.classList.add('on');
   }
@@ -2551,7 +2575,7 @@ body.qc-open #whoAmI{display:none !important;}
     document.body.classList.add('qc-topmenu');
     var btn = document.createElement('button');
     btn.id = 'qcMenuBtn'; btn.type = 'button';
-    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v55</span>';
+    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v56</span>';
     btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
     btn.style.cssText = 'position:fixed;top:60px;left:18px;z-index:1200;background:#16213f;color:#fff;' +
       'border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:11px 18px;font-weight:800;' +

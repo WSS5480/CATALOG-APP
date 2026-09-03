@@ -2547,21 +2547,29 @@ body.qc-open #whoAmI{display:none !important;}
 
   function buildBar(){
     if (document.getElementById('__dtabs') || document.getElementById('__mtabs')) return;
-    if (isMobile()) return;                      // mobile has its own tab bar
+    if (isMobile()) return;                      // phones keep their bottom tab bar
+    document.body.classList.add('qc-topmenu');
+    var btn = document.createElement('button');
+    btn.id = 'qcMenuBtn'; btn.type = 'button';
+    btn.innerHTML = '&#9776;&nbsp;&nbsp;Menu&nbsp;&nbsp;<span style="opacity:.65;font-size:11px;font-weight:700;" title="build version">v39</span>';
+    btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
+    btn.style.cssText = 'position:fixed;top:12px;left:12px;z-index:1200;background:#16213f;color:#fff;' +
+      'border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:9px 18px;font-weight:800;' +
+      'font-size:13.5px;cursor:pointer;box-shadow:0 6px 18px rgba(14,23,48,.35);font-family:inherit;letter-spacing:.3px;';
     var bar = document.createElement('div');
     bar.id = '__dtabs';
-    bar.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:997;display:flex;align-items:center;border-radius:22px;' +
-      'gap:2px;background:#16213f;border-radius:999px;padding:4px;' +
-      'max-width:calc(100vw - 175px);flex-wrap:wrap;' +
-      'box-shadow:0 8px 22px rgba(14,23,48,.34);font-family:inherit;';
+    bar.style.cssText = 'position:fixed;top:58px;left:12px;z-index:1200;display:none;flex-direction:column;' +
+      'align-items:stretch;gap:2px;background:#16213f;border-radius:14px;padding:10px;width:240px;max-width:84vw;' +
+      'box-shadow:0 18px 48px rgba(14,23,48,.45);font-family:inherit;max-height:calc(100vh - 78px);overflow:auto;';
+    function setOpen(o){ bar.style.display = o ? 'flex' : 'none'; btn.setAttribute('aria-expanded', o ? 'true' : 'false'); }
     [['catalog','Catalog'],['order','Order Form'],['pending','Pending Orders'],['approver','Approver'],['purchasing','Purchasing Admin']].forEach(function(t){
       var b = document.createElement('button');
       b.type = 'button';
       b.setAttribute('data-v', t[0]);
       b.textContent = t[1];
       b.style.cssText = 'border:none;background:transparent;color:#fff;font-weight:700;' +
-        'font-size:13px;padding:8px 16px;border-radius:999px;cursor:pointer;white-space:nowrap;';
-      b.onclick = function(){ window.__showView(t[0]); window.scrollTo(0,0); };
+        'font-size:13.5px;padding:10px 14px;border-radius:9px;cursor:pointer;white-space:nowrap;text-align:left;width:100%;';
+      b.onclick = function(){ setOpen(false); window.__showView(t[0]); window.scrollTo(0,0); };
       bar.appendChild(b);
     });
     [['/vendor','Vendor Edit','vendorpage'],['/admin','Setup','setup']].forEach(function(t){
@@ -2570,13 +2578,14 @@ body.qc-open #whoAmI{display:none !important;}
       b.setAttribute('data-v', t[2]);
       b.textContent = t[1];
       b.style.cssText = 'border:none;background:transparent;color:#9fb3d9;font-weight:700;' +
-        'font-size:13px;padding:8px 16px;border-radius:999px;cursor:pointer;white-space:nowrap;';
+        'font-size:13.5px;padding:10px 14px;border-radius:9px;cursor:pointer;white-space:nowrap;text-align:left;width:100%;';
       b.onclick = function(){ location.href = t[0]; };
       bar.appendChild(b);
     });
-    var vch=document.createElement('span'); vch.textContent='v38'; vch.title='build version';
-    vch.style.cssText='color:#9fb3d9;font-size:11px;font-weight:700;align-self:center;padding:0 10px 0 4px;';
-    bar.appendChild(vch);
+    btn.onclick = function(e){ e.stopPropagation(); setOpen(bar.style.display === 'none'); };
+    document.addEventListener('click', function(e){ if(bar.style.display !== 'none' && !bar.contains(e.target) && e.target !== btn) setOpen(false); }, true);
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape') setOpen(false); });
+    document.body.appendChild(btn);
     document.body.appendChild(bar);
   }
 
@@ -3235,4 +3244,12 @@ if(hit.sb&&hit.qty){var tq=parseInt(hit.qty,10);if(!isNaN(tq)){var od=(window.QC
 }}catch(e){}}
 load();setInterval(load,600000);setInterval(deco,1500);
 })();</script>
+<style id="qc-topmenu-css">
+body.qc-topmenu #catalogView .cat-toolbar{padding-left:132px!important}
+#__dtabs #whoAmI .email::after{color:#cfd8ea}
+#__dtabs #whoAmI{border-left:none!important;border-top:1px solid rgba(255,255,255,.22)!important;margin:8px 0 0!important;padding:10px 4px 2px!important;display:flex!important;flex-wrap:wrap!important;align-items:center!important;gap:8px!important;width:100%!important;box-sizing:border-box!important;}
+body.has-installbar #__dtabs{bottom:auto!important;top:58px!important}
+body.qc-topmenu #__dtabs{bottom:auto!important}
+</style>
+<script id="qc-deeplink">(function(){try{var m=/[#&]v=([a-z]+)/.exec(location.hash||'');if(!m)return;var v=m[1];[1200,2600,4200].forEach(function(d){setTimeout(function(){try{if(typeof window.__showView==='function')window.__showView(v);}catch(_e){}},d);});}catch(e){}})();</script>
 </body></html>

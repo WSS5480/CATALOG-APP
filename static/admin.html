@@ -133,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v38</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v39</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1246,5 +1246,27 @@ loadUsers();
 loadBuilder();
 </script>
 
+<script id="qc-menu">(function(){
+ var HERE='admin';
+ var host=document.querySelector('.topbar')||document.querySelector('.top')||document.body;
+ var wrap=document.createElement('div'); wrap.style.cssText='position:relative;display:inline-flex;flex:none;';
+ var btn=document.createElement('button'); btn.type='button'; btn.innerHTML='&#9776;&nbsp;&nbsp;Menu';
+ btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
+ btn.style.cssText='background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:8px 16px;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;letter-spacing:.3px;';
+ var dd=document.createElement('div');
+ dd.style.cssText='position:absolute;top:calc(100% + 8px);left:0;display:none;flex-direction:column;gap:2px;background:#16213f;border-radius:14px;padding:10px;width:230px;box-shadow:0 18px 48px rgba(14,23,48,.45);z-index:3000;';
+ [['/#v=catalog','Catalog','catalog'],['/#v=order','Order Form','order'],['/#v=pending','Pending Orders','pending'],['/#v=approver','Approver','approver'],['/#v=purchasing','Purchasing Admin','purchasing'],['/vendor','Vendor Edit','vendor'],['/admin','Setup','admin']].forEach(function(t){
+  var a=document.createElement('a'); a.href=t[0]; a.textContent=t[1];
+  var on=(t[2]===HERE);
+  a.style.cssText='display:block;padding:10px 14px;border-radius:9px;font-weight:700;font-size:13.5px;text-decoration:none;white-space:nowrap;color:'+(on?'#16213f':'#fff')+';background:'+(on?'#fff':'transparent')+';';
+  dd.appendChild(a);
+ });
+ wrap.appendChild(btn); wrap.appendChild(dd);
+ host.insertBefore(wrap, host.firstChild);
+ function setOpen(o){dd.style.display=o?'flex':'none';btn.setAttribute('aria-expanded',o?'true':'false');}
+ btn.onclick=function(e){e.stopPropagation();setOpen(dd.style.display==='none'||!dd.style.display);};
+ document.addEventListener('click',function(e){if(!wrap.contains(e.target))setOpen(false);},true);
+ document.addEventListener('keydown',function(e){if(e.key==='Escape')setOpen(false);});
+})();</script>
 </body>
 </html>

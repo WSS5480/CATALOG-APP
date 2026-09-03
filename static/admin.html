@@ -134,7 +134,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v62</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v63</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -564,10 +564,12 @@ function drawGroups(){
       sel('gp-pur-' + i, yn, 'purchasing' in pp ? (pp.purchasing ? 'yes' : 'no') : '') +
       '<label class="f" style="margin:0;text-transform:none;font-weight:600">Vendor page</label>' +
       sel('gp-vnd-' + i, yn, 'vendorpage' in pp ? (pp.vendorpage ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Stats</label>' +
+      sel('gp-sta-' + i, yn, 'stats' in pp ? (pp.stats ? 'yes' : 'no') : '') +
       '<label class="f" style="margin:0 0 0 12px;text-transform:none;font-weight:600">Monthly budget $</label>' +
       '<input id="gp-bud-' + i + '" placeholder="50000 (blank = none)" value="' + esc(g.budget || '') + '"' +
       ' style="max-width:140px;padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">';
-    ['gp-cat-','gp-ord-','gp-pen-','gp-apr-','gp-pur-','gp-vnd-','gp-bud-'].forEach(pfx => $(pfx + i).addEventListener('change', () => {
+    ['gp-cat-','gp-ord-','gp-pen-','gp-apr-','gp-pur-','gp-vnd-','gp-sta-','gp-bud-'].forEach(pfx => $(pfx + i).addEventListener('change', () => {
       const perms = {};
       if($('gp-cat-' + i).value) perms.catalog = $('gp-cat-' + i).value === 'yes';
       if($('gp-ord-' + i).value) perms.order = $('gp-ord-' + i).value === 'yes';
@@ -575,6 +577,7 @@ function drawGroups(){
       if($('gp-apr-' + i).value) perms.approver = $('gp-apr-' + i).value === 'yes';
       if($('gp-pur-' + i).value) perms.purchasing = $('gp-pur-' + i).value === 'yes';
       if($('gp-vnd-' + i).value) perms.vendorpage = $('gp-vnd-' + i).value === 'yes';
+      if($('gp-sta-' + i).value) perms.stats = $('gp-sta-' + i).value === 'yes';
       g.perms = perms;
       g.budget = $('gp-bud-' + i).value.trim();
       saveGroup(g);
@@ -672,7 +675,7 @@ async function loadUsers(){
 const _selCss = 'padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px';
 
 const PAGES = [['catalog','Catalog'],['order','Order Form'],['pending','Pending Orders'],
-               ['approver','Approver'],['purchasing','Purchasing Admin'],['vendorpage','Vendor Page']];
+               ['approver','Approver'],['purchasing','Purchasing Admin'],['vendorpage','Vendor Page'],['stats','Stats']];
 const ROLES = ['AUTO','ADMIN','PD','DM','STORE','VENDOR','NONE'];
 
 function tickList(cls, i, names, have, empty){

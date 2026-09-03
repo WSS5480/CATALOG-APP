@@ -1631,7 +1631,7 @@ function renderCart() {
   function isSale(p){ var rc=num(p.RegularCost), pc=num(p.PromoCost); return (rc>0 && pc>0 && pc<rc); }
   window.__catPrice=price; window.__catIsSale=isSale;
   window.__ensureSubToggle=function(){ var h=document.querySelector('#manageLinesPanel h2'); if(!h) return; var t=document.getElementById('__subTog'); if(!t){ t=document.createElement('label'); t.id='__subTog'; t.style.cssText='margin-left:14px;font-size:.8rem;font-weight:600;color:#0C447C;cursor:pointer;'; var c=document.createElement('input'); c.type='checkbox'; c.id='__subTogCb'; c.style.marginRight='4px'; c.onchange=function(){ window._submittedView=!!c.checked; try{ var _t2=document.querySelector('#manageLinesPanel h2'); if(_t2&&_t2.childNodes[0]) _t2.childNodes[0].nodeValue=(c.checked?'Submitted Orders ':'Purchasing Admin '); }catch(_n){} try{ if(typeof window.mngLoad==='function') window.mngLoad(); else if(window.mngRender) window.mngRender(); }catch(e){} }; t.appendChild(c); t.appendChild(document.createTextNode('Show Submitted Orders')); h.appendChild(t); } t.style.display=''; var cb=document.getElementById('__subTogCb'); if(cb) cb.checked=!!window._submittedView; };
-  window.__showView=function(view){ try{ var cat=document.getElementById('catalogView'); var modal=document.getElementById('orderFormModal'); var secs=document.querySelectorAll('.form-section'); function hide(el){ if(el) el.style.setProperty('display','none','important'); } function show(el){ if(el) el.style.setProperty('display','block','important'); } if(view==='catalog'||view==='order'||view==='pending'){ window._approvalView=false; window._submittedView=false; window._purchasingView=false; try{(document.getElementById('orderFormModalBox')||document.body).querySelectorAll('h2').forEach(function(h){h.style.display='';});}catch(_uh){} try{var _st0=document.getElementById('__subTog');if(_st0)_st0.style.display='none';}catch(_e0){} } if(view==='catalog'){ hide(modal); show(cat); } else if(view==='order'){ hide(cat); show(modal); for(var i=0;i<secs.length;i++){ if(secs[i].id==='pendingOrdersPanel') hide(secs[i]); else show(secs[i]); } } else if(view==='pending'){ hide(cat); show(modal); for(var j=0;j<secs.length;j++){ if(secs[j].id==='pendingOrdersPanel') show(secs[j]); else hide(secs[j]); } try{ window.loadPendingOrders&&window.loadPendingOrders(); }catch(e){} } else if(view==='approver'||view==='purchasing'){ hide(cat); show(modal); window._approvalView=(view==='approver'); window._purchasingView=(view==='purchasing'); window._submittedView=false; for(var m2=0;m2<secs.length;m2++){ if(secs[m2].id==='manageLinesPanel') show(secs[m2]); else hide(secs[m2]); } try{ var _pl=document.getElementById('manageLinesPanel'); (document.getElementById('orderFormModalBox')||document.body).querySelectorAll('h2').forEach(function(h){ if(_pl&&!_pl.contains(h)) h.style.display='none'; else h.style.display=''; }); }catch(_h2){} try{ var _mb=document.getElementById('mngBody'); if(_mb) _mb.style.display='block'; var _mc=document.getElementById('mngCaret'); if(_mc) _mc.innerHTML='&#9662;'; var _t=document.querySelector('#manageLinesPanel h2'); if(_t&&_t.childNodes[0]) _t.childNodes[0].nodeValue=(view==='approver'?'Approver \u2014 Review & Approve ':'Purchasing Admin '); }catch(_tt){} try{ if(view==='purchasing'){ window.__ensureSubToggle&&window.__ensureSubToggle(); } }catch(_e5){} try{ if(typeof window.mngLoad==='function') window.mngLoad(); else if(window.mngRender) window.mngRender(); }catch(_e6){} } var tb=document.querySelectorAll('#__mtabs button'); for(var k=0;k<tb.length;k++){ var on=(tb[k].getAttribute('data-v')===view); tb[k].style.background=on?'#fff':'transparent'; tb[k].style.color=on?'#0C447C':'#fff'; } }catch(e){} };
+  window.__showView=function(view){ try{ var cat=document.getElementById('catalogView'); var modal=document.getElementById('orderFormModal'); var secs=document.querySelectorAll('.form-section'); try{var _sv=document.getElementById('qcStatsView'); if(_sv&&view!=='stats')_sv.style.setProperty('display','none','important');}catch(_sve){} function hide(el){ if(el) el.style.setProperty('display','none','important'); } function show(el){ if(el) el.style.setProperty('display','block','important'); } if(view==='catalog'||view==='order'||view==='pending'){ window._approvalView=false; window._submittedView=false; window._purchasingView=false; try{(document.getElementById('orderFormModalBox')||document.body).querySelectorAll('h2').forEach(function(h){h.style.display='';});}catch(_uh){} try{var _st0=document.getElementById('__subTog');if(_st0)_st0.style.display='none';}catch(_e0){} } if(view==='catalog'){ hide(modal); show(cat); } else if(view==='order'){ hide(cat); show(modal); for(var i=0;i<secs.length;i++){ if(secs[i].id==='pendingOrdersPanel') hide(secs[i]); else show(secs[i]); } } else if(view==='pending'){ hide(cat); show(modal); for(var j=0;j<secs.length;j++){ if(secs[j].id==='pendingOrdersPanel') show(secs[j]); else hide(secs[j]); } try{ window.loadPendingOrders&&window.loadPendingOrders(); }catch(e){} } else if(view==='approver'||view==='purchasing'){ hide(cat); show(modal); window._approvalView=(view==='approver'); window._purchasingView=(view==='purchasing'); window._submittedView=false; for(var m2=0;m2<secs.length;m2++){ if(secs[m2].id==='manageLinesPanel') show(secs[m2]); else hide(secs[m2]); } try{ var _pl=document.getElementById('manageLinesPanel'); (document.getElementById('orderFormModalBox')||document.body).querySelectorAll('h2').forEach(function(h){ if(_pl&&!_pl.contains(h)) h.style.display='none'; else h.style.display=''; }); }catch(_h2){} try{ var _mb=document.getElementById('mngBody'); if(_mb) _mb.style.display='block'; var _mc=document.getElementById('mngCaret'); if(_mc) _mc.innerHTML='&#9662;'; var _t=document.querySelector('#manageLinesPanel h2'); if(_t&&_t.childNodes[0]) _t.childNodes[0].nodeValue=(view==='approver'?'Approver \u2014 Review & Approve ':'Purchasing Admin '); }catch(_tt){} try{ if(view==='purchasing'){ window.__ensureSubToggle&&window.__ensureSubToggle(); } }catch(_e5){} try{ if(typeof window.mngLoad==='function') window.mngLoad(); else if(window.mngRender) window.mngRender(); }catch(_e6){} } else if(view==='stats'){ hide(cat); hide(modal); window._approvalView=false; window._purchasingView=false; window._submittedView=false; try{ if(window.__qcStatsShow) window.__qcStatsShow(); }catch(_se){} } var tb=document.querySelectorAll('#__mtabs button'); for(var k=0;k<tb.length;k++){ var on=(tb[k].getAttribute('data-v')===view); tb[k].style.background=on?'#fff':'transparent'; tb[k].style.color=on?'#0C447C':'#fff'; } }catch(e){} };
   setTimeout(function(){ try{ var plat=((new URLSearchParams(location.search)).get('platform')||'').toLowerCase(); var isMobile=/ios|android|iphone|ipad/.test(plat)||/iphone|ipad|android|mobile/i.test(navigator.userAgent||''); if(!isMobile) return; if(document.getElementById('__mtabs')) return; try{ var _ms=document.createElement('style'); _ms.id='__mstyle'; _ms.textContent='html,body{overflow-x:hidden !important;max-width:100% !important;} body{display:block !important;} body>*{max-width:100% !important;box-sizing:border-box !important;} #orderFormModal,#orderFormModalBox,#catalogView{position:static !important;left:auto !important;right:auto !important;transform:none !important;margin-left:0 !important;margin-right:0 !important;width:auto !important;max-width:100% !important;box-sizing:border-box !important;} .form-row{flex-direction:column !important;} .form-group{flex:1 1 100% !important;width:100% !important;min-width:0 !important;max-width:100% !important;} .form-section{overflow-x:auto !important;max-width:100% !important;box-sizing:border-box !important;padding:8px !important;} input,select,textarea{max-width:100% !important;box-sizing:border-box !important;font-size:14px !important;} .form-group label{font-size:11px !important;} h2{font-size:1rem !important;} table{display:block !important;overflow-x:auto !important;max-width:100% !important;}'; document.head.appendChild(_ms); }catch(e){} var bar=document.createElement('div'); bar.id='__mtabs'; bar.style.cssText='display:flex;flex-direction:row;align-items:stretch;width:100%;position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#16213f;box-shadow:0 2px 6px rgba(0,0,0,0.3);box-sizing:border-box;'; [['catalog','Catalog'],['order','Order Form'],['pending','Pending'],['approver','Approver'],['purchasing','Purchasing']].forEach(function(t){ var b=document.createElement('button'); b.setAttribute('data-v',t[0]); b.textContent=t[1]; b.style.cssText='flex:1 1 0;min-width:0;white-space:nowrap;border:none;background:transparent;color:#fff;padding:14px 2px;font-size:0.8rem;font-weight:700;cursor:pointer;'; b.onclick=function(){ window.__showView(t[0]); }; bar.appendChild(b); }); document.body.insertBefore(bar, document.body.firstChild); try{ document.body.style.setProperty('padding-top','50px','important'); }catch(e){} window.__showView('catalog'); }catch(e){} },1800);
   var allProducts = [];
   var catList=[], catShown=0, CAT_BATCH=40;
@@ -2576,7 +2576,7 @@ body.qc-open #whoAmI{display:none !important;}
     document.body.classList.add('qc-topmenu');
     var btn = document.createElement('button');
     btn.id = 'qcMenuBtn'; btn.type = 'button';
-    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v62</span>';
+    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v63</span>';
     btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
     btn.style.cssText = 'position:fixed;top:60px;left:18px;z-index:1200;background:#16213f;color:#fff;' +
       'border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:11px 18px;font-weight:800;' +
@@ -2588,7 +2588,7 @@ body.qc-open #whoAmI{display:none !important;}
       'align-items:stretch;gap:2px;background:#16213f;border-radius:14px;padding:10px;width:240px;max-width:84vw;' +
       'box-shadow:0 18px 48px rgba(14,23,48,.45);font-family:inherit;max-height:calc(100vh - 78px);overflow:auto;';
     function setOpen(o){ bar.style.display = o ? 'flex' : 'none'; btn.setAttribute('aria-expanded', o ? 'true' : 'false'); }
-    [['catalog','Catalog'],['order','Order Form'],['pending','Pending Orders'],['approver','Approver'],['purchasing','Purchasing Admin']].forEach(function(t){
+    [['catalog','Catalog'],['order','Order Form'],['pending','Pending Orders'],['approver','Approver'],['purchasing','Purchasing Admin'],['stats','Stats']].forEach(function(t){
       var b = document.createElement('button');
       b.type = 'button';
       b.setAttribute('data-v', t[0]);
@@ -3329,5 +3329,167 @@ load();setInterval(load,600000);setInterval(deco,1500);
 body.has-installbar #__dtabs{bottom:auto!important;top:112px!important}
 body.qc-topmenu #__dtabs{bottom:auto!important}
 </style>
+<script id="qc-stats">/* Stats — vendor / location / approver spend, gated like the other pages. */
+(function(){
+ if(window.__qcStats)return;window.__qcStats=1;
+ var ORDURL='/api/app/collections/OrderFormClaud/documents/';
+ var PAL=['#2f6fd6','#e0592a','#12925f','#8e44ad','#e8a33d','#c2185b','#455a64'];
+ var L=null, ALLOWED=null, _deb=null;
+ function el(id){return document.getElementById(id);}
+ function esc(x){return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
+ function money(n){return '$'+(Number(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
+ function money0(n){return '$'+Math.round(Number(n)||0).toLocaleString('en-US');}
+ function locLabel(d,st){var n=(window._storeNames||{})[String(d)+'|'+String(st)];return String(st)+(n?(' - '+n):'')+(d?(' (D'+d+')'):'');}
+ function whenOf(c){var t=c.SubmittedOn||c.SubmittedAt||c.ApprovedAt||c._addedAt||c._editedAt||'';var d=new Date(String(t));return isNaN(d)?null:d;}
+ function ensure(){
+  if(el('qcStatsView'))return;
+  var v=document.createElement('div'); v.id='qcStatsView';
+  v.style.cssText='display:none;max-width:1240px;margin:0 auto;padding:70px 18px 40px;font-family:inherit;';
+  v.innerHTML=
+   '<h2 style="color:#16213f;margin:0 0 12px;">Stats</h2>'
+  +'<div id="stDeny" style="display:none;background:#fff4e5;border:1px solid #f0b450;color:#7a4b00;border-radius:10px;padding:14px;font-weight:600;">You do not have access to Stats. Ask your administrator.</div>'
+  +'<div id="stBody" style="display:none;">'
+  +'<div style="background:#fff;border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,.12);display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">'
+  +'<input id="stSearch" placeholder="Search order #, vendor, model, item..." style="flex:2 1 240px;padding:9px 12px;border:1px solid #d7dbe6;border-radius:9px;font-size:14px;">'
+  +'<select id="stStatus" style="padding:9px;border:1px solid #d7dbe6;border-radius:9px;font-size:13px;"><option value="sub">Submitted</option><option value="app">Approved</option><option value="all">All orders</option></select>'
+  +'<select id="stVendor" style="padding:9px;border:1px solid #d7dbe6;border-radius:9px;font-size:13px;max-width:200px;"><option value="">All Vendors</option></select>'
+  +'<select id="stAp" style="padding:9px;border:1px solid #d7dbe6;border-radius:9px;font-size:13px;max-width:200px;"><option value="">All Approvers</option></select>'
+  +'<select id="stLoc" style="padding:9px;border:1px solid #d7dbe6;border-radius:9px;font-size:13px;max-width:220px;"><option value="">All Locations</option></select>'
+  +'<select id="stPeriod" style="padding:9px;border:1px solid #d7dbe6;border-radius:9px;font-size:13px;"><option value="ytd">YTD</option><option value="tm">This month</option><option value="lm">Last month</option><option value="l3">Last 3 months</option><option value="l12">Last 12 months</option><option value="all">All time</option></select>'
+  +'<button id="stReload" type="button" style="padding:9px 14px;border:0;border-radius:9px;background:#0C447C;color:#fff;font-weight:700;cursor:pointer;">&#10227; Reload</button>'
+  +'</div>'
+  +'<div id="stTiles" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>'
+  +'<div style="background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 4px rgba(0,0,0,.12);margin-bottom:16px;">'
+  +'<div style="font-weight:800;color:#16213f;margin-bottom:4px;">Vendor stats — spend over time</div>'
+  +'<div id="stChartNote" style="color:#666;font-size:12px;margin-bottom:8px;"></div>'
+  +'<div id="stChart" style="overflow-x:auto;"></div><div id="stLegend" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12.5px;color:#333;"></div></div>'
+  +'<div id="stTables" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;"></div>'
+  +'</div>';
+  document.body.appendChild(v);
+  el('stReload').onclick=function(){load(true);};
+  ['stStatus','stVendor','stAp','stLoc','stPeriod'].forEach(function(id){el(id).onchange=render;});
+  el('stSearch').oninput=function(){clearTimeout(_deb);_deb=setTimeout(render,250);};
+ }
+ function bounds(){
+  var now=new Date(), p=(el('stPeriod')||{}).value||'ytd';
+  function d0(y,m,d){return new Date(y,m,d,0,0,0,0);}
+  if(p==='tm')return [d0(now.getFullYear(),now.getMonth(),1),null];
+  if(p==='lm')return [d0(now.getFullYear(),now.getMonth()-1,1),d0(now.getFullYear(),now.getMonth(),1)];
+  if(p==='l3')return [d0(now.getFullYear(),now.getMonth()-2,1),null];
+  if(p==='ytd')return [d0(now.getFullYear(),0,1),null];
+  if(p==='l12')return [d0(now.getFullYear(),now.getMonth()-11,1),null];
+  return [null,null];
+ }
+ function filt(){
+  var q=(el('stSearch').value||'').trim().toLowerCase();
+  var stv=el('stStatus').value, vf=el('stVendor').value, af=el('stAp').value, lf=el('stLoc').value;
+  var b=bounds(), from=b[0], to=b[1];
+  return (L||[]).filter(function(r){
+   if(stv==='sub'&&r.status!=='Submitted')return false;
+   if(stv==='app'&&!r.approved)return false;
+   if(vf&&r.v!==vf)return false;
+   if(af&&r.ap!==af)return false;
+   if(lf&&r.loc!==lf)return false;
+   if(from&&(!r.when||r.when<from))return false;
+   if(to&&(!r.when||r.when>=to))return false;
+   if(q&&r.txt.indexOf(q)<0)return false;
+   return true;
+  });
+ }
+ function tile(lab,val){return '<div style="flex:1 1 150px;min-width:150px;background:#16213f;color:#fff;border-radius:12px;padding:14px 16px;"><div style="font-size:11px;letter-spacing:.8px;opacity:.75;font-weight:700;">'+lab+'</div><div style="font-size:24px;font-weight:800;margin-top:4px;white-space:nowrap;">'+val+'</div></div>';}
+ function bucketKey(d,daily){return daily?(d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)):(d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2));}
+ function chart(rows){
+  var b=bounds(), from=b[0], to=b[1]||new Date();
+  var dated=rows.filter(function(r){return r.when;});
+  if(!from){var mn=null;dated.forEach(function(r){if(!mn||r.when<mn)mn=r.when;});from=mn||new Date();}
+  var daily=((to-from)/86400000)<=45;
+  var keys=[],cur=new Date(from.getTime());
+  if(daily){cur.setHours(0,0,0,0);while(cur<=to&&keys.length<120){keys.push(bucketKey(cur,true));cur.setDate(cur.getDate()+1);}}
+  else{cur=new Date(cur.getFullYear(),cur.getMonth(),1);while(cur<=to&&keys.length<48){keys.push(bucketKey(cur,false));cur.setMonth(cur.getMonth()+1);}}
+  if(keys.length>24&&!daily)keys=keys.slice(-24);
+  var byV={};dated.forEach(function(r){(byV[r.v]=byV[r.v]||{t:0,b:{}});byV[r.v].t+=r.amt;var k=bucketKey(r.when,daily);byV[r.v].b[k]=(byV[r.v].b[k]||0)+r.amt;});
+  var vs=Object.keys(byV).sort(function(a,c){return byV[c].t-byV[a].t;});
+  var top=vs.slice(0,6), rest=vs.slice(6);
+  if(rest.length){var o={t:0,b:{}};rest.forEach(function(v){o.t+=byV[v].t;Object.keys(byV[v].b).forEach(function(k){o.b[k]=(o.b[k]||0)+byV[v].b[k];});});byV['OTHER']=o;top=top.concat(['OTHER']);}
+  var ymax=0;top.forEach(function(v){keys.forEach(function(k){if((byV[v].b[k]||0)>ymax)ymax=byV[v].b[k]||0;});});
+  if(!ymax)ymax=100;
+  var mag=Math.pow(10,Math.floor(Math.log(ymax)/Math.LN10));var nice=Math.ceil(ymax/mag)*mag;if(nice/ymax>2)nice=nice/2;ymax=nice;
+  var W=960,H=320,l=74,r=12,t=14,btm=46,iw=W-l-r,ih=H-t-btm;
+  function X(i){return l+(keys.length<2?iw/2:i*(iw/(keys.length-1)));}
+  function Y(v){return t+ih-(v/ymax)*ih;}
+  var sv='<svg viewBox="0 0 '+W+' '+H+'" style="min-width:640px;width:100%;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg">';
+  for(var g=0;g<=4;g++){var yv=ymax*g/4,yy=Y(yv);
+   sv+='<line x1="'+l+'" y1="'+yy+'" x2="'+(W-r)+'" y2="'+yy+'" stroke="#e6e9f2" stroke-width="1"/>';
+   sv+='<text x="'+(l-8)+'" y="'+(yy+4)+'" text-anchor="end" font-size="11" fill="#667">'+money0(yv)+'</text>';}
+  var step=Math.max(1,Math.ceil(keys.length/12));
+  keys.forEach(function(k,i){if(i%step&&i!==keys.length-1)return;var lab=daily?k.slice(5).replace('-','/'):(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+k.slice(5,7)-1]+' '+k.slice(2,4));
+   sv+='<text x="'+X(i)+'" y="'+(H-btm+18)+'" text-anchor="middle" font-size="11" fill="#667">'+lab+'</text>';});
+  top.forEach(function(v,vi){var col=PAL[vi%PAL.length];var pts=keys.map(function(k,i){return X(i)+','+Y(byV[v].b[k]||0);}).join(' ');
+   if(keys.length>1)sv+='<polyline points="'+pts+'" fill="none" stroke="'+col+'" stroke-width="2.4" stroke-linejoin="round"/>';
+   keys.forEach(function(k,i){var val=byV[v].b[k]||0;sv+='<circle cx="'+X(i)+'" cy="'+Y(val)+'" r="3" fill="'+col+'"><title>'+esc(v)+' — '+k+': '+money(val)+'</title></circle>';});});
+  sv+='</svg>';
+  el('stChart').innerHTML=sv;
+  el('stChartNote').textContent=(daily?'Daily':'Monthly')+' spend, top '+Math.min(6,vs.length)+' vendor'+(vs.length===1?'':'s')+(rest.length?' + other':'')+'.';
+  el('stLegend').innerHTML=top.map(function(v,vi){return '<span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:11px;height:11px;border-radius:3px;background:'+PAL[vi%PAL.length]+';display:inline-block;"></span>'+esc(v)+'</span>';}).join('');
+ }
+ function table(title,rows,firstCol){
+  var h='<div style="background:#fff;border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,.12);overflow-x:auto;">'
+   +'<div style="font-weight:800;color:#16213f;margin-bottom:8px;">'+title+'</div>'
+   +'<table style="width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap;">'
+   +'<tr style="background:#16213f;color:#fff;"><th style="padding:7px 9px;text-align:left;">'+firstCol+'</th><th style="padding:7px 9px;text-align:right;">Orders</th><th style="padding:7px 9px;text-align:right;">Units</th><th style="padding:7px 9px;text-align:right;">$</th><th style="padding:7px 9px;text-align:right;">$ / Unit</th><th style="padding:7px 9px;text-align:right;">% of $</th></tr>';
+  var tot=0;rows.forEach(function(x){tot+=x.amt;});
+  rows.forEach(function(x,i){h+='<tr style="background:'+(i%2?'#f4f6fb':'#fff')+';"><td style="padding:6px 9px;">'+esc(x.k)+'</td><td style="padding:6px 9px;text-align:right;">'+x.ords.size+'</td><td style="padding:6px 9px;text-align:right;">'+x.qty+'</td><td style="padding:6px 9px;text-align:right;font-weight:700;">'+money(x.amt)+'</td><td style="padding:6px 9px;text-align:right;">'+(x.qty?money(x.amt/x.qty):'—')+'</td><td style="padding:6px 9px;text-align:right;">'+(tot?Math.round(100*x.amt/tot):0)+'%</td></tr>';});
+  return h+'</table></div>';
+ }
+ function agg(rows,keyFn){
+  var m={};rows.forEach(function(r){var k=keyFn(r)||'—';var a=(m[k]=m[k]||{k:k,amt:0,qty:0,ords:new Set()});a.amt+=r.amt;a.qty+=r.qty;a.ords.add(r.ord);});
+  return Object.keys(m).map(function(k){return m[k];}).sort(function(a,b){return b.amt-a.amt;});
+ }
+ function render(){
+  if(!L)return;
+  var rows=filt();
+  var amt=0,qty=0,ords=new Set();
+  rows.forEach(function(r){amt+=r.amt;qty+=r.qty;ords.add(r.ord);});
+  el('stTiles').innerHTML=tile('TOTAL $',money0(amt))+tile('UNITS',qty.toLocaleString('en-US'))+tile('ORDERS',ords.size.toLocaleString('en-US'))+tile('$ / UNIT',qty?money(amt/qty):'—')+tile('AVG ORDER $',ords.size?money0(amt/ords.size):'—');
+  chart(rows);
+  el('stTables').innerHTML=table('By Vendor',agg(rows,function(r){return r.v;}),'Vendor')
+    +table('By Location',agg(rows,function(r){return r.locLab;}),'Location')
+    +table('By Approver',agg(rows,function(r){return r.ap||'—';}),'Approver');
+ }
+ function opts(id,vals,fmt){var sel=el(id),cur=sel.value;sel.innerHTML=sel.options[0].outerHTML+vals.map(function(x){return '<option value="'+esc(x)+'">'+esc(fmt?fmt(x):x)+'</option>';}).join('');sel.value=cur;}
+ function load(force){
+  if(L&&!force){render();return;}
+  el('stChart').innerHTML='<div style="color:#888;padding:20px;">Loading orders&#8230;</div>';
+  fetch(ORDURL+'?_cb='+Date.now(),{credentials:'include'}).then(function(r){return r.ok?r.json():[];}).then(function(docs){
+   if(!Array.isArray(docs))docs=[];
+   L=docs.map(function(d){var c=d.content||{};if(c._deleted||c.DEL)return null;
+    var qn=parseInt(c.OrderQuantity,10);var an=parseFloat(String(c.LineTotal==null?'':c.LineTotal).toString().replace(/[^0-9.\-]/g,''));
+    if(isNaN(an)){var up=parseFloat(c.UnitPrice);an=(isNaN(up)||isNaN(qn))?0:up*qn;}
+    var dd=String(c.DistrictID==null?'':c.DistrictID),ss=String(c.StoreNum==null?'':c.StoreNum);
+    return {ord:String(c.OrderNumber||''),v:String(c.Vendor||'').trim()||'—',d:dd,s:ss,loc:dd+'|'+ss,locLab:locLabel(dd,ss),
+     ap:String(c.ApprovedBy||'').trim(),qty:isNaN(qn)?0:qn,amt:isNaN(an)?0:an,when:whenOf(c),
+     status:String(c.Status||''),approved:/^y/i.test(String(c.RegionalApproval||'')),
+     txt:(String(c.OrderNumber||'')+' '+String(c.Vendor||'')+' '+String(c.ModelNum||'')+' '+String(c.ItemName||'')).toLowerCase()};
+   }).filter(Boolean);
+   opts('stVendor',[].concat.apply([],[Object.keys(L.reduce(function(m,r){m[r.v]=1;return m;},{}))]).sort());
+   opts('stAp',Object.keys(L.reduce(function(m,r){if(r.ap)m[r.ap]=1;return m;},{})).sort());
+   var locs={};L.forEach(function(r){if(r.s)locs[r.loc]=r.locLab;});
+   var lk=Object.keys(locs).sort(function(a,b){return String(locs[a]).localeCompare(String(locs[b]),undefined,{numeric:true});});
+   var sel=el('stLoc');var cur=sel.value;sel.innerHTML=sel.options[0].outerHTML+lk.map(function(k){return '<option value="'+esc(k)+'">'+esc(locs[k])+'</option>';}).join('');sel.value=cur;
+   render();
+  }).catch(function(){el('stChart').innerHTML='<div style="color:#b3261e;padding:20px;">Could not load orders.</div>';});
+ }
+ window.__qcStatsShow=function(){
+  ensure();
+  var v=el('qcStatsView');v.style.setProperty('display','block','important');
+  window.scrollTo(0,0);
+  function go(ok){el('stDeny').style.display=ok?'none':'block';el('stBody').style.display=ok?'block':'none';if(ok)load(false);}
+  if(ALLOWED!==null){go(ALLOWED);return;}
+  fetch('/api/auth/me',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(me){
+   var sc=(me&&me.scope)||{};ALLOWED=!!(sc.all||((sc.perms||{}).stats));go(ALLOWED);
+  }).catch(function(){go(false);});
+ };
+})();</script>
+
 <script id="qc-deeplink">(function(){try{var m=/[#&]v=([a-z]+)/.exec(location.hash||'');if(!m)return;var v=m[1];[1200,2600,4200].forEach(function(d){setTimeout(function(){try{if(typeof window.__showView==='function')window.__showView(v);}catch(_e){}},d);});}catch(e){}})();</script>
 </body></html>

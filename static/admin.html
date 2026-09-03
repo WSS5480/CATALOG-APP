@@ -133,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v50</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v51</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -221,6 +221,21 @@
           <button class="btn sm" onclick="addPersonQuick()">＋ Add person</button>
         </div>
       <div id="u-body" class="center">Loading…</div>
+
+      <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:14px;background:var(--panel)">
+        <h4 style="margin:0 0 6px;font-size:14.5px">Locations &amp; owners</h4>
+        <p class="cs" style="margin-bottom:10px">The registry the order form reads — every location, its
+          group, and who owns each (the same schema as the Domo StoreMapping dataset, so that file
+          uploads here as-is). Owners' emails ride on every order from their location or group.
+          Uploading a file replaces the whole list.</p>
+        <div class="row" style="margin-bottom:10px">
+          <input type="file" id="loc-file" accept=".csv,.xlsx,.xls" style="font-size:13px">
+          <button class="btn sm" onclick="locUpload()">Upload &amp; replace</button>
+          <a class="btn ghost sm" href="/api/admin/locations/template">Download the schema</a>
+          <button class="btn ghost sm" onclick="locAddRow()">＋ location</button>
+        </div>
+        <div id="loc-body" class="center">Loading…</div>
+      </div>
     </div>
   </section>
 
@@ -696,7 +711,7 @@ function drawUsers(){
   const stores = GROUPS.filter(g => g.kind !== 'district').map(g => g.name);
   box.innerHTML =
     '<div class="scroll"><table class="t"><thead><tr>' +
-    '<th>Person</th><th>Role</th><th>Districts</th><th>Stores</th><th>Vendors</th>' +
+    '<th>Person</th><th>Role</th><th>Group</th><th>Location</th><th>Vendors</th>' +
     '<th>Pages</th><th>Access</th><th></th></tr></thead><tbody>' +
     USERS.map((p, i) =>
       '<tr><td style="min-width:150px"><b>' + esc(p.user || '—') + '</b>' +
@@ -712,9 +727,9 @@ function drawUsers(){
         ROLES.map(r => '<option' + (r === (p.role || 'AUTO') ? ' selected' : '') + '>' + r + '</option>')
         .join('') + '</select></td>' +
       '<td>' + tickList('ud2-', i, districts.concat((p.districts || []).filter(n => !districts.includes(n))),
-                        new Set(p.districts || []), 'no district groups yet') + '</td>' +
+                        new Set(p.districts || []), 'no groups yet') + '</td>' +
       '<td>' + tickList('us1-', i, stores.concat((p.stores || []).filter(n => !stores.includes(n))),
-                        new Set(p.stores || []), 'no store groups yet') + '</td>' +
+                        new Set(p.stores || []), 'no locations yet') + '</td>' +
       '<td style="min-width:170px"><select data-uvm="' + i + '" style="' + _selCss + ';margin-bottom:3px">' +
         '<option value="all"' + (p.vendors_mode === 'all' ? ' selected' : '') + '>From groups</option>' +
         '<option value="only"' + (p.vendors_mode === 'only' ? ' selected' : '') + '>Only ticked</option>' +
@@ -818,6 +833,74 @@ function bldToggle(id){
   if(car) car.textContent = open ? '\u25be' : '\u25b8';
   if(open) _bldOpen.add(id); else _bldOpen.delete(id);
 }
+
+let LOCS = [];
+const LOC_COLS = [
+  ['group_id','Group'], ['group_name','Group name'], ['loc_num','Location #'],
+  ['loc_name','Location name'], ['loc_owner_name','Location owner'],
+  ['loc_owner_email','Owner email'], ['group_owner_name','Group owner'],
+  ['group_owner_email','Group owner email'], ['pd_email','Purchasing director']
+];
+async function loadLocs(){
+  const box = $('loc-body'); if(!box) return;
+  try{
+    const j = await api('/api/admin/locations');
+    LOCS = j.rows || [];
+    drawLocs();
+  }catch(e){ box.innerHTML = '<div class="center">' + esc(e.message) + '</div>'; }
+}
+function drawLocs(){
+  const box = $('loc-body'); if(!box) return;
+  if(!LOCS.length){
+    box.innerHTML = '<div class="center muted small">No locations yet — upload the file, or add one by hand.</div>';
+    return;
+  }
+  box.innerHTML = '<div class="scroll" style="max-height:420px"><table class="t"><thead><tr>' +
+    LOC_COLS.map(c => '<th>' + esc(c[1]) + '</th>').join('') + '<th></th></tr></thead><tbody>' +
+    LOCS.map((r, i) =>
+      '<tr>' + LOC_COLS.map(c =>
+        '<td><input class="f" data-lk="' + c[0] + '" data-li="' + i + '" value="' + esc(r[c[0]] || '') + '"' +
+        ' style="min-width:90px;font-size:12.5px;padding:5px 7px" onchange="locSaveRow(' + i + ')"></td>').join('') +
+      '<td><button class="btn ghost sm" onclick="locDelRow(' + i + ')">✕</button></td></tr>').join('') +
+    '</tbody></table></div>' +
+    '<div class="small muted" style="margin-top:6px">' + LOCS.length + ' location' + (LOCS.length === 1 ? '' : 's') +
+    ' — edits save themselves when you leave the box.</div>';
+}
+async function locSaveRow(i){
+  const r = LOCS[i] || {};
+  document.querySelectorAll('[data-li="' + i + '"]').forEach(el => { r[el.getAttribute('data-lk')] = el.value.trim(); });
+  if(!r.loc_num){ say('The location number is required.', 'bad'); return; }
+  try{
+    await api('/api/admin/locations/row', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(r)});
+    say('✓ Location saved.', 'ok');
+  }catch(e){ say(e.message, 'bad'); }
+}
+async function locDelRow(i){
+  const r = LOCS[i] || {};
+  try{
+    await api('/api/admin/locations/delete', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({group_id: r.group_id || '', loc_num: r.loc_num || ''})});
+    LOCS.splice(i, 1); drawLocs();
+  }catch(e){ say(e.message, 'bad'); }
+}
+function locAddRow(){ LOCS.unshift({}); drawLocs(); }
+async function locUpload(){
+  const f = ($('loc-file') || {}).files;
+  if(!f || !f.length){ say('Pick the file first.', 'bad'); return; }
+  const buf = await f[0].arrayBuffer();
+  let bin = ''; const u8 = new Uint8Array(buf);
+  for(let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  try{
+    const j = await api('/api/admin/locations/upload', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({filename: f[0].name, content_b64: btoa(bin)})});
+    say('✓ ' + (j.message || 'Loaded.'), 'ok');
+    await loadLocs();
+  }catch(e){ say(e.message, 'bad'); }
+}
+setTimeout(loadLocs, 600);
 
 async function loadBuilder(){
   try{ BLD = await api('/api/admin/builder'); }

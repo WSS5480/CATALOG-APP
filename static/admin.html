@@ -133,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v56</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v58</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1256,7 +1256,7 @@ function bldFeedBox(src){
             '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-atpon-' + esc(src.id) + '"' +
             (f.atp_on ? ' checked' : '') + '> <b>Also pull quantities</b> (Ashley ATP) — after the main pull, ' +
             'every SKU is checked for availability + lead time and joined on. Adds 10–25 minutes for a big catalog.</label></div>' +
-          inp('atp-external', 'ATP External ID — e.g. Buddys3989100', f.atp_external_id, '210px') +
+          inp('atp-external', 'ATP External ID — e.g. Company3989100', f.atp_external_id, '210px') +
           '<input class="f" type="password" id="fd-atp-keycode-' + esc(src.id) +
             '" placeholder="ATP KeyCode" value="' + esc(f.atp_keycode || '') + '" style="max-width:170px">' +
           inp('atp-user', 'ATP user — e.g. AD_…_VP', f.atp_user, '160px') +

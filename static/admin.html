@@ -133,7 +133,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v52</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v53</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -157,9 +157,9 @@
   <section id="s-people" class="screen on">
     <div class="card">
       <h3>People &amp; passwords</h3>
-      <p class="cs">Everyone in a catalog you run. A person appears here the moment they land in
-        the users dataset — or is added by hand on the Users tab — and cannot sign in until they
-        have a password.</p>
+      <p class="cs">Everyone in a catalog you run. This list fills itself: load the
+        Locations &amp; owners file on Manage Users and every location owner and group owner
+        appears here, ready for a password — nobody can sign in until they have one.</p>
       <div id="people-body" class="center">Loading…</div>
 
       <div id="pwPanel" class="pwpanel">
@@ -194,9 +194,10 @@
   <section id="s-users" class="screen">
     <div class="card">
       <h3>Users</h3>
-      <p class="cs">The people of this catalog, added one at a time. The same row feeds
-        everything: sign-in, the groups used for access, and the Passwords tab. Stored in this
-        app's own database — no ETL involved.</p>
+      <p class="cs">The people of this catalog. Location owners and group owners arrive
+        automatically when the Locations &amp; owners list below is loaded; add anyone else by
+        hand. The same row feeds everything: sign-in, the groups used for access, and the
+        Passwords tab. Stored in this app's own database.</p>
       <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;background:var(--panel)">
         <h4 style="margin:0 0 6px;font-size:14.5px">Groups</h4>
         <p class="cs" style="margin-bottom:10px">Create groups first, then add people to them.

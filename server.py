@@ -129,7 +129,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "51"
+APP_VERSION = "53"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
 except Exception:                      # missing file must never kill the app
@@ -735,20 +735,59 @@ async def orders_delete(coll: str, doc_id: str, request: Request):
 
 
 _LOC_FIELDS = [
-    # storage column, canonical (Domo) header, accepted header aliases
-    ("group_id",           "DistrictID",            ("districtid", "district_id", "group", "groupid", "groupnumber", "groupno")),
-    ("group_name",         "District",              ("district", "groupname", "districtname")),
-    ("loc_num",            "StoreNum",              ("storenum", "location", "locationnum", "locationnumber", "locnum", "store", "storenumber")),
-    ("loc_name",           "StoreName",             ("storename", "locationname", "locname")),
-    ("loc_owner_name",     "GeneralManagersName",   ("generalmanagersname", "generalmanager", "locationowner", "locationownername", "owner", "gm", "gmname")),
-    ("loc_owner_email",    "ManagerEmail",          ("manageremail", "locationowneremail", "owneremail", "gmemail")),
-    ("loc_email",          "StoreEmail",            ("storeemail", "locationemail")),
-    ("group_owner_name",   "DistrictManager",       ("districtmanager", "groupowner", "groupownername", "dm", "dmname")),
-    ("group_owner_email",  "DistrictManagerEmail",  ("districtmanageremail", "groupowneremail", "dmemail")),
-    ("pd_email",           "PurchasingDirector",    ("purchasingdirector", "purchasingdirectoremail", "pdemail")),
-    ("owner2_email",       "ManagerEmail2",         ("manageremail2", "locationowneremail2", "owner2email")),
-    ("group_owner2_email", "DistrictManagerEmail2", ("districtmanageremail2", "groupowneremail2", "dm2email")),
+    # storage column, schema name, accepted header aliases (the old Domo
+    # StoreMapping names load as-is)
+    ("group_id",           "GroupID",              ("districtid", "district_id", "groupid", "groupnumber", "groupno")),
+    ("group_name",         "Group",                ("district", "groupname", "districtname")),
+    ("loc_num",            "LocationID",           ("storenum", "location", "locationnum", "locationnumber", "locnum", "store", "storenumber")),
+    ("loc_name",           "LocationName",         ("storename", "locname")),
+    ("loc_owner_name",     "LocationManagersName", ("generalmanagersname", "generalmanager", "locationowner", "locationownername", "locationmanager", "owner", "gm", "gmname")),
+    ("loc_owner_email",    "LocationEmail",        ("manageremail", "locationowneremail", "locationmanageremail", "owneremail", "gmemail")),
+    ("group_owner_name",   "GroupManagersName",    ("districtmanager", "groupowner", "groupownername", "groupmanager", "dm", "dmname")),
+    ("group_owner_email",  "GroupEmail",           ("districtmanageremail", "groupowneremail", "groupmanageremail", "dmemail")),
+    # extras still accepted and stored, not part of the named schema
+    ("loc_email",          "StoreEmail",           ("storeemail",)),
+    ("pd_email",           "PurchasingDirector",   ("purchasingdirector", "purchasingdirectoremail", "pdemail")),
+    ("owner2_email",       "ManagerEmail2",        ("manageremail2", "owner2email")),
+    ("group_owner2_email", "DistrictManagerEmail2", ("districtmanageremail2", "dm2email")),
 ]
+_LOC_SCHEMA = [f for f in _LOC_FIELDS if f[1] not in
+               ("StoreEmail", "PurchasingDirector", "ManagerEmail2", "DistrictManagerEmail2")]
+
+
+
+def _locations_sync_people(eng, cust: str) -> int:
+    """Every location owner and group owner becomes a sign-in the moment the
+    registry knows them: the Passwords tab fills itself from this list. Only
+    MISSING people are created — an existing row (role, groups, password) is
+    never touched, and removing a location never deletes a person."""
+    from sqlalchemy import text
+    made = 0
+    with eng.begin() as c:
+        locs = c.execute(text("select * from cat_locations where customer=:c"),
+                         {"c": cust}).mappings().all()
+        have = {str(r[0] or "").strip().lower()
+                for r in c.execute(text("select email from cat_people"), {}).all()}
+        def mk(email, label, role, group1, group2):
+            nonlocal made
+            em = str(email or "").strip().lower()
+            if not em or "@" not in em or em in have:
+                return
+            c.execute(text("insert into cat_people(email,customer,user_label,role,group1,group2) "
+                           "values(:e,:c,:l,:r,:g1,:g2)"),
+                      {"e": em, "c": cust, "l": str(label or "")[:120],
+                       "r": role, "g1": str(group1 or "")[:80], "g2": str(group2 or "")[:80]})
+            have.add(em)
+            made += 1
+        for l in locs:
+            num = str(l["loc_num"] or "").strip()
+            nm = str(l["loc_name"] or "").strip()
+            label = nm if (nm and _bnorm(nm).startswith(_bnorm(num))) else \
+                (f"{num} - {nm}".strip(" -") if nm else num)
+            mk(l["loc_owner_email"], label, "STORE", "STORE", l["group_id"])
+            mk(l["group_owner_email"], str(l["group_owner_name"] or "").strip() or
+               ("GROUP " + str(l["group_id"] or "")), "DM", "DISTRICT", l["group_id"])
+    return made
 
 
 @app.get("/api/admin/locations")
@@ -764,10 +803,9 @@ async def locations_list(request: Request):
 @app.get("/api/admin/locations/template")
 async def locations_template(request: Request):
     await _builder_admin(request)
-    heads = ",".join(h for _, h, _a in _LOC_FIELDS)
+    heads = ",".join(h for _, h, _a in _LOC_SCHEMA)
     sample = "9197,DISTRICT 9197,571,571 - GARLAND,Delia Soto,delia@company.com,"\
-             "store571@company.com,Chris Jones,chris@company.com,"\
-             "steve.smith@buddyrents.com,,"
+             "Chris Jones,chris@company.com"
     return Response(heads + "\n" + sample + "\n", media_type="text/csv",
                     headers={"Content-Disposition": "attachment; filename=locations.csv"})
 
@@ -792,6 +830,21 @@ async def locations_upload(request: Request):
                 src = by_norm[cand]
                 break
         picked[col] = src
+    # column-to-column matching, just like the catalog: the client sends the
+    # chosen mapping {SchemaName: file column}; unspecified fields keep the
+    # automatic match
+    given = (body or {}).get("mapping") or {}
+    if isinstance(given, dict) and given:
+        canon_to_col = {canon: col for col, canon, _a in _LOC_FIELDS}
+        for canon, src in given.items():
+            col = canon_to_col.get(str(canon))
+            if col:
+                src = str(src or "").strip()
+                picked[col] = src if src in df.columns else (None if not src else picked[col])
+    if bool((body or {}).get("probe")):
+        return {"ok": True, "rows": int(len(df)),
+                "columns": [str(c) for c in df.columns],
+                "automap": {canon: picked[col] for col, canon, _a in _LOC_SCHEMA}}
     if not picked["loc_num"]:
         raise HTTPException(400, "No location column found — the file needs StoreNum "
                                  "(or Location / LocationNum). Download the schema "
@@ -821,9 +874,13 @@ async def locations_upload(request: Request):
                            ":pd_email,:owner2_email,:group_owner2_email)"), vals)
             n += 1
     mapped = [canon for (col, canon, _a) in _LOC_FIELDS if picked[col]]
+    made = _locations_sync_people(eng, cust)
     return {"ok": True, "rows": n,
             "message": f"{n} locations loaded ({len(mapped)} of {len(_LOC_FIELDS)} "
-                       f"schema fields matched). The order form reads them now."}
+                       f"schema fields matched)."
+                       + (f" {made} sign-in{'s' if made != 1 else ''} created for the "
+                          f"Passwords tab." if made else "")
+                       + " The order form reads them now."}
 
 
 @app.post("/api/admin/locations/row")
@@ -845,6 +902,7 @@ async def locations_row(request: Request):
                        "(:customer,:group_id,:group_name,:loc_num,:loc_name,:loc_owner_name,"
                        ":loc_owner_email,:loc_email,:group_owner_name,:group_owner_email,"
                        ":pd_email,:owner2_email,:group_owner2_email)"), vals)
+    _locations_sync_people(_builder_engine(), cust)
     return {"ok": True}
 
 
@@ -1215,28 +1273,36 @@ ADMIN_GUIDE = b"""
 @media print{#cat-guide{display:none}}
 </style>
 <div id="cat-guide">
-  <h3>Locking this down before real stores use it</h3>
-  <p>In order. Everything here happens on this page &mdash; users, passwords, groups and
-    budgets all live in this app&#39;s own database.</p>
+  <h3>Setting this catalog up, start to finish</h3>
+  <p>Four steps, in order, all on this page. Everything &mdash; the catalog, locations,
+    users, passwords &mdash; lives in this app&#39;s own database.</p>
   <ol>
-    <li><b>Send everyone to one address:</b> <code>/login</code> on this site. Their email and
-      the password you set is all they need &mdash; there are no per-customer links any more.</li>
-    <li><b>Give every person a password.</b> Anyone showing <i>never set</i> cannot sign in.
-      Set one on the Passwords tab and tell them what it is; it is stored as a one-way hash,
-      so nobody &mdash; including you &mdash; can read it back.</li>
-    <li><b>Leave &quot;must change&quot; ticked.</b> They choose their own on first sign-in,
-      and the one you told them stops working.</li>
-    <li><b>Force reset the moment somebody leaves</b> &mdash; or better, press &#10005; on
-      their row on the Users tab: sign-in, catalog access and ordering all end at once, and
-      no account is left to forget about.</li>
-    <li><b>Give access to groups, not people.</b> Vendor reach, tabs and budgets set on a
-      group cover everyone in it and cascade into groups inside it; a person&#39;s own row
-      is only for exceptions.</li>
-    <li><b>Keep your own way back in.</b> <code>BOOTSTRAP_EMAIL</code> and
-      <code>BOOTSTRAP_PASSWORD</code> on the service&#39;s Environment page in Render always
-      sign in as an administrator &mdash; your answer to a forgotten admin password. Change
-      them there whenever you like.</li>
+    <li><b>Build the catalog.</b> On the <b>Catalog Builder</b> tab, drop each vendor&#39;s
+      file in &mdash; or give the source a feed (API, SFTP or email) and it refreshes itself.
+      Match the columns it could not guess, use <b>ETL steps</b> for computed columns
+      (Promo Cost = RegularCost &minus; Discount), and photos copy themselves onto this app
+      as they arrive. Then press <b>Build the catalog</b>.</li>
+    <li><b>Load your locations.</b> On <b>Manage Users</b>, in <b>Locations &amp; owners</b>:
+      <b>Download the schema</b> (GroupID, Group, LocationID, LocationName,
+      LocationManagersName, LocationEmail, GroupManagersName, GroupEmail &mdash; a Domo
+      StoreMapping export loads as-is), upload your file, match column to column, and fix
+      any line in place. The order form reads this list, and the owners&#39; emails ride on
+      every order from their location or group.</li>
+    <li><b>Set the accesses.</b> Loading locations creates the sign-ins by itself &mdash;
+      every location owner and group owner appears on the Users and Passwords tabs the
+      moment the list lands. Then give access to <b>groups, not people</b>: vendor reach,
+      tabs, order rights and budgets set on a group cover everyone in it and cascade into
+      groups inside it. A person&#39;s own row is only for exceptions.</li>
+    <li><b>Set the passwords.</b> The <b>Manage Passwords</b> tab is already filled with
+      those same location users; anyone showing <i>never set</i> cannot sign in. Set each
+      password, leave <b>&quot;must change&quot; ticked</b> so they pick their own on first
+      sign-in, and send everyone to one address: <code>/login</code> on this site.</li>
   </ol>
+  <p style="margin-top:8px"><b>When somebody leaves:</b> force-reset their password, or press
+    &#10005; on their row on Manage Users &mdash; sign-in, catalog access and ordering all end
+    at once. <b>Your own way back in:</b> <code>BOOTSTRAP_EMAIL</code> and
+    <code>BOOTSTRAP_PASSWORD</code> on the service&#39;s Environment page in Render always
+    sign in as an administrator.</p>
   <div class="note"><b>Two locks live outside this page,</b> both on the Environment page in
     Render: <code>SESSION_SECRET</code> (any long random string, so sessions survive a
     redeploy and only your server can mint them) and the <code>SMTP_*</code> +

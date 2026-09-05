@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Admin — Product Catalog</title>
+<script id="qc-authbounce">(function(){if(window.__qcAuthB)return;window.__qcAuthB=1;var _f=window.fetch,_sent=0;window.fetch=function(u,o){return _f.apply(this,arguments).then(function(r){try{var s=(typeof u==='string')?u:((u&&u.url)||'');if(r&&r.status===401&&s.indexOf('/api/')===0&&s.indexOf('/api/auth/')!==0&&location.pathname.indexOf('/login')!==0&&!_sent){_sent=1;location.href='/login';}}catch(_e){}return r;});};})();</script>
 <style>
   :root{--navy:#0C447C;--navy2:#08294c;--ink:#1b2130;--muted:#6b7690;--line:#e3e7f0;
         --bg:#eef1f7;--good:#12925f;--warn:#e0592a;--paper:#fff;--panel:#fbfcfe}
@@ -95,6 +96,10 @@
   .ticks label:last-child{border-bottom:0}
   .ticks label.off{opacity:.5;cursor:not-allowed}
   .ticks input{width:17px;height:17px;flex:none}
+  .ticks.compact label{padding:4px 9px;font-size:12.5px;gap:7px;border-bottom:1px solid #f0f2f7}
+  .ticks.compact input{width:14px;height:14px}
+  #s-users .t td{vertical-align:top;text-align:left}
+  .btn.danger{background:#b3261e;color:#fff}
   /* tick lists can live inside tables — the grid's wide-input styling must
      never reach their checkboxes */
   table.t td .ticks input{width:17px;min-width:17px;height:17px}
@@ -129,7 +134,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v29</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v68</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -141,9 +146,9 @@
 <div class="scopebar" id="scopebar">Loading…</div>
 
 <div class="tabs">
-  <button id="t-people"    class="on" onclick="showTab('people')">Passwords</button>
-  <button id="t-users"              onclick="showTab('users')">Users</button>
-  <button id="t-builder"            onclick="showTab('builder')">Builder</button>
+  <button id="t-people"    class="on" onclick="showTab('people')">Manage Passwords</button>
+  <button id="t-users"              onclick="showTab('users')">Manage Users</button>
+  <button id="t-builder"            onclick="showTab('builder')">Catalog Builder</button>
 </div>
 
 <div class="wrap">
@@ -153,9 +158,9 @@
   <section id="s-people" class="screen on">
     <div class="card">
       <h3>People &amp; passwords</h3>
-      <p class="cs">Everyone in a catalog you run. A person appears here the moment they land in
-        the users dataset — or is added by hand on the Users tab — and cannot sign in until they
-        have a password.</p>
+      <p class="cs">Everyone in a catalog you run. This list fills itself: load the
+        Locations &amp; owners file on Manage Users and every location owner and group owner
+        appears here, ready for a password — nobody can sign in until they have one.</p>
       <div id="people-body" class="center">Loading…</div>
 
       <div id="pwPanel" class="pwpanel">
@@ -190,9 +195,10 @@
   <section id="s-users" class="screen">
     <div class="card">
       <h3>Users</h3>
-      <p class="cs">The people of this catalog, added one at a time. The same row feeds
-        everything: sign-in, the groups used for access, and the Passwords tab. Stored in this
-        app's own database — no ETL involved.</p>
+      <p class="cs">The people of this catalog. Location owners and group owners arrive
+        automatically when the Locations &amp; owners list below is loaded; add anyone else by
+        hand. The same row feeds everything: sign-in, the groups used for access, and the
+        Passwords tab. Stored in this app's own database.</p>
       <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;background:var(--panel)">
         <h4 style="margin:0 0 6px;font-size:14.5px">Groups</h4>
         <p class="cs" style="margin-bottom:10px">Create groups first, then add people to them.
@@ -217,6 +223,22 @@
           <button class="btn sm" onclick="addPersonQuick()">＋ Add person</button>
         </div>
       <div id="u-body" class="center">Loading…</div>
+
+      <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:14px;background:var(--panel)">
+        <h4 style="margin:0 0 6px;font-size:14.5px">Locations &amp; owners</h4>
+        <p class="cs" style="margin-bottom:10px">The registry the order form reads. The schema is built in:
+          GroupID, Group, LocationID, LocationName, LocationManagersName, LocationEmail,
+          GroupManagersName, GroupEmail — your Domo StoreMapping export loads as-is too.
+          Upload a file, match column to column (just like the Catalog Builder), then assign
+          the rest line by line below. Uploading replaces the whole list.</p>
+        <div class="row" style="margin-bottom:10px">
+          <input type="file" id="loc-file" accept=".csv,.xlsx,.xls" style="font-size:13px">
+          <button class="btn sm" onclick="locUpload()">Upload &amp; replace</button>
+          <a class="btn ghost sm" href="/api/admin/locations/template">Download the schema</a>
+          <button class="btn ghost sm" onclick="locAddRow()">＋ location</button>
+        </div>
+        <div id="loc-body" class="center">Loading…</div>
+      </div>
     </div>
   </section>
 
@@ -229,6 +251,23 @@
         catalog, and emails you if a file arrives with schema trouble. The storefront serves the
         result from this app's own database.</p>
       <div id="bld-body" class="center">Loading…</div>
+
+      <div style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:14px;background:var(--panel)">
+        <h4 style="margin:0 0 6px;font-size:14.5px">Mailbox for email feeds</h4>
+        <p class="cs" style="margin-bottom:10px">The inbox this app checks for vendors' emailed
+          files. Enter any owner's mail account here — it lives in this app's own database, so
+          nobody's personal email has to sit in the Render account. Saved settings win over the
+          Render environment variables; clear all the boxes and Save to go back to those.</p>
+        <div class="row">
+          <input class="f" id="mb-host" placeholder="imap.mail.com" style="max-width:220px">
+          <input class="f" id="mb-port" placeholder="993" style="max-width:80px">
+          <input class="f" id="mb-user" placeholder="feeds@company.com" style="max-width:240px">
+          <input class="f" id="mb-pass" type="password" placeholder="password" style="max-width:180px">
+          <button class="btn sm" onclick="mbSave()">Save</button>
+          <button class="btn ghost sm" onclick="mbTest(this)">Test connection</button>
+          <span class="small muted" id="mb-src"></span>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -519,14 +558,26 @@ function drawGroups(){
       '<label class="f" style="margin:0;text-transform:none;font-weight:600">Pending orders</label>' +
       sel('gp-pen-' + i, [['','Inherit'],['none','None'],['read','Read only'],
         ['write','Read + write'],['delete','Full (delete too)']], pp.pending || '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Approver</label>' +
+      sel('gp-apr-' + i, yn, 'approver' in pp ? (pp.approver ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Purchasing Admin</label>' +
+      sel('gp-pur-' + i, yn, 'purchasing' in pp ? (pp.purchasing ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Vendor page</label>' +
+      sel('gp-vnd-' + i, yn, 'vendorpage' in pp ? (pp.vendorpage ? 'yes' : 'no') : '') +
+      '<label class="f" style="margin:0;text-transform:none;font-weight:600">Stats</label>' +
+      sel('gp-sta-' + i, yn, 'stats' in pp ? (pp.stats ? 'yes' : 'no') : '') +
       '<label class="f" style="margin:0 0 0 12px;text-transform:none;font-weight:600">Monthly budget $</label>' +
       '<input id="gp-bud-' + i + '" placeholder="50000 (blank = none)" value="' + esc(g.budget || '') + '"' +
       ' style="max-width:140px;padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px">';
-    ['gp-cat-','gp-ord-','gp-pen-','gp-bud-'].forEach(pfx => $(pfx + i).addEventListener('change', () => {
+    ['gp-cat-','gp-ord-','gp-pen-','gp-apr-','gp-pur-','gp-vnd-','gp-sta-','gp-bud-'].forEach(pfx => $(pfx + i).addEventListener('change', () => {
       const perms = {};
       if($('gp-cat-' + i).value) perms.catalog = $('gp-cat-' + i).value === 'yes';
       if($('gp-ord-' + i).value) perms.order = $('gp-ord-' + i).value === 'yes';
       if($('gp-pen-' + i).value) perms.pending = $('gp-pen-' + i).value;
+      if($('gp-apr-' + i).value) perms.approver = $('gp-apr-' + i).value === 'yes';
+      if($('gp-pur-' + i).value) perms.purchasing = $('gp-pur-' + i).value === 'yes';
+      if($('gp-vnd-' + i).value) perms.vendorpage = $('gp-vnd-' + i).value === 'yes';
+      if($('gp-sta-' + i).value) perms.stats = $('gp-sta-' + i).value === 'yes';
       g.perms = perms;
       g.budget = $('gp-bud-' + i).value.trim();
       saveGroup(g);
@@ -624,7 +675,7 @@ async function loadUsers(){
 const _selCss = 'padding:5px 7px;font-size:13px;border:1px solid var(--line);border-radius:7px';
 
 const PAGES = [['catalog','Catalog'],['order','Order Form'],['pending','Pending Orders'],
-               ['approver','Approver'],['purchasing','Purchasing Admin'],['vendorpage','Vendor Page']];
+               ['approver','Approver'],['purchasing','Purchasing Admin'],['vendorpage','Vendor Page'],['stats','Stats']];
 const ROLES = ['AUTO','ADMIN','PD','DM','STORE','VENDOR','NONE'];
 
 function tickList(cls, i, names, have, empty){
@@ -639,18 +690,20 @@ function tickList(cls, i, names, have, empty){
 function pageTicks(cls, i, pp){
   const explicit = PAGES.some(([k]) => k in pp);
   const on = k => explicit ? (k === 'pending' ? (pp.pending || 'none') !== 'none' : !!pp[k]) : false;
-  return '<div style="min-width:135px">' + PAGES.map(([k, label]) =>
-    '<label class="small" style="display:block;cursor:pointer"><input type="checkbox" class="' +
-    cls + i + '" value="' + k + '"' + (on(k) ? ' checked' : '') + '> ' + label + '</label>')
-    .join('') +
-    '<div class="muted small" style="margin-top:2px">nothing ticked = from groups</div></div>';
+  return '<div style="min-width:150px"><div class="ticks compact" style="max-height:150px">' +
+    PAGES.map(([k, label]) =>
+    '<label><input type="checkbox" class="' + cls + i + '" value="' + k + '"' +
+    (on(k) ? ' checked' : '') + '><span><span class="nm">' + label + '</span></span></label>')
+    .join('') + '</div>' +
+    '<div class="muted small" style="margin-top:3px">nothing ticked = from groups</div></div>';
 }
 
 function accessTicks(cls, i, pp){
   const lv = {none:0, read:1, write:2, delete:3}[pp.pending] ?? -1;   // -1 = inherit
-  return '<div style="min-width:80px">' + [['read',1],['write',2],['delete',3]].map(([k, n]) =>
-    '<label class="small" style="display:block;cursor:pointer"><input type="checkbox" class="' +
-    cls + i + '" value="' + k + '"' + (lv >= n ? ' checked' : '') + '> ' + k + '</label>')
+  return '<div class="ticks compact" style="min-width:86px;max-height:150px">' +
+    [['read',1],['write',2],['delete',3]].map(([k, n]) =>
+    '<label><input type="checkbox" class="' + cls + i + '" value="' + k + '"' +
+    (lv >= n ? ' checked' : '') + '><span><span class="nm">' + k + '</span></span></label>')
     .join('') + '</div>';
 }
 
@@ -681,7 +734,7 @@ function drawUsers(){
   const stores = GROUPS.filter(g => g.kind !== 'district').map(g => g.name);
   box.innerHTML =
     '<div class="scroll"><table class="t"><thead><tr>' +
-    '<th>Person</th><th>Role</th><th>Districts</th><th>Stores</th><th>Vendors</th>' +
+    '<th>Person</th><th>Role</th><th>Group</th><th>Location</th><th>Vendors</th>' +
     '<th>Pages</th><th>Access</th><th></th></tr></thead><tbody>' +
     USERS.map((p, i) =>
       '<tr><td style="min-width:150px"><b>' + esc(p.user || '—') + '</b>' +
@@ -697,9 +750,9 @@ function drawUsers(){
         ROLES.map(r => '<option' + (r === (p.role || 'AUTO') ? ' selected' : '') + '>' + r + '</option>')
         .join('') + '</select></td>' +
       '<td>' + tickList('ud2-', i, districts.concat((p.districts || []).filter(n => !districts.includes(n))),
-                        new Set(p.districts || []), 'no district groups yet') + '</td>' +
+                        new Set(p.districts || []), 'no groups yet') + '</td>' +
       '<td>' + tickList('us1-', i, stores.concat((p.stores || []).filter(n => !stores.includes(n))),
-                        new Set(p.stores || []), 'no store groups yet') + '</td>' +
+                        new Set(p.stores || []), 'no locations yet') + '</td>' +
       '<td style="min-width:170px"><select data-uvm="' + i + '" style="' + _selCss + ';margin-bottom:3px">' +
         '<option value="all"' + (p.vendors_mode === 'all' ? ' selected' : '') + '>From groups</option>' +
         '<option value="only"' + (p.vendors_mode === 'only' ? ' selected' : '') + '>Only ticked</option>' +
@@ -712,7 +765,7 @@ function drawUsers(){
       '<td>' + pageTicks('upg', i, p.perms || {}) + '</td>' +
       '<td>' + accessTicks('uac', i, p.perms || {}) + '</td>' +
       '<td style="white-space:nowrap"><button class="btn sm" data-usave="' + i + '">Save</button> ' +
-        '<button class="btn ghost sm" data-drop="' + esc(p.email) + '" title="Remove">✕</button></td></tr>'
+        '<button class="btn sm danger" data-drop="' + esc(p.email) + '">Remove</button></td></tr>'
     ).join('') + '</tbody></table></div>';
 
   const wire = (sel, fn) => box.querySelectorAll(sel).forEach(el =>
@@ -794,6 +847,149 @@ function copyText(t, btn){
 }
 
 let BLD = null;
+const _bldOpen = new Set();
+function bldToggle(id){
+  const det = $('bld-det-' + id), car = $('bld-car-' + id);
+  if(!det) return;
+  const open = det.style.display === 'none';
+  det.style.display = open ? 'block' : 'none';
+  if(car) car.textContent = open ? '\u25be' : '\u25b8';
+  if(open) _bldOpen.add(id); else _bldOpen.delete(id);
+}
+
+let LOCS = [];
+const LOC_COLS = [
+  ['group_id','GroupID'], ['group_name','Group'], ['loc_num','LocationID'],
+  ['loc_name','LocationName'], ['loc_owner_name','LocationManagersName'],
+  ['loc_owner_email','LocationEmail'], ['group_owner_name','GroupManagersName'],
+  ['group_owner_email','GroupEmail']
+];
+const LOC_SCHEMA = ['GroupID','Group','LocationID','LocationName',
+                    'LocationManagersName','LocationEmail','GroupManagersName','GroupEmail'];
+let _locB64 = null, _locName = '';
+async function loadLocs(){
+  const box = $('loc-body'); if(!box) return;
+  try{
+    const j = await api('/api/admin/locations');
+    LOCS = j.rows || [];
+    drawLocs();
+  }catch(e){ box.innerHTML = '<div class="center">' + esc(e.message) + '</div>'; }
+}
+function drawLocs(){
+  const box = $('loc-body'); if(!box) return;
+  if(!LOCS.length){
+    box.innerHTML = '<div class="center muted small">No locations yet — upload the file, or add one by hand.</div>';
+    return;
+  }
+  box.innerHTML = '<div class="scroll" style="max-height:420px"><table class="t"><thead><tr>' +
+    LOC_COLS.map(c => '<th>' + esc(c[1]) + '</th>').join('') + '<th></th></tr></thead><tbody>' +
+    LOCS.map((r, i) =>
+      '<tr>' + LOC_COLS.map(c =>
+        '<td><input class="f" data-lk="' + c[0] + '" data-li="' + i + '" value="' + esc(r[c[0]] || '') + '"' +
+        ' style="min-width:90px;font-size:12.5px;padding:5px 7px" onchange="locSaveRow(' + i + ')"></td>').join('') +
+      '<td><button class="btn ghost sm" onclick="locDelRow(' + i + ')">✕</button></td></tr>').join('') +
+    '</tbody></table></div>' +
+    '<div class="small muted" style="margin-top:6px">' + LOCS.length + ' location' + (LOCS.length === 1 ? '' : 's') +
+    ' — edits save themselves when you leave the box.</div>';
+}
+async function locSaveRow(i){
+  const r = LOCS[i] || {};
+  document.querySelectorAll('[data-li="' + i + '"]').forEach(el => { r[el.getAttribute('data-lk')] = el.value.trim(); });
+  if(!r.loc_num){ say('The location number is required.', 'bad'); return; }
+  try{
+    await api('/api/admin/locations/row', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(r)});
+    say('✓ Location saved.', 'ok');
+  }catch(e){ say(e.message, 'bad'); }
+}
+async function locDelRow(i){
+  const r = LOCS[i] || {};
+  try{
+    await api('/api/admin/locations/delete', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({group_id: r.group_id || '', loc_num: r.loc_num || ''})});
+    LOCS.splice(i, 1); drawLocs();
+  }catch(e){ say(e.message, 'bad'); }
+}
+function locAddRow(){ LOCS.unshift({}); drawLocs(); }
+async function locUpload(){
+  const f = ($('loc-file') || {}).files;
+  if(!f || !f.length){ say('Pick the file first.', 'bad'); return; }
+  const buf = await f[0].arrayBuffer();
+  let bin = ''; const u8 = new Uint8Array(buf);
+  for(let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  _locB64 = btoa(bin); _locName = f[0].name;
+  try{
+    const j = await api('/api/admin/locations/upload', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({filename: _locName, content_b64: _locB64, probe: true})});
+    locMapUI(j);
+  }catch(e){ say(e.message, 'bad'); }
+}
+function locMapUI(p){
+  const box = $('loc-body'); if(!box) return;
+  const opts = c => '<option value="">— skip —</option>' + (p.columns || []).map(x =>
+    '<option value="' + esc(x) + '"' + (x === c ? ' selected' : '') + '>' + esc(x) + '</option>').join('');
+  box.innerHTML =
+    '<div style="border:1px dashed var(--line);border-radius:10px;padding:12px;background:#fbfcff">' +
+    '<b class="small">Match the file\'s columns</b> <span class="muted small">— ' + (p.rows || 0) +
+    ' rows found. Each schema field picked its own match; fix any, then load. After loading, edit the rest line by line.</span>' +
+    '<div class="two" style="margin-top:9px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))">' +
+    LOC_SCHEMA.map(f =>
+      '<div class="fg" style="margin-bottom:7px"><label class="f">' + esc(f) + '</label>' +
+      '<select class="f loc-map" data-lf="' + esc(f) + '" style="padding:7px 9px;font-size:13px">' +
+      opts((p.automap || {})[f] || '') + '</select></div>').join('') +
+    '</div>' +
+    '<div class="row" style="margin-top:8px">' +
+    '<button class="btn sm" onclick="locLoadMapped()">Load ' + (p.rows || 0) + ' rows with this matching</button>' +
+    '<button class="btn ghost sm" onclick="loadLocs()">Cancel</button></div></div>';
+}
+async function locLoadMapped(){
+  const mapping = {};
+  document.querySelectorAll('.loc-map').forEach(s => { mapping[s.getAttribute('data-lf')] = s.value; });
+  try{
+    const j = await api('/api/admin/locations/upload', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({filename: _locName, content_b64: _locB64, mapping: mapping})});
+    say('✓ ' + (j.message || 'Loaded.'), 'ok');
+    await loadLocs();
+  }catch(e){ say(e.message, 'bad'); }
+}
+setTimeout(loadLocs, 600);
+
+async function loadMailbox(){
+  try{
+    const m = await api('/api/admin/mailbox');
+    if($('mb-host')) $('mb-host').value = m.host || '';
+    if($('mb-port')) $('mb-port').value = m.port || 993;
+    if($('mb-user')) $('mb-user').value = m.user || '';
+    if($('mb-pass')) $('mb-pass').value = m.password || '';
+    const t = m.source === 'app' ? ('✓ using these settings (' + (m.effective_user || m.user) + ')')
+          : m.source === 'render-env' ? 'using the Render environment variables (' + (m.effective_user || '') + ')'
+          : 'not connected yet';
+    if($('mb-src')) $('mb-src').textContent = t;
+  }catch(e){}
+}
+async function mbSave(){
+  try{
+    const j = await api('/api/admin/mailbox', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({host: $('mb-host').value, port: $('mb-port').value,
+                            user: $('mb-user').value, password: $('mb-pass').value})});
+    say('✓ ' + (j.message || 'Saved.'), 'ok');
+    await loadMailbox(); await loadBuilder();
+  }catch(e){ say(e.message, 'bad'); }
+}
+async function mbTest(btn){
+  btn.disabled = true; btn.textContent = 'Testing…';
+  try{
+    const j = await api('/api/admin/mailbox/test', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: '{}'});
+    say('✓ ' + (j.message || 'Connected.'), 'ok');
+  }catch(e){ say(e.message, 'bad'); }
+  btn.disabled = false; btn.textContent = 'Test connection';
+}
+setTimeout(loadMailbox, 800);
 
 async function loadBuilder(){
   try{ BLD = await api('/api/admin/builder'); }
@@ -837,19 +1033,24 @@ function drawBuilder(){
       '<input class="f" id="bld-vendor" placeholder="Vendor name — with a file it fills the Vendor column; alone it creates a feed-only source" style="max-width:330px">' +
       '<button class="btn" onclick="bldUpload()">Add source</button>' +
     '</div>' +
-    ((BLD.sources || []).map(src =>
-      '<div style="border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:12px">' +
-        '<div class="row"><b>' + esc(src.name) + '</b> ' + bldMissing(src) +
+    ((BLD.sources || []).map(src => {
+      if(window._bldJustAdded && src.name === window._bldJustAdded){ _bldOpen.add(src.id); window._bldJustAdded = ''; }
+      const open = _bldOpen.has(src.id);
+      return '<div style="border:1px solid var(--line);border-radius:12px;padding:9px 13px;margin-bottom:8px">' +
+        '<div class="row" style="cursor:pointer;user-select:none" onclick="bldToggle(\'' + esc(src.id) + '\')">' +
+        '<span id="bld-car-' + esc(src.id) + '" style="font-size:11px;color:#5a6273;width:14px">' + (open ? '\u25be' : '\u25b8') + '</span>' +
+        '<b>' + esc(src.vendor || src.name) + '</b> ' + bldMissing(src) +
         '<span class="muted small">' + src.rows + ' rows · ' + esc(src.filename) + '</span>' +
         ((src.feed && src.feed.type === 'email' && src.feed_addr)
           ? '<span class="small" style="background:#e9f0fa;color:#123a6b;border-radius:999px;' +
             'padding:3px 10px">\ud83d\udce7 <b style="user-select:all">' + esc(src.feed_addr) + '</b> ' +
             '<button class="btn ghost sm" style="padding:2px 8px" ' +
-            'onclick="copyText(\'' + esc(src.feed_addr) + '\', this)">Copy</button></span>'
+            'onclick="event.stopPropagation();copyText(\'' + esc(src.feed_addr) + '\', this)">Copy</button></span>'
           : '') +
         '<span style="flex:1"></span>' +
-        '<button class="btn ghost sm" onclick="bldPreview(\'' + esc(src.id) + '\')">Preview</button>' +
-        '<button class="btn ghost sm" onclick="bldRemove(\'' + esc(src.id) + '\',\'' + esc(src.name) + '\')">✕</button></div>' +
+        '<button class="btn ghost sm" onclick="event.stopPropagation();bldPreview(\'' + esc(src.id) + '\')">Preview</button>' +
+        '<button class="btn ghost sm" onclick="event.stopPropagation();bldRemove(\'' + esc(src.id) + '\',\'' + esc(src.name) + '\')">✕</button></div>' +
+        '<div id="bld-det-' + esc(src.id) + '" style="display:' + (open ? 'block' : 'none') + '">' +
         '<div class="row" style="margin-top:6px"><label class="f" style="margin:0">Vendor label</label>' +
           '<input class="f" style="max-width:240px" value="' + esc(src.vendor || '') + '"' +
           ' onchange="bldVendor(\'' + esc(src.id) + '\',this.value)"></div>' +
@@ -859,11 +1060,16 @@ function drawBuilder(){
             const cur = src.mapping[f.name] || '';
             const dark = f.required && !cur && !(f.name === 'Vendor' && src.vendor);
             return '<div class="fg" style="margin-bottom:8px"><label class="f"' +
-              (dark ? ' style="color:#c0392b"' : '') + '>' + esc(f.name) +
-              (f.required ? ' *' : '') + '</label>' +
+              (dark ? ' style="color:#c0392b"' : '') + '>' + esc(f.name === 'Price' ? 'Promo Cost' : f.name) +
+              (f.required ? ' *' : '') +
+              '<span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0"> · ' +
+              ({RegularCost:'decimal', Price:'decimal', DisplayOrder:'whole № (blank → 99999)',
+                QtyAvailable:'whole №'}[f.name] || 'text') + '</span></label>' +
               '<select class="f" style="padding:7px 9px;font-size:13.5px"' +
               ' onchange="bldMap(\'' + esc(src.id) + '\',\'' + esc(f.name) + '\',this.value)">' +
               '<option value="">— not in this file —</option>' +
+              (((src.feed || {}).etl) || []).map(st => '<option value="' + esc(st.out) + '"' +
+                (st.out === cur ? ' selected' : '') + '>' + esc(st.out) + ' · ETL</option>').join('') +
               [...src.columns].sort((a, b) => String(a).toLowerCase()
                   .localeCompare(String(b).toLowerCase()))
                 .map(c => '<option' + (c === cur ? ' selected' : '') + '>' +
@@ -871,7 +1077,8 @@ function drawBuilder(){
           }).join('') +
         '</div>' +
         '<div id="bld-prev-' + esc(src.id) + '"></div>' +
-      '</div>').join('') || '') +
+        '</div>' +
+      '</div>'; }).join('') || '') +
     '<div id="bld-vinfo"></div>' +
     '<div class="row" style="margin-top:14px">' +
       '<button class="btn green" onclick="bldBuild()">⚒ Build the catalog</button>' +
@@ -925,6 +1132,7 @@ async function bldUpload(){
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({name: name, vendor: name})});
       say('✓ ' + (out.message || 'Created.'), 'ok');
+      window._bldJustAdded = name;
       $('bld-vendor').value = '';
       await loadBuilder();
     }catch(e){ say(e.message, 'bad'); }
@@ -944,6 +1152,7 @@ async function bldUpload(){
     say('✓ ' + f.name + ' — ' + out.rows + ' rows, ' + out.mapped + ' fields recognised' +
         (out.missing.length ? ('; still needs ' + out.missing.join(', ')) : ' — ready.'),
         out.missing.length ? 'info' : 'ok');
+    window._bldJustAdded = (out.name || $('bld-vendor').value.trim() || f.name);
     await loadBuilder();
   }catch(e){ say(e.message, 'bad'); }
 }
@@ -1051,7 +1260,7 @@ function bldFeedBox(src){
             '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-atpon-' + esc(src.id) + '"' +
             (f.atp_on ? ' checked' : '') + '> <b>Also pull quantities</b> (Ashley ATP) — after the main pull, ' +
             'every SKU is checked for availability + lead time and joined on. Adds 10–25 minutes for a big catalog.</label></div>' +
-          inp('atp-external', 'ATP External ID — e.g. Buddys3989100', f.atp_external_id, '210px') +
+          inp('atp-external', 'ATP External ID — e.g. Company3989100', f.atp_external_id, '210px') +
           '<input class="f" type="password" id="fd-atp-keycode-' + esc(src.id) +
             '" placeholder="ATP KeyCode" value="' + esc(f.atp_keycode || '') + '" style="max-width:170px">' +
           inp('atp-user', 'ATP user — e.g. AD_…_VP', f.atp_user, '160px') +
@@ -1083,9 +1292,9 @@ function bldFeedBox(src){
         'onclick="copyText(\'' + esc(src.feed_addr || '') + '\', this)">Copy</button><br><span class="muted">It lands in your connected mailbox and only this source ' +
         'picks it up. Or fill “sender contains” below to match by sender instead.</span></div>'
       : '<div class="small" style="color:#7a4b00;background:#fff4e5;border-radius:8px;' +
-        'padding:7px 10px;flex-basis:100%">Mailbox not connected yet — on Render, this ' +
-        'service → Environment: add EMAIL_IMAP_HOST, EMAIL_IMAP_USER and EMAIL_IMAP_PASS ' +
-        '(and EMAIL_IMAP_PORT if it is not 993).</div>') +
+        'padding:7px 10px;flex-basis:100%">Mailbox not connected yet — fill in the ' +
+        '<b>Mailbox for email feeds</b> box at the bottom of this tab (host, user, ' +
+        'password) and press Save. No Render settings needed.</div>') +
         inp('from', 'sender contains (optional), e.g. @vendor1.com', f.from_contains, '250px') +
         inp('subj', 'subject contains (optional)', f.subject_contains, '220px');
   }
@@ -1110,7 +1319,83 @@ function bldFeedBox(src){
         : stLine) +
     '</div>' +
     (cfg || tail ? '<div class="row" style="margin-top:7px">' + cfg + tail + '</div>' : '') +
+    bldEtlBlock(src, f) +
     '</div>';
+}
+
+function bldEtlRow(id, st){
+  st = st || {};
+  const cols = ((window._bldCols || {})[id] || []).slice()
+    .sort((a, b) => String(a).toLowerCase().localeCompare(String(b).toLowerCase()));
+  const ops = [['subtract','−'],['percent_off','− %'],['add','+'],['multiply','×'],['fill_blank','if blank →']];
+  const copt = cur => '<option value=""' + (cur ? '' : ' selected') + '>— pick a column —</option>' +
+    cols.map(c => '<option value="' + esc(c) + '"' + (String(c) === String(cur || '') ? ' selected' : '') + '>' +
+      esc(c) + '</option>').join('');
+  const bIsNum = st.b && cols.indexOf(st.b) < 0;
+  return '<div class="row" style="gap:6px;margin-top:6px;flex-basis:100%">' +
+    '<input class="f fd-eout-' + esc(id) + '" placeholder="new column (e.g. Promo Cost)" value="' + esc(st.out || '') + '" style="max-width:170px">' +
+    '<span class="small" style="font-weight:800">=</span>' +
+    '<select class="f fd-ea-' + esc(id) + '" style="max-width:210px;padding:7px 9px">' + copt(st.a) + '</select>' +
+    '<select class="f fd-eop-' + esc(id) + '" style="max-width:90px;padding:7px 9px">' +
+      ops.map(o => '<option value="' + o[0] + '"' + ((st.op || 'subtract') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+    '</select>' +
+    '<select class="f fd-eb-' + esc(id) + '" style="max-width:210px;padding:7px 9px"' +
+      ' onchange="var n=this.parentElement.querySelector(\'.fd-ebn-' + esc(id) + '\');if(n)n.style.display=(this.value===\'#num\')?\'\':\'none\'">' +
+      '<option value="#num"' + (bIsNum ? ' selected' : '') + '>a number…</option>' + copt(bIsNum ? '' : st.b) +
+    '</select>' +
+    '<input class="f fd-ebn-' + esc(id) + '" type="number" step="any" placeholder="number" value="' + esc(bIsNum ? st.b : '') + '"' +
+      ' style="max-width:110px;display:' + (bIsNum ? '' : 'none') + '">' +
+    '<button class="btn ghost sm" onclick="this.parentElement.remove()" title="remove step">✕</button>' +
+    '</div>';
+}
+
+function bldEtlBlock(src, f){
+  const id = src.id;
+  window._bldCols = window._bldCols || {};
+  window._bldCols[id] = src.columns || [];
+  const rows = ((f && f.etl) || []).map(st => bldEtlRow(id, st)).join('');
+  return '<div style="margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
+    '<b class="small">ETL steps</b> <span class="muted small">— computed columns, the same math your ETL ' +
+    'app does. Name the output <b>Promo Cost</b> and it becomes the promo: Promo Cost = RegularCost − ' +
+    'Discount. The store always shows the lesser of Regular and Promo — a blank promo just means no ' +
+    'sale, which is most vendors most of the time. Every schema field is typed and the build converts ' +
+    'to it automatically — prices to decimals, Display Order and stock to whole numbers (a blank ' +
+    'Display Order becomes 99999, sorting last). “if blank →” fills empties with a column or a value.</span>' +
+    '<div id="fd-etl-' + esc(id) + '">' + rows + '</div>' +
+    '<button class="btn ghost sm" style="margin-top:6px" onclick="bldEtlAdd(\'' + esc(id) + '\')">＋ step</button> ' +
+    '<button class="btn sm" style="margin-top:6px" onclick="bldFeedSave(\'' + esc(id) + '\')">Save steps</button>' +
+    '</div>' +
+    '<div class="row" style="margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
+    '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-photos-' + esc(id) + '"' +
+      ((f && f.photos_on) ? ' checked' : '') + '> <b>Host photos on this app</b> — vendor image links are ' +
+      'copied into this app\'s own database and the catalog serves them from Render.</label>' +
+    '<input class="f" id="fd-photos-col-' + esc(id) + '" placeholder="image column (blank = the mapped Photo column)"' +
+      ' value="' + esc((f && f.photos_col) || '') + '" style="max-width:280px">' +
+    '<button class="btn ghost sm" onclick="bldPhotosRun(this,\'' + esc(id) + '\')">Host photos now</button>' +
+    '<button class="btn sm" onclick="bldFeedSave(\'' + esc(id) + '\')">Save</button>' +
+    (function(st){
+      if(!st || typeof st.photos_total === 'undefined') return '';
+      var done = (st.photos_hosted|0) >= (st.photos_total|0) && (st.photos_total|0) > 0;
+      return '<span class="tag ' + (done ? 'ok' : 'part') + '" style="align-self:center">' +
+        (st.photos_hosted|0) + ' of ' + (st.photos_total|0) + ' photos hosted</span>';
+    })(src.feed_status) +
+    '</div>';
+}
+
+function bldEtlAdd(id){
+  const box = $('fd-etl-' + id); if(!box) return;
+  box.insertAdjacentHTML('beforeend', bldEtlRow(id, {}));
+}
+
+async function bldPhotosRun(btn, id){
+  try{
+    btn.disabled = true; btn.textContent = 'Starting…';
+    const r = await api('/api/admin/builder/photos/run', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id})});
+    say((r && r.message) || 'Hosting photos in the background — watch the card.', 'ok');
+    setTimeout(loadBuilder, 2500);
+  }catch(e){ say(e.message, 'bad'); }
+  btn.disabled = false; btn.textContent = 'Host photos now';
 }
 
 function bldFeedType(id, t){
@@ -1169,6 +1454,16 @@ async function bldFeedSave(id){
                     feed.password = ($('fd-pass-' + id) || {value:''}).value;
                     feed.path = g('path'); feed.pattern = g('pattern'); }
   if(t === 'email'){ feed.from_contains = g('from'); feed.subject_contains = g('subj'); }
+  const eo = [...document.querySelectorAll('.fd-eout-' + id)].map(e => e.value.trim());
+  const ea = [...document.querySelectorAll('.fd-ea-' + id)].map(e => e.value.trim());
+  const ep = [...document.querySelectorAll('.fd-eop-' + id)].map(e => e.value);
+  const eb = [...document.querySelectorAll('.fd-eb-' + id)].map(e => e.value);
+  const ebn = [...document.querySelectorAll('.fd-ebn-' + id)].map(e => e.value.trim());
+  feed.etl = eo.map((o, j) => ({out: o, a: ea[j] || '', op: ep[j] || 'subtract',
+                                b: (eb[j] === '#num' ? (ebn[j] || '') : (eb[j] || ''))}))
+             .filter(st => st.out && st.a && st.b);
+  feed.photos_on = ($('fd-photos-' + id) || {checked:false}).checked;
+  feed.photos_col = ($('fd-photos-col-' + id) || {value:''}).value.trim();
   try{
     await api('/api/admin/builder/feed', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id, feed: feed})});
@@ -1214,5 +1509,27 @@ loadUsers();
 loadBuilder();
 </script>
 
+<script id="qc-menu">(function(){
+ var HERE='admin';
+ var host=document.querySelector('.topbar')||document.querySelector('.top')||document.body;
+ var wrap=document.createElement('div'); wrap.style.cssText='position:relative;display:inline-flex;flex:none;';
+ var btn=document.createElement('button'); btn.type='button'; btn.innerHTML='<span style="font-size:14px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span>';
+ btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
+ btn.style.cssText='background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:9px 16px;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;letter-spacing:.3px;display:inline-flex;align-items:center;gap:8px;line-height:1;';
+ var dd=document.createElement('div');
+ dd.style.cssText='position:absolute;top:calc(100% + 8px);left:0;display:none;flex-direction:column;gap:2px;background:#16213f;border-radius:14px;padding:10px;width:230px;box-shadow:0 18px 48px rgba(14,23,48,.45);z-index:3000;';
+ [['/#v=catalog','Catalog','catalog'],['/#v=order','Order Form','order'],['/#v=pending','Pending Orders','pending'],['/#v=approver','Approver','approver'],['/#v=purchasing','Purchasing Admin','purchasing'],['/vendor','Vendor Edit','vendor'],['/admin','Setup','admin']].forEach(function(t){
+  var a=document.createElement('a'); a.href=t[0]; a.textContent=t[1];
+  var on=(t[2]===HERE);
+  a.style.cssText='display:block;padding:10px 14px;border-radius:9px;font-weight:700;font-size:13.5px;text-decoration:none;white-space:nowrap;color:'+(on?'#16213f':'#fff')+';background:'+(on?'#fff':'transparent')+';';
+  dd.appendChild(a);
+ });
+ wrap.appendChild(btn); wrap.appendChild(dd);
+ host.insertBefore(wrap, host.firstChild);
+ function setOpen(o){dd.style.display=o?'flex':'none';btn.setAttribute('aria-expanded',o?'true':'false');}
+ btn.onclick=function(e){e.stopPropagation();setOpen(dd.style.display==='none'||!dd.style.display);};
+ document.addEventListener('click',function(e){if(!wrap.contains(e.target))setOpen(false);},true);
+ document.addEventListener('keydown',function(e){if(e.key==='Escape')setOpen(false);});
+})();</script>
 </body>
 </html>

@@ -4484,15 +4484,29 @@ def _feed_fetch_api(cfg: dict, progress=None):
                 return found
         return payload
 
+    _run_t0 = time.time()
+
     def _get_retry(cl, url, params, seg):
-        try:
+        import time as _time
+        last = None
+        for attempt in range(4):
+            if _FEED_STOP["at"] > _run_t0:
+                raise ValueError("Stopped from the admin — press Check now to start fresh.")
             try:
-                return cl.get(url, headers=headers, params=params)
+                r = cl.get(url, headers=headers, params=params)
             except httpx.TimeoutException:
-                return cl.get(url, headers=headers, params=params)
-        except httpx.TimeoutException:
-            raise ValueError(f"{seg} took too long to answer — over 5 minutes, twice in "
-                             f"a row. A smaller limit parameter usually fixes this.")
+                last = "timeout"
+                continue
+            # 429/5xx = the vendor throttling or hiccuping — wait and re-ask
+            # rather than accepting a cut-short download.
+            if r.status_code in (429, 500, 502, 503, 504):
+                last = f"answered {r.status_code}"
+                _time.sleep(15 * (attempt + 1))
+                continue
+            return r
+        raise ValueError(f"{seg} kept failing ({last}) — the vendor is likely "
+                         f"rate-limiting after many pulls today. Wait a while and "
+                         f"press Check now once.")
 
     def _pull_one(cl, url, tag=""):
         """One endpoint -> (filename, raw bytes, dataframe-or-None)."""
@@ -4897,6 +4911,9 @@ def _feed_alert(subject: str, body: str) -> bool:
         return False
 
 
+_FEED_STOP = {"at": 0.0}     # the admin's ⏹ Stop — runs started before this die
+
+
 def _feed_run_source(eng, row) -> dict:
     """Fetch one source's feed and refresh its table. Always records a status,
     and raises an alert when a file fails or stops matching the schema."""
@@ -4904,9 +4921,12 @@ def _feed_run_source(eng, row) -> dict:
     cfg = _feed_of(row)
     kind = str(cfg.get("type") or "manual")
     prev = _feed_status_of(row)
-    out = {"last_run": time.strftime("%Y-%m-%d %H:%M"), "last_ts": time.time(),
+    t0 = time.time()
+    out = {"last_run": time.strftime("%Y-%m-%d %H:%M"), "last_ts": t0,
            "ok": False, "changed": False, "note": ""}
     def _progress(page, count, tag=""):
+        if _FEED_STOP["at"] > t0:
+            raise ValueError("Stopped from the admin — press Check now to start fresh.")
         try:
             from sqlalchemy import text as _t
             lead = f"{tag} — " if tag else ""
@@ -4922,6 +4942,16 @@ def _feed_run_source(eng, row) -> dict:
             pass
 
     try:
+        with eng.begin() as c:      # visible as running from the first second
+            c.execute(text("update cat_sources set feed_status=:s where id=:i"),
+                      {"s": json.dumps({"running": True, "note": "Starting the pull…",
+                                        "last_run": out["last_run"],
+                                        "last_ts": out["last_ts"],
+                                        "sha": prev.get("sha", "")}),
+                       "i": row["id"]})
+    except Exception:
+        pass
+    try:
         if kind == "api":
             fname, raw = _feed_fetch_api(cfg, progress=_progress)
         elif kind == "sftp":
@@ -4935,6 +4965,11 @@ def _feed_run_source(eng, row) -> dict:
             out.update(ok=True, sha=sha, note="Checked — same file as last time.")
         else:
             df = _builder_read_frame(fname, raw)
+            prev_rows = int(row["row_count"] or 0)
+            if prev_rows >= 1000 and len(df) < prev_rows * 0.5:
+                raise ValueError(f"Pulled only {len(df):,} rows but the last good pull had "
+                                 f"{prev_rows:,} — the vendor likely cut the download short. "
+                                 f"Keeping the existing data; try again later.")
             df.astype(str).to_sql(row["table_name"], eng, if_exists="replace",
                                   index=False, chunksize=2000)
             try:
@@ -5211,10 +5246,48 @@ async def builder_feed_run(request: Request):
         kind = "manual"
     if kind not in ("api", "sftp", "email"):
         raise HTTPException(400, "That source has no feed set up yet — pick one and save it first.")
+    # One run at a time: a second press while one is going just stacks a racing
+    # copy that slows everything down. ⏹ Stop clears a stuck one.
+    with _builder_engine().connect() as c:
+        strow = c.execute(text("select feed_status from cat_sources where id=:i"),
+                          {"i": sid}).mappings().first()
+    st = _feed_status_of(strow) if strow else {}
+    if st.get("running") and (time.time() - float(st.get("last_ts") or 0)) < 7200:
+        return {"ok": True, "started": False,
+                "message": "A pull is already running for this source — let it finish, "
+                           "or press ⏹ Stop runs first if it looks stuck."}
     asyncio.create_task(asyncio.to_thread(_feed_run_due, {sid}, cust))
     return {"ok": True, "started": True,
             "message": "Checking — running in the background. A big API can take a few "
                        "minutes; the status line on the card updates when it finishes."}
+
+
+@app.post("/api/admin/builder/feed/stop")
+async def builder_feed_stop(request: Request):
+    """The admin's ⏹ Stop: running pulls die at their next step, and every
+    card stuck saying 'running' is cleared to a plain try-again note."""
+    sc, cust, _label = await _builder_admin(request)
+    _FEED_STOP["at"] = time.time()
+    from sqlalchemy import text
+    eng = _builder_engine()
+    with eng.connect() as c:
+        rows = c.execute(text("select id, feed_status from cat_sources where customer=:c"),
+                         {"c": cust}).mappings().all()
+    n = 0
+    for r in rows:
+        st = _feed_status_of(r)
+        if st.get("running"):
+            st.pop("running", None)
+            st["ok"] = False
+            st["note"] = "Stopped from the admin — press Check now when ready to run fresh."
+            with eng.begin() as c:
+                c.execute(text("update cat_sources set feed_status=:s where id=:i"),
+                          {"s": json.dumps(st), "i": r["id"]})
+            n += 1
+    return {"ok": True, "stopped": n,
+            "message": (f"Stopped {n} run{'' if n == 1 else 's'} — background work winds "
+                        f"down within a minute." if n else
+                        "Nothing was running — all clear.")}
 
 
 # The static-file mount goes LAST: a mount at "/" catches every path, so every

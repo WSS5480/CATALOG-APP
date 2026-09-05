@@ -41,6 +41,7 @@ import json
 import os
 import secrets
 import time
+import threading
 from urllib.parse import quote
 
 import httpx
@@ -84,6 +85,8 @@ DATASETS = {
 }
 
 app = FastAPI(title="Catalog / Order Form")
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=2048)
 
 # A 37,000-row catalog as raw JSON is a fifteen-megabyte page load; gzipped it
 # is under two. The mapping app got this the first time "loads real slow" was
@@ -128,6 +131,17 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
+APP_VERSION = "67"
+try:                                   # install-to-home-screen (PWA) plumbing
+    from pwa_catalog import router as _pwa_router, inject as _pwa_inject
+    # The installed-app name lives in pwa_catalog.py, a file that is easy
+    # to miss in an upload. Pin it here so the manifest is right whenever
+    # server.py deploys, whatever vintage of that module sits beside it.
+    import pwa_catalog as _pwa_mod
+    _pwa_mod.APP_NAME = "Product Catalog"
+except Exception:                      # missing file must never kill the app
+    _pwa_router = None
+    def _pwa_inject(x): return x
 # Which app this browser is signing in to, set by visiting that app's own link.
 # It is only ever a claim about WHICH app, never about who — ETL still checks
 # the password and still decides what the person reaches. The worst a forged
@@ -261,7 +275,7 @@ async def healthz():
     silently override every signed-in person's own datasets, and nothing on this
     page said so.
     """
-    return {"ok": True, "service": "catalog-app",
+    return {"version": APP_VERSION, "ok": True, "service": "catalog-app",
             "etl_configured": bool(ETL_BASE), "application": APPLICATION,
             "catalog": DATASETS["catalog"],
             "catalog_profile_set": bool(CATALOG_PROFILE),
@@ -421,6 +435,14 @@ async def rows(ident: str, request: Request):
     aux = await _aux_rows_local(ident, request)
     if aux is not None:
         return aux
+    if not ETL_BASE:
+        # Nothing to proxy to. A signed-out session gets a 401 the page can
+        # act on (bounce to /login); anything else gets an empty list. The
+        # old behavior fell through to the ETL client, whose "ETL_BASE_URL
+        # is not set" 500 the page treated as a transient error and retried.
+        if (await _whoami(request)) is None:
+            raise HTTPException(401, "Not signed in.")
+        return JSONResponse([])
     params = dict(request.query_params)
     asked = params.pop("profile", "").strip()
     my = await _my_datasets(request)
@@ -515,6 +537,22 @@ _IMG_NAME = None
 async def image_passthrough(name: str):
     global _IMG_NAME
     import re
+    # Photos this app hosts itself (the ETL area's photo mirror) are keyed by a
+    # 24-char content hash. Serve those from our own database first; anything
+    # else is an ETL-hosted filename and proxies through as before.
+    iid = name[:-4] if name.lower().endswith((".jpg", ".png")) else \
+        (name[:-5] if name.lower().endswith((".jpeg", ".webp")) else name)
+    if re.fullmatch(r"[0-9a-f]{24}", iid) and os.environ.get("CATALOG_DATABASE_URL", "").strip():
+        try:
+            from sqlalchemy import text
+            with _builder_engine().connect() as c:
+                row = c.execute(text("select ctype, body from cat_images where iid=:i"),
+                                {"i": iid}).first()
+        except Exception:
+            row = None
+        if row is not None and row[1] is not None:
+            return Response(bytes(row[1]), media_type=str(row[0] or "image/jpeg"),
+                            headers={"Cache-Control": "public, max-age=31536000, immutable"})
     if _IMG_NAME is None:
         _IMG_NAME = re.compile(r"^[0-9a-f]{8,64}\.(?:jpg|jpeg|png|webp)$")
     if not _IMG_NAME.match(name):
@@ -549,29 +587,26 @@ async def _orders_ready(request: Request):
     return who, cust
 
 
-def _edits_rebuild_later(cust: str):
-    """A saved catalog edit rebuilds the catalog in the background, so special
-    buys and packages appear without anyone pressing Build."""
-    def _run():
-        try:
-            _builder_do_build(_builder_engine(), cust)
-        except Exception:
-            pass
-    try:
-        asyncio.create_task(asyncio.to_thread(_run))
-    except Exception:
-        pass
+def _edits_access(who) -> bool:
+    """CatalogEdits is the vendor-edit log: vendor reps and catalog admins use
+    it, so it is gated by the Vendor-page permission instead of order perms."""
+    sc = (who.get("scope") or {})
+    if sc.get("all") or who.get("admin"):
+        return True
+    if ((sc.get("perms") or _PERM_DEFAULT).get("vendorpage")):
+        return True
+    return str(sc.get("role") or "").strip().lower() == "vendor"
 
 
-def _is_edits_coll(coll: str) -> bool:
-    """The catalog-edits collection (special buys, promo prices, packages) —
-    read by every catalog viewer, written only by vendor/purchasing people."""
-    return "catalogedit" in str(coll or "").lower()
-
-
-def _may_edit_catalog(sc) -> bool:
-    pr = (sc or {}).get("perms") or {}
-    return bool((sc or {}).get("all")) or bool(pr.get("vendorpage") or pr.get("purchasing"))
+def _edits_vendor_ok(who, vendor) -> bool:
+    """A vendor-scoped person may only touch edits for their own vendors."""
+    sc = (who.get("scope") or {})
+    if sc.get("all") or who.get("admin"):
+        return True
+    if sc.get("vendors_all", True):
+        return True
+    vs = [str(v).strip().upper() for v in (sc.get("vendors") or []) if str(v).strip()]
+    return (not vs) or (str(vendor or "").strip().upper() in vs)
 
 
 @app.get("/api/app/collections/{coll}/documents/")
@@ -580,15 +615,36 @@ async def orders_list(coll: str, request: Request):
     if ready is None:
         return await etl_get(f"/api/app/collections/{coll}/documents/")
     who, cust = ready
-    if _is_edits_coll(coll):
-        if not (who.get("scope") or {}).get("perms", _PERM_DEFAULT).get("catalog", True):
-            raise HTTPException(403, "You do not have access to the catalog.")
+    if coll == "CatalogEdits":
+        # Reading the edit log is what lets the storefront honor vendor-edit
+        # precedence, so anyone who can see the catalog may read it. Writing
+        # stays gated to vendors and admins below.
+        sc0 = (who.get("scope") or {})
+        if not (_edits_access(who) or (sc0.get("perms") or _PERM_DEFAULT).get("catalog", True)):
+            raise HTTPException(403, "You do not have access to vendor edits.")
     elif _pending_level(who.get("scope")) < 1:
         raise HTTPException(403, "You do not have access to pending orders.")
     from sqlalchemy import text
     with _builder_engine().connect() as c:
         rows = c.execute(text("select id, content from cat_orders where coll=:o and customer=:c "
                               "order by created_at"), {"o": coll, "c": cust}).all()
+    need_filter = False
+    if coll == "CatalogEdits":
+        sc_f = (who.get("scope") or {})
+        need_filter = not (sc_f.get("all") or who.get("admin") or sc_f.get("vendors_all"))
+    if not need_filter:
+        # The stored content is already JSON — hand it back without the
+        # parse/re-serialize round trip (thousands of order docs add up).
+        parts = []
+        for rid, content in rows:
+            c = (content or "").strip() or "{}"
+            if not (c.startswith("{") and c.endswith("}")):
+                try:
+                    c = json.dumps(json.loads(c))
+                except Exception:
+                    c = "{}"
+            parts.append('{"id":%s,"content":%s}' % (json.dumps(str(rid)), c))
+        return Response("[" + ",".join(parts) + "]", media_type="application/json")
     out = []
     for rid, content in rows:
         try:
@@ -596,6 +652,20 @@ async def orders_list(coll: str, request: Request):
         except Exception:
             body = {}
         out.append({"id": rid, "content": body})
+    if coll == "CatalogEdits":
+        # A vendors-scoped viewer sees exactly the edits for the vendors they
+        # can see — the same rule the built catalog rows follow.
+        sc = (who.get("scope") or {})
+        if not (sc.get("all") or who.get("admin") or sc.get("vendors_all")):
+            vend = {str(v).strip().upper() for v in (sc.get("vendors") or []) if str(v).strip()}
+            mode = str(sc.get("vendors_mode") or "")
+
+            def _vis(d):
+                v = str((d.get("content") or {}).get("Vendor") or "").strip().upper()
+                if mode == "except":
+                    return v not in vend
+                return (v in vend) if vend else False
+            out = [d for d in out if _vis(d)]
     return out
 
 
@@ -606,21 +676,23 @@ async def orders_create(coll: str, request: Request):
     if ready is None:
         return await etl_send("POST", f"/api/app/collections/{coll}/documents/", payload)
     who, cust = ready
-    if _is_edits_coll(coll):
-        if not _may_edit_catalog(who.get("scope")):
-            raise HTTPException(403, "Catalog edits need the Vendor Page or Purchasing "
-                                     "Admin permission.")
-    elif not (who.get("scope") or {}).get("perms", _PERM_DEFAULT).get("order", True):
-        raise HTTPException(403, "You do not have access to the order form.")
     content = (payload or {}).get("content")
     if not isinstance(content, dict):
         content = payload if isinstance(payload, dict) else {}
-    content.setdefault("SubmittedBy", who.get("email", ""))
+    if coll == "CatalogEdits":
+        if not _edits_access(who):
+            raise HTTPException(403, "You do not have access to vendor edits.")
+        if not _edits_vendor_ok(who, content.get("Vendor")):
+            raise HTTPException(403, "That vendor is outside your access.")
+    else:
+        if not (who.get("scope") or {}).get("perms", _PERM_DEFAULT).get("order", True):
+            raise HTTPException(403, "You do not have access to the order form.")
+        content.setdefault("SubmittedBy", who.get("email", ""))
     # Budgets: a location or group past its monthly number still submits, but
     # every line is flagged over budget — and only an administrator can approve.
     try:
-        p = _person(str(who.get("email") or ""))
-        if p is not None and not _is_admin_row(p) and not _is_edits_coll(coll):
+        p = _person(str(who.get("email") or "")) if coll != "CatalogEdits" else None
+        if p is not None and not _is_admin_row(p):
             notes = _budget_check(_builder_engine(), cust, p, content)
             if notes:
                 content["OverBudget"] = "Yes"
@@ -634,8 +706,6 @@ async def orders_create(coll: str, request: Request):
     with _builder_engine().begin() as c:
         c.execute(text("insert into cat_orders(id,coll,customer,content) values(:i,:o,:c,:b)"),
                   {"i": rid, "o": coll, "c": cust, "b": json.dumps(content)})
-    if _is_edits_coll(coll):
-        _edits_rebuild_later(cust)
     return {"id": rid, "content": content}
 
 
@@ -646,13 +716,16 @@ async def orders_update(coll: str, doc_id: str, request: Request):
     if ready is None:
         return await etl_send("PUT", f"/api/app/collections/{coll}/documents/{doc_id}", payload)
     who, cust = ready
-    if _is_edits_coll(coll):
-        if not _may_edit_catalog(who.get("scope")):
-            raise HTTPException(403, "Catalog edits need the Vendor Page or Purchasing "
-                                     "Admin permission.")
+    content0 = (payload or {}).get("content")
+    if coll == "CatalogEdits":
+        if not _edits_access(who):
+            raise HTTPException(403, "You do not have access to vendor edits.")
+        _v = (content0 or {}).get("Vendor") if isinstance(content0, dict) else None
+        if not _edits_vendor_ok(who, _v):
+            raise HTTPException(403, "That vendor is outside your access.")
     elif _pending_level(who.get("scope")) < 2:
         raise HTTPException(403, "You may look at pending orders, but not change them.")
-    content = (payload or {}).get("content")
+    content = content0
     if not isinstance(content, dict):
         content = payload if isinstance(payload, dict) else {}
     from sqlalchemy import text
@@ -680,8 +753,6 @@ async def orders_update(coll: str, doc_id: str, request: Request):
                       {"b": json.dumps(content), "i": doc_id, "o": coll, "c": cust}).rowcount
     if not n:
         raise HTTPException(404, "No such order line.")
-    if _is_edits_coll(coll):
-        _edits_rebuild_later(cust)
     return {"id": doc_id, "content": content}
 
 
@@ -691,18 +762,387 @@ async def orders_delete(coll: str, doc_id: str, request: Request):
     if ready is None:
         return await etl_send("DELETE", f"/api/app/collections/{coll}/documents/{doc_id}")
     who, cust = ready
-    if _is_edits_coll(coll):
-        if not _may_edit_catalog(who.get("scope")):
-            raise HTTPException(403, "Catalog edits need the Vendor Page or Purchasing "
-                                     "Admin permission.")
+    from sqlalchemy import text
+    if coll == "CatalogEdits":
+        if not _edits_access(who):
+            raise HTTPException(403, "You do not have access to vendor edits.")
+        with _builder_engine().connect() as c:
+            row = c.execute(text("select content from cat_orders where id=:i and coll=:o and customer=:c"),
+                            {"i": doc_id, "o": coll, "c": cust}).first()
+        if row is not None:
+            try:
+                _oc = json.loads(row[0] or "{}")
+            except Exception:
+                _oc = {}
+            if not _edits_vendor_ok(who, _oc.get("Vendor")):
+                raise HTTPException(403, "That vendor is outside your access.")
     elif _pending_level(who.get("scope")) < 3:
         raise HTTPException(403, "You do not have delete access on pending orders.")
-    from sqlalchemy import text
     with _builder_engine().begin() as c:
         c.execute(text("delete from cat_orders where id=:i and coll=:o and customer=:c"),
                   {"i": doc_id, "o": coll, "c": cust})
-    if _is_edits_coll(coll):
-        _edits_rebuild_later(cust)
+    return {"ok": True}
+
+
+_LOC_FIELDS = [
+    # storage column, schema name, accepted header aliases (the old Domo
+    # StoreMapping names load as-is)
+    ("group_id",           "GroupID",              ("districtid", "district_id", "groupid", "groupnumber", "groupno")),
+    ("group_name",         "Group",                ("district", "groupname", "districtname")),
+    ("loc_num",            "LocationID",           ("storenum", "location", "locationnum", "locationnumber", "locnum", "store", "storenumber")),
+    ("loc_name",           "LocationName",         ("storename", "locname")),
+    ("loc_owner_name",     "LocationManagersName", ("generalmanagersname", "generalmanager", "locationowner", "locationownername", "locationmanager", "owner", "gm", "gmname")),
+    ("loc_owner_email",    "LocationEmail",        ("manageremail", "locationowneremail", "locationmanageremail", "owneremail", "gmemail")),
+    ("group_owner_name",   "GroupManagersName",    ("districtmanager", "groupowner", "groupownername", "groupmanager", "dm", "dmname")),
+    ("group_owner_email",  "GroupEmail",           ("districtmanageremail", "groupowneremail", "groupmanageremail", "dmemail")),
+    # extras still accepted and stored, not part of the named schema
+    ("loc_email",          "StoreEmail",           ("storeemail",)),
+    ("pd_email",           "PurchasingDirector",   ("purchasingdirector", "purchasingdirectoremail", "pdemail")),
+    ("owner2_email",       "ManagerEmail2",        ("manageremail2", "owner2email")),
+    ("group_owner2_email", "DistrictManagerEmail2", ("districtmanageremail2", "dm2email")),
+]
+_LOC_SCHEMA = [f for f in _LOC_FIELDS if f[1] not in
+               ("StoreEmail", "PurchasingDirector", "ManagerEmail2", "DistrictManagerEmail2")]
+
+
+
+def _locations_sync_people(eng, cust: str) -> int:
+    """Every location owner and group owner becomes a sign-in the moment the
+    registry knows them: the Passwords tab fills itself from this list. Only
+    MISSING people are created — an existing row (role, groups, password) is
+    never touched, and removing a location never deletes a person."""
+    from sqlalchemy import text
+    made = 0
+    with eng.begin() as c:
+        locs = c.execute(text("select * from cat_locations where customer=:c"),
+                         {"c": cust}).mappings().all()
+        have = {str(r[0] or "").strip().lower()
+                for r in c.execute(text("select email from cat_people"), {}).all()}
+        def mk(email, label, role, group1, group2):
+            nonlocal made
+            em = str(email or "").strip().lower()
+            if not em or "@" not in em or em in have:
+                return
+            c.execute(text("insert into cat_people(email,customer,user_label,role,group1,group2) "
+                           "values(:e,:c,:l,:r,:g1,:g2)"),
+                      {"e": em, "c": cust, "l": str(label or "")[:120],
+                       "r": role, "g1": str(group1 or "")[:80], "g2": str(group2 or "")[:80]})
+            have.add(em)
+            made += 1
+        for l in locs:
+            num = str(l["loc_num"] or "").strip()
+            nm = str(l["loc_name"] or "").strip()
+            label = nm if (nm and _bnorm(nm).startswith(_bnorm(num))) else \
+                (f"{num} - {nm}".strip(" -") if nm else num)
+            mk(l["loc_owner_email"], label, "STORE", "STORE", l["group_id"])
+            mk(l["group_owner_email"], str(l["group_owner_name"] or "").strip() or
+               ("GROUP " + str(l["group_id"] or "")), "DM", "DISTRICT", l["group_id"])
+    return made
+
+
+@app.get("/api/admin/mailbox")
+async def mailbox_get(request: Request):
+    await _builder_admin(request)
+    st = _mailbox_stored()
+    stored = bool(str(st.get("host") or "").strip() and str(st.get("user") or "").strip()
+                  and str(st.get("password") or ""))
+    env_ok = bool(os.environ.get("EMAIL_IMAP_HOST", "").strip()
+                  and os.environ.get("EMAIL_IMAP_USER", "").strip()
+                  and os.environ.get("EMAIL_IMAP_PASS", "").strip())
+    host, port, user, pw = _email_env()
+    return {"host": str(st.get("host") or ""), "port": st.get("port") or 993,
+            "user": str(st.get("user") or ""),
+            "password": _PW_KEPT if str(st.get("password") or "") else "",
+            "source": ("app" if stored else ("render-env" if env_ok else "none")),
+            "effective_user": user if (host and user and pw) else ""}
+
+
+@app.post("/api/admin/mailbox")
+async def mailbox_save(request: Request):
+    await _builder_admin(request)
+    body = await request.json() or {}
+    old = _mailbox_stored()
+    pw = str(body.get("password") or "")
+    st = {"host": str(body.get("host") or "").strip()[:200],
+          "user": str(body.get("user") or "").strip()[:200],
+          "password": old.get("password", "") if pw == _PW_KEPT else pw}
+    try:
+        st["port"] = max(1, min(int(body.get("port") or 993), 65535))
+    except Exception:
+        st["port"] = 993
+    if not (st["host"] or st["user"] or st["password"]):
+        st = {}          # cleared — back to the environment variables, if any
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("delete from cat_kv where k='mailbox'"))
+        if st:
+            c.execute(text("insert into cat_kv(k,v) values('mailbox',:v)"),
+                      {"v": json.dumps(st)})
+    return {"ok": True,
+            "message": ("Mailbox saved — email feeds use it from the next check."
+                        if st else "Cleared — email feeds use the Render environment "
+                                   "variables again, if set.")}
+
+
+@app.post("/api/admin/mailbox/test")
+async def mailbox_test(request: Request):
+    await _builder_admin(request)
+    host, port, user, pw = _email_env()
+    if not (host and user and pw):
+        raise HTTPException(400, "Nothing to test — fill in host, user and password first.")
+    import imaplib
+    try:
+        def _try():
+            m = imaplib.IMAP4_SSL(host, port, timeout=20)
+            m.login(user, pw)
+            n = m.select("INBOX", readonly=True)
+            m.logout()
+            return n
+        await asyncio.to_thread(_try)
+    except Exception as e:
+        raise HTTPException(400, f"Could not sign in: {str(e)[:180]}")
+    return {"ok": True, "message": f"Signed in as {user} and opened the inbox."}
+
+
+@app.get("/api/admin/locations")
+async def locations_list(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    from sqlalchemy import text
+    with _builder_engine().connect() as c:
+        rows = c.execute(text("select * from cat_locations where customer=:c "
+                              "order by group_id, loc_num"), {"c": cust}).mappings().all()
+    return {"rows": [dict(r) for r in rows]}
+
+
+@app.get("/api/admin/locations/template")
+async def locations_template(request: Request):
+    await _builder_admin(request)
+    heads = ",".join(h for _, h, _a in _LOC_SCHEMA)
+    sample = "9197,DISTRICT 9197,571,571 - GARLAND,Delia Soto,delia@company.com,"\
+             "Chris Jones,chris@company.com"
+    return Response(heads + "\n" + sample + "\n", media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=locations.csv"})
+
+
+@app.post("/api/admin/locations/upload")
+async def locations_upload(request: Request):
+    """Build the whole registry from one file — the Domo StoreMapping schema,
+    header names taken loosely (Group/Location wording works too). The upload
+    REPLACES the registry, exactly like re-uploading the dataset did."""
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json()
+    raw = base64.b64decode(str((body or {}).get("content_b64") or ""), validate=False)
+    df = _builder_read_frame(str((body or {}).get("filename") or "locations.csv"), raw)
+    by_norm = {}
+    for c in df.columns:
+        by_norm.setdefault(_bnorm(c), c)
+    picked = {}
+    for col, canon, aliases in _LOC_FIELDS:
+        src = None
+        for cand in (_bnorm(canon),) + tuple(aliases):
+            if cand in by_norm:
+                src = by_norm[cand]
+                break
+        picked[col] = src
+    # column-to-column matching, just like the catalog: the client sends the
+    # chosen mapping {SchemaName: file column}; unspecified fields keep the
+    # automatic match
+    given = (body or {}).get("mapping") or {}
+    if isinstance(given, dict) and given:
+        canon_to_col = {canon: col for col, canon, _a in _LOC_FIELDS}
+        for canon, src in given.items():
+            col = canon_to_col.get(str(canon))
+            if col:
+                src = str(src or "").strip()
+                picked[col] = src if src in df.columns else (None if not src else picked[col])
+    if bool((body or {}).get("probe")):
+        return {"ok": True, "rows": int(len(df)),
+                "columns": [str(c) for c in df.columns],
+                "automap": {canon: picked[col] for col, canon, _a in _LOC_SCHEMA}}
+    if not picked["loc_num"]:
+        raise HTTPException(400, "No location column found — the file needs StoreNum "
+                                 "(or Location / LocationNum). Download the schema "
+                                 "template to see the headers.")
+    from sqlalchemy import text
+    eng = _builder_engine()
+    n, seen = 0, set()
+    with eng.begin() as c:
+        c.execute(text("delete from cat_locations where customer=:c"), {"c": cust})
+        for _, r in df.iterrows():
+            vals = {col: (str(r[src]).strip() if src else "") for col, src in picked.items()}
+            for col in vals:
+                if vals[col].lower() in ("nan", "none", "null"):
+                    vals[col] = ""
+            if not vals["loc_num"]:
+                continue
+            k = (vals["group_id"], vals["loc_num"])
+            if k in seen:
+                continue
+            seen.add(k)
+            vals["customer"] = cust
+            c.execute(text("insert into cat_locations(customer,group_id,group_name,loc_num,"
+                           "loc_name,loc_owner_name,loc_owner_email,loc_email,group_owner_name,"
+                           "group_owner_email,pd_email,owner2_email,group_owner2_email) values "
+                           "(:customer,:group_id,:group_name,:loc_num,:loc_name,:loc_owner_name,"
+                           ":loc_owner_email,:loc_email,:group_owner_name,:group_owner_email,"
+                           ":pd_email,:owner2_email,:group_owner2_email)"), vals)
+            n += 1
+    mapped = [canon for (col, canon, _a) in _LOC_FIELDS if picked[col]]
+    made = _locations_sync_people(eng, cust)
+    return {"ok": True, "rows": n,
+            "message": f"{n} locations loaded ({len(mapped)} of {len(_LOC_FIELDS)} "
+                       f"schema fields matched)."
+                       + (f" {made} sign-in{'s' if made != 1 else ''} created for the "
+                          f"Passwords tab." if made else "")
+                       + " The order form reads them now."}
+
+
+@app.post("/api/admin/locations/row")
+async def locations_row(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json() or {}
+    vals = {col: str(body.get(col) or "").strip()[:120] for col, _cn, _a in _LOC_FIELDS}
+    if not vals["loc_num"]:
+        raise HTTPException(400, "The location number is required.")
+    vals["customer"] = cust
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("delete from cat_locations where customer=:customer and "
+                       "group_id=:group_id and loc_num=:loc_num"), 
+                  {"customer": cust, "group_id": vals["group_id"], "loc_num": vals["loc_num"]})
+        c.execute(text("insert into cat_locations(customer,group_id,group_name,loc_num,"
+                       "loc_name,loc_owner_name,loc_owner_email,loc_email,group_owner_name,"
+                       "group_owner_email,pd_email,owner2_email,group_owner2_email) values "
+                       "(:customer,:group_id,:group_name,:loc_num,:loc_name,:loc_owner_name,"
+                       ":loc_owner_email,:loc_email,:group_owner_name,:group_owner_email,"
+                       ":pd_email,:owner2_email,:group_owner2_email)"), vals)
+    _locations_sync_people(_builder_engine(), cust)
+    return {"ok": True}
+
+
+@app.post("/api/admin/locations/delete")
+async def locations_delete(request: Request):
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json() or {}
+    from sqlalchemy import text
+    with _builder_engine().begin() as c:
+        c.execute(text("delete from cat_locations where customer=:c and group_id=:g and loc_num=:l"),
+                  {"c": cust, "g": str(body.get("group_id") or ""), "l": str(body.get("loc_num") or "")})
+    return {"ok": True}
+
+
+@app.get("/api/admin/builder/photos/compare")
+async def builder_photos_compare(request: Request):
+    """Vendor original next to the hosted copy, so a person can look and
+    decide there is no visible difference before trusting it everywhere."""
+    sc, cust, _label = await _builder_admin(request)
+    sid = str(request.query_params.get("id") or "")
+    from sqlalchemy import text, bindparam
+    import pandas as pd
+    eng = _builder_engine()
+    with eng.connect() as c:
+        row = c.execute(text("select * from cat_sources where id=:i and customer=:c"),
+                        {"i": sid, "c": cust}).mappings().first()
+    if not row:
+        raise HTTPException(404, "No such source.")
+    df = pd.read_sql_table(row["table_name"], eng)
+    try:
+        m = json.loads(row["mapping"] or "{}")
+    except Exception:
+        m = {}
+    cfg = _feed_of(row)
+    col = str(cfg.get("photos_col") or "").strip() or str(m.get("ItemImage2") or "")
+    if not col or col not in df.columns:
+        low = {str(x).lower(): str(x) for x in df.columns}
+        col = next((low[x] for x in low if "image" in x or "photo" in x), "")
+    if not col:
+        raise HTTPException(400, "No image column on this source.")
+    urls = [u for u in df[col].astype(str).str.strip().unique().tolist()
+            if u.lower().startswith(("http://", "https://"))]
+    iids = {u: _photos_iid(u) for u in urls}
+    with eng.connect() as c:
+        q = text("select iid, size, ctype, rev from cat_images where customer=:c and iid in :ids") \
+            .bindparams(bindparam("ids", expanding=True))
+        have = {r0[0]: (int(r0[1] or 0), str(r0[2] or ""), int(r0[3] or 1))
+                for batch_i in range(0, len(urls), 500)
+                for r0 in c.execute(q, {"c": cust,
+                                        "ids": [iids[u] for u in urls[batch_i:batch_i + 500]]}).all()}
+    import random
+    pairs = [(u, iids[u]) for u in urls if iids[u] in have]
+    random.shuffle(pairs)
+    pairs = pairs[:8]
+    cards = "".join(
+        f'''<div style="background:#fff;border-radius:12px;padding:14px;box-shadow:0 1px 5px rgba(0,0,0,.08)">
+        <div style="display:flex;gap:12px">
+          <div style="flex:1;text-align:center"><div style="font-weight:700;font-size:12px;color:#666;margin-bottom:6px">VENDOR ORIGINAL</div>
+            <img src="{u}" style="max-width:100%;height:260px;object-fit:contain;background:#f7f7f9;border-radius:8px" loading="lazy"></div>
+          <div style="flex:1;text-align:center"><div style="font-weight:700;font-size:12px;color:#12925f;margin-bottom:6px">HOSTED HERE — {have[i][0] // 1024} KB</div>
+            <img src="/api/images/{i}{'?r=%d' % have[i][2] if have[i][2] > 1 else ''}" style="max-width:100%;height:260px;object-fit:contain;background:#f7f7f9;border-radius:8px" loading="lazy"></div>
+        </div></div>'''
+        for u, i in pairs)
+    page = ('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>Photo compare</title><body style="margin:0;background:#f2f3f7;font-family:system-ui,Segoe UI,Arial;padding:18px">'
+            f'<h2 style="color:#16213f;margin:0 0 4px">Photo compare — {row["name"]}</h2>'
+            '<div style="color:#666;font-size:13px;margin-bottom:14px">Left: the vendor\'s original link. '
+            'Right: the copy this app hosts (shrunk for the catalog). If you cannot tell them apart, it worked.</div>'
+            f'<div style="display:grid;gap:14px;max-width:1100px">{cards or "<p>No hosted photos yet for this source.</p>"}</div>')
+    return Response(page, media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
+@app.post("/api/admin/builder/photos/run")
+async def builder_photos_run(request: Request):
+    """Mirror a source's photos now, in the background, then rebuild so the
+    catalog starts pointing at the hosted copies."""
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json() or {}
+    sid = str(body.get("id") or "")
+    redo = bool(body.get("redo"))
+    from sqlalchemy import text
+    eng = _builder_engine()
+    with eng.connect() as c:
+        row = c.execute(text("select * from cat_sources where id=:i and customer=:c"),
+                        {"i": sid, "c": cust}).mappings().first()
+    if not row:
+        raise HTTPException(404, "No such source.")
+
+    def _note(msg, running=True, extra=None):
+        try:
+            body = {"running": running, "note": msg,
+                    "last_run": time.strftime("%Y-%m-%d %H:%M"),
+                    "last_ts": time.time(), "ok": not running}
+            if extra:
+                body.update(extra)
+            with eng.begin() as c:
+                c.execute(text("update cat_sources set feed_status=:s where id=:i"),
+                          {"s": json.dumps(body), "i": sid})
+        except Exception:
+            pass
+
+    def _job():
+        try:
+            def prog(i, got, tag=""):
+                _note(f"Hosting photos — {i} checked, {got} saved… {tag}")
+            summary, _pt, _ph = _photos_mirror(eng, cust, row, progress=prog, redo=redo)
+            try:
+                _builder_do_build(eng, cust)
+                summary += " · catalog rebuilt"
+            except Exception as be:
+                summary += f" · rebuild: {str(be)[:100]}"
+            _note(summary, running=False,
+                  extra={"photos_total": _pt, "photos_hosted": _ph})
+        except Exception as e:
+            _note(f"Photo hosting failed: {str(e)[:200]}", running=False)
+
+    threading.Thread(target=_job, daemon=True).start()
+    return {"ok": True, "message": "Hosting photos in the background — watch the card."}
+
+
+@app.post("/api/app/appdb/export")
+async def appdb_export(request: Request):
+    # The Domo editor nudges an AppDB-to-dataset export after each save. Here
+    # the app reads edits straight from its own database, so there is nothing
+    # to export — succeed so the editor's save flow stays byte-identical.
+    await _me_scope(request)
     return {"ok": True}
 
 
@@ -947,28 +1387,39 @@ ADMIN_GUIDE = b"""
 @media print{#cat-guide{display:none}}
 </style>
 <div id="cat-guide">
-  <h3>Locking this down before real stores use it</h3>
-  <p>In order. Everything here happens on this page &mdash; users, passwords, groups and
-    budgets all live in this app&#39;s own database.</p>
+  <h3>Setting this catalog up, start to finish</h3>
+  <p>Four steps, in order, all on this page. Everything &mdash; the catalog, locations,
+    users, passwords &mdash; lives in this app&#39;s own database.</p>
   <ol>
-    <li><b>Send everyone to one address:</b> <code>/login</code> on this site. Their email and
-      the password you set is all they need &mdash; there are no per-customer links any more.</li>
-    <li><b>Give every person a password.</b> Anyone showing <i>never set</i> cannot sign in.
-      Set one on the Passwords tab and tell them what it is; it is stored as a one-way hash,
-      so nobody &mdash; including you &mdash; can read it back.</li>
-    <li><b>Leave &quot;must change&quot; ticked.</b> They choose their own on first sign-in,
-      and the one you told them stops working.</li>
-    <li><b>Force reset the moment somebody leaves</b> &mdash; or better, press &#10005; on
-      their row on the Users tab: sign-in, catalog access and ordering all end at once, and
-      no account is left to forget about.</li>
-    <li><b>Give access to groups, not people.</b> Vendor reach, tabs and budgets set on a
-      group cover everyone in it and cascade into groups inside it; a person&#39;s own row
-      is only for exceptions.</li>
-    <li><b>Keep your own way back in.</b> <code>BOOTSTRAP_EMAIL</code> and
-      <code>BOOTSTRAP_PASSWORD</code> on the service&#39;s Environment page in Render always
-      sign in as an administrator &mdash; your answer to a forgotten admin password. Change
-      them there whenever you like.</li>
+    <li><b>Build the catalog.</b> On the <b>Catalog Builder</b> tab, drop each vendor&#39;s
+      file in &mdash; or give the source a feed (API, SFTP or email) and it refreshes itself.
+      Email feeds read the inbox saved in the <b>Mailbox for email feeds</b> box at the bottom
+      of that tab &mdash; any owner&#39;s account, kept in this app&#39;s own database, no
+      Render settings needed.
+      Match the columns it could not guess, use <b>ETL steps</b> for computed columns
+      (Promo Cost = RegularCost &minus; Discount), and photos copy themselves onto this app
+      as they arrive. Then press <b>Build the catalog</b>.</li>
+    <li><b>Load your locations.</b> On <b>Manage Users</b>, in <b>Locations &amp; owners</b>:
+      <b>Download the schema</b> (GroupID, Group, LocationID, LocationName,
+      LocationManagersName, LocationEmail, GroupManagersName, GroupEmail &mdash; a Domo
+      StoreMapping export loads as-is), upload your file, match column to column, and fix
+      any line in place. The order form reads this list, and the owners&#39; emails ride on
+      every order from their location or group.</li>
+    <li><b>Set the accesses.</b> Loading locations creates the sign-ins by itself &mdash;
+      every location owner and group owner appears on the Users and Passwords tabs the
+      moment the list lands. Then give access to <b>groups, not people</b>: vendor reach,
+      tabs, order rights and budgets set on a group cover everyone in it and cascade into
+      groups inside it. A person&#39;s own row is only for exceptions.</li>
+    <li><b>Set the passwords.</b> The <b>Manage Passwords</b> tab is already filled with
+      those same location users; anyone showing <i>never set</i> cannot sign in. Set each
+      password, leave <b>&quot;must change&quot; ticked</b> so they pick their own on first
+      sign-in, and send everyone to one address: <code>/login</code> on this site.</li>
   </ol>
+  <p style="margin-top:8px"><b>When somebody leaves:</b> force-reset their password, or press
+    &#10005; on their row on Manage Users &mdash; sign-in, catalog access and ordering all end
+    at once. <b>Your own way back in:</b> <code>BOOTSTRAP_EMAIL</code> and
+    <code>BOOTSTRAP_PASSWORD</code> on the service&#39;s Environment page in Render always
+    sign in as an administrator.</p>
   <div class="note"><b>Two locks live outside this page,</b> both on the Environment page in
     Render: <code>SESSION_SECRET</code> (any long random string, so sessions survive a
     redeploy and only your server can mint them) and the <code>SMTP_*</code> +
@@ -1480,49 +1931,38 @@ SIGNOUT_BLOCK = b"""
 </script>
 <script id="cat-clear-topright">
 (function(){
-  // The identity strip (#whoAmI, fixed to the top-right by the page) was
-  // sitting on top of the cart button and whatever else lives in that corner.
-  // Rather than hand-edit the big catalog page, measure at load: if the strip
-  // covers any control in the top-right, slide the strip down until it clears
-  // the lowest of them. Runs again on resize; leaves the phone layout alone
-  // (the page's own media query already relocates the strip there).
-  function clearTopRight(){
+  // The identity strip (#whoAmI) used to float fixed at the top-right, where
+  // it overlapped the toolbar card and the cart. Its real home is the tab bar:
+  // docked at the right end it reads like the Domo nav (name - role - sign out),
+  // rides along on every view, and can never sit on top of anything.
+  function dock(){
     var who = document.getElementById('whoAmI');
     if (!who) return false;
-    var cs = getComputedStyle(who);
-    if (cs.position !== 'fixed' || cs.display === 'none') return true;
-    who.style.top = '';                       // re-measure from the stylesheet position
-    var wr = who.getBoundingClientRect();
-    if (!wr.width || wr.top > 160) return true;   // hidden, or already moved by the page
-    var zoneRight = Math.max(360, wr.width + 80); // how far in from the right edge to look
-    var cands = document.querySelectorAll('button, a, [role="button"], [id^="qc"]');
-    var maxBottom = 0, hit = false;
-    for (var i = 0; i < cands.length; i++){
-      var el = cands[i];
-      if (el === who || who.contains(el)) continue;
-      var r = el.getBoundingClientRect();
-      if (!r.width || !r.height) continue;          // not rendered
-      if (r.top >= 160) continue;                   // not in the top strip
-      if (r.right < innerWidth - zoneRight) continue;   // not in the corner
-      if (r.width > innerWidth / 2) continue;       // a whole bar, not a control
-      if (r.bottom > maxBottom) maxBottom = r.bottom;
-      if (r.left < wr.right + 8 && r.right > wr.left - 8 &&
-          r.top < wr.bottom + 8 && r.bottom > wr.top - 8) hit = true;
+    var bar = document.getElementById('__dtabs');
+    if (!bar){
+      // No desktop bar (real phone layouts pin sign-out themselves) - just make
+      // sure the strip never covers the mobile tab bar.
+      return true;
     }
-    if (hit) who.style.top = Math.round(maxBottom + 10) + 'px';
+    if (who.parentNode !== bar) bar.appendChild(who);
+    who.style.setProperty('position','static','important');
+    who.style.setProperty('top','auto','important');
+    who.style.setProperty('right','auto','important');
+    who.style.setProperty('z-index','auto','important');
+    who.style.setProperty('margin','0 2px 0 8px','important');
+    who.style.setProperty('padding','0 0 0 10px','important');
+    who.style.setProperty('background','transparent','important');
+    who.style.setProperty('box-shadow','none','important');
+    who.style.setProperty('border-left','1px solid rgba(255,255,255,.25)','important');
     return true;
   }
-  // The strip and the cart button are both drawn by scripts after load, so
-  // keep trying briefly rather than assuming they are there on the first look.
   var tries = 0;
-  var timer = setInterval(function(){
-    if ((clearTopRight() && tries > 14) || ++tries > 30) clearInterval(timer);
-  }, 400);
-  window.addEventListener('load', clearTopRight);
-  var rz;
-  window.addEventListener('resize', function(){
-    clearTimeout(rz); rz = setTimeout(clearTopRight, 150);
-  });
+  var t = setInterval(function(){ if (dock() && document.getElementById('whoAmI') || ++tries > 60) clearInterval(t); }, 400);
+  if (window.MutationObserver){
+    new MutationObserver(function(){ dock(); })
+      .observe(document.documentElement, {childList: true, subtree: true});
+  }
+  window.addEventListener('resize', dock);
 })();
 </script>
 """
@@ -1606,6 +2046,8 @@ def _tabs_block(sc: dict) -> bytes:
     into the page as literal values, no extra request from the browser."""
     pr = dict(_PERM_DEFAULT)
     pr.update(_clean_perms((sc or {}).get("perms") or {}))
+    if (sc or {}).get("all"):
+        pr.update(approver=True, purchasing=True, vendorpage=True, stats=True)
     allowed = []
     if pr.get("catalog", True):
         allowed.append("catalog")
@@ -1613,18 +2055,27 @@ def _tabs_block(sc: dict) -> bytes:
         allowed.append("order")
     if _PENDING_LEVELS.get(str(pr.get("pending", "delete")).lower(), 3) >= 1:
         allowed.append("pending")
-    if len(allowed) >= 3:
-        return b""
+    if pr.get("approver"):
+        allowed.append("approver")
+    if pr.get("purchasing"):
+        allowed.append("purchasing")
+    if pr.get("vendorpage"):
+        allowed.append("vendorpage")
+    if pr.get("stats"):
+        allowed.append("stats")
+    if _scope_administers(sc or {}):
+        allowed.append("setup")
     js = ("<script>(function(){var A=" + json.dumps(allowed) + ";"
           "function fix(){['__dtabs','__mtabs'].forEach(function(id){"
           "var bar=document.getElementById(id);if(!bar)return;"
           "bar.querySelectorAll('button[data-v]').forEach(function(b){"
-          "if(A.indexOf(b.getAttribute('data-v'))<0)b.style.display='none';});});}"
+          "b.style.display=(A.indexOf(b.getAttribute('data-v'))<0)?'none':'';});});}"
           "var n=0;var t=setInterval(function(){fix();if(++n>25)clearInterval(t);},400);"
           "setTimeout(function(){try{if(window.__showView&&A.length&&A.indexOf('catalog')<0)"
           "window.__showView(A[0]);}catch(e){}},2600);"
           "})();</script>")
     return js.encode()
+
 
 
 def _with_admin_launcher(body: bytes, may_administer: bool = False, sc: dict | None = None) -> bytes:
@@ -1673,7 +2124,7 @@ async def home(request: Request):
     # A vendor rep signs in through the same link as everyone else but their
     # page is the editor, not the store catalog. Server-decided, like the
     # Admin button: the browser is never asked to hide anything.
-    if str(sc.get("role") or "") == "vendor" and not sc.get("all"):
+    if str(sc.get("role") or "").lower() == "vendor" and not sc.get("all"):
         return RedirectResponse("/vendor", status_code=302)
     page = _page_file()
     if not page:
@@ -1684,7 +2135,7 @@ async def home(request: Request):
             status_code=404, media_type="text/html")
     with open(page, "rb") as fh:
         body = fh.read()
-    return Response(_with_admin_launcher(body, _scope_administers(sc), sc),
+    return Response(_pwa_inject(_with_admin_launcher(body, _scope_administers(sc), sc)),
                     media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
@@ -1704,7 +2155,7 @@ async def home_alias(request: Request):
 async def vendor_page(request: Request):
     sc = await _me_scope(request)
     role = str(sc.get("role") or "")
-    if role != "vendor" and not _scope_administers(sc):
+    if str(role).lower() != "vendor" and not _scope_administers(sc):
         return RedirectResponse("/", status_code=302)
     try:
         with open("static/vendor.html", "rb") as fh:
@@ -1713,7 +2164,34 @@ async def vendor_page(request: Request):
         return Response("<h1>Vendor editor not installed</h1><p>Upload "
                         "<code>vendor.html</code> to the static folder.</p>",
                         status_code=500, media_type="text/html")
-    return Response(body, media_type="text/html",
+    email = ""
+    try:
+        _w = await _whoami(request)
+        email = str((_w or {}).get("email") or "")
+    except Exception:
+        email = ""
+    label = ""
+    try:
+        p = _person(email)
+        if p is not None:
+            label = str(p["user_label"] or "")
+    except Exception:
+        label = ""
+    lock = ""
+    try:
+        if not sc.get("all") and not sc.get("vendors_all", True):
+            vs = [str(v).strip() for v in (sc.get("vendors") or []) if str(v).strip()]
+            lock = "||".join(vs)
+    except Exception:
+        lock = ""
+    inj = ('<script id="cat-user">window.__CAT_USER=%s;window.__CAT_LOCKVENDOR=%s;</script>'
+           % (json.dumps({"name": label, "email": email}),
+              json.dumps(lock))).encode()
+    if b"</head>" in body:
+        body = body.replace(b"</head>", inj + b"</head>", 1)
+    else:
+        body = inj + body
+    return Response(_pwa_inject(body), media_type="text/html",
                     headers={"Cache-Control": "no-cache"})
 
 
@@ -1916,6 +2394,9 @@ async def brand_manifest():
 _BDB = {"engine": None}
 
 
+_BDF_CACHE: dict = {}   # customer -> ((table, built_at, rows), DataFrame)
+
+
 def _builder_engine():
     url = os.environ.get("CATALOG_DATABASE_URL", "").strip()
     if not url:
@@ -2013,6 +2494,31 @@ def _builder_migrate(engine):
                 freight_min_by_brand text default '',
                 freight_qty_or_cost text default '',
                 primary key (customer, vendor))""",
+        """create table if not exists cat_locations(
+                customer text not null,
+                group_id text default '',
+                group_name text default '',
+                loc_num text not null,
+                loc_name text default '',
+                loc_owner_name text default '',
+                loc_owner_email text default '',
+                loc_email text default '',
+                group_owner_name text default '',
+                group_owner_email text default '',
+                pd_email text default '',
+                owner2_email text default '',
+                group_owner2_email text default '',
+                primary key (customer, group_id, loc_num))""",
+        """create table if not exists cat_images(
+                iid text primary key,
+                customer text not null,
+                url text not null,
+                ctype text default 'image/jpeg',
+                body bytea,
+                size integer default 0,
+                rev integer default 1,
+                fetched_at timestamp default current_timestamp)""",
+        "alter table cat_images add column if not exists rev integer default 1",
         # upgrades for stores created before these columns existed
         "alter table cat_sources add column if not exists feed text default '{}'",
         "alter table cat_sources add column if not exists feed_status text default '{}'",
@@ -2039,7 +2545,11 @@ BUILDER_FIELDS = [
     ("ItemName",     True,  "Product name on the card"),
     ("Vendor",       True,  "Who supplies it — filled from the label below if the file has no column"),
     ("RegularCost",  True,  "List cost"),
-    ("Price",        False, "Promotional cost, where there is one"),
+    # The store always displays the LESSER of RegularCost and this promo, and
+    # never a blank: no promo simply means the regular price shows. Most
+    # vendors leave it empty outside a sale — that is the normal state.
+    ("Price",        False, "Promo Cost — the store shows the lesser of Regular and Promo; "
+                            "blank just means no sale"),
     ("ItemImage2",   False, "Image URL the card shows"),
     ("Brand",        False, ""), ("Category", False, ""), ("SubCategory", False, ""),
     ("Collection",   False, ""), ("Color", False, ""),
@@ -2239,10 +2749,12 @@ async def builder_upload(request: Request):
     mapping = _builder_automap(df.columns)
     from sqlalchemy import text
     with eng.begin() as c:
+        # every vendor added hosts (and shrinks) its photos from the start
         c.execute(text("insert into cat_sources(id,customer,name,filename,vendor_label,"
-                       "table_name,mapping,row_count) values(:i,:c,:n,:f,:v,:t,:m,:r)"),
-                  {"i": sid, "c": cust, "n": filename.rsplit(".", 1)[0][:80], "f": filename[:120],
-                   "v": vendor[:80], "t": table, "m": json.dumps(mapping), "r": int(len(df))})
+                       "table_name,mapping,row_count,feed) values(:i,:c,:n,:f,:v,:t,:m,:r,:fd)"),
+                  {"i": sid, "c": cust, "n": (vendor or filename.rsplit(".", 1)[0])[:80], "f": filename[:120],
+                   "v": vendor[:80], "t": table, "m": json.dumps(mapping), "r": int(len(df)),
+                   "fd": json.dumps({"type": "manual", "photos_on": True})})
     return {"ok": True, "id": sid, "rows": int(len(df)),
             "mapped": len(mapping), "missing": _builder_missing(mapping, vendor)}
 
@@ -2265,6 +2777,8 @@ async def builder_map(request: Request):
             vals["mapping"] = json.dumps(m)
         if "vendor" in (body or {}):
             vals["vendor_label"] = str((body or {}).get("vendor") or "")[:80]
+            if vals["vendor_label"]:
+                vals["name"] = vals["vendor_label"]   # the line is titled by the vendor you enter
         if vals:
             sets = ", ".join(f"{k}=:{k}" for k in vals)
             vals.update({"i": sid, "c": cust})
@@ -2317,6 +2831,212 @@ async def builder_preview(request: Request, id: str = ""):
     return {"columns": list(out.columns), "rows": json.loads(out.to_json(orient="records"))}
 
 
+# Every schema field has a type, and the build converts to it: text is
+# trimmed, decimals come out as 1234.50 (currency signs and commas cleaned
+# off), whole numbers as plain integers. A blank stays blank — except
+# DisplayOrder, where blank means "sort last": 99999.
+_BTYPES = {
+    "ModelNum": ("text", ""), "ItemName": ("text", ""), "Vendor": ("text", ""),
+    "RegularCost": ("decimal", ""), "Price": ("decimal", ""),
+    "ItemImage2": ("text", ""), "Brand": ("text", ""), "Category": ("text", ""),
+    "SubCategory": ("text", ""), "Collection": ("text", ""), "Color": ("text", ""),
+    "DisplayOrder": ("integer", "99999"), "QtyAvailable": ("integer", ""),
+}
+
+
+def _btype_convert(series, kind, blank):
+    """One built column to its schema type. 'nan'/'None'/'null' strings (an
+    API frame's empties after astype(str)) count as blank."""
+    import pandas as pd
+    s = series.astype(str).str.strip()
+    s = s.mask(s.str.lower().isin(("nan", "none", "null")), "")
+    if kind == "decimal":
+        n = pd.to_numeric(s.str.replace(r"[^0-9.\-]", "", regex=True), errors="coerce")
+        s = n.map(lambda v: "" if pd.isna(v) else ("%.2f" % v))
+    elif kind == "integer":
+        n = pd.to_numeric(s.str.replace(r"[^0-9.\-]", "", regex=True), errors="coerce")
+        s = n.map(lambda v: "" if pd.isna(v) else str(int(round(v))))
+    if blank:
+        s = s.mask(s == "", blank)
+    return s
+
+
+def _builder_apply_etl(df, steps):
+    """The small ETL area: a few named computed columns per source, the same
+    math the Domo ETL does — Promo = Regular minus the discount, and friends.
+    A step's b side is a column when one matches, otherwise a plain number."""
+    import pandas as pd
+
+    def numcol(x):
+        x = str(x or "").strip()
+        if not x:
+            return None
+        if x in df.columns:
+            return pd.to_numeric(df[x].astype(str).str.replace(r"[^0-9.\-]", "", regex=True),
+                                 errors="coerce")
+        try:
+            return float(x)
+        except Exception:
+            return None
+    for st in (steps or [])[:12]:
+        if not isinstance(st, dict):
+            continue
+        out = str(st.get("out") or "").strip()
+        op = str(st.get("op") or "").strip()
+        if op == "fill_blank":
+            # if blank -> B: keeps A's value, fills the empties (and the
+            # 'nan' strings an API frame leaves) with a column or a constant
+            av = str(st.get("a") or "").strip()
+            bv = str(st.get("b") or "").strip()
+            if not out or av not in df.columns:
+                continue
+            araw = df[av].astype(str).str.strip()
+            araw = araw.mask(araw.str.lower().isin(("nan", "none", "null")), "")
+            if bv in df.columns:
+                braw = df[bv].astype(str).str.strip()
+                df[out] = araw.mask(araw == "", braw)
+            else:
+                df[out] = araw.mask(araw == "", bv)
+            continue
+        A = numcol(st.get("a"))
+        B = numcol(st.get("b"))
+        if not out or A is None or B is None:
+            continue
+        if op == "subtract":
+            R = A - B
+        elif op == "percent_off":
+            R = A * (1 - B / 100.0)
+        elif op == "add":
+            R = A + B
+        elif op == "multiply":
+            R = A * B
+        else:
+            continue
+        R = R.round(2)
+        # Discount math semantics: no discount means no promo — the cell stays
+        # blank instead of repeating the regular price.
+        if op in ("subtract", "percent_off") and hasattr(B, "where"):
+            R = R.where(B.fillna(0) > 0)
+        R = R.where(R.notna() & (R > 0))
+        df[out] = R.map(lambda v: "" if pd.isna(v) else ("%.2f" % v))
+    return df
+
+
+def _photo_shrink(raw: bytes, ctype: str):
+    """A catalog card needs ~800px, not a vendor's multi-megabyte original.
+    Downscale and re-encode; keep whichever is smaller. Anything Pillow cannot
+    read (or an animated gif) is stored exactly as it came."""
+    try:
+        from PIL import Image
+        import io as _io
+        if "gif" in (ctype or "").lower():
+            return raw, ctype
+        im = Image.open(_io.BytesIO(raw))
+        if getattr(im, "is_animated", False):
+            return raw, ctype
+        im.load()
+        w, h = im.size
+        if max(w, h) > 800:
+            im.thumbnail((800, 800), Image.LANCZOS)
+        buf = _io.BytesIO()
+        has_alpha = (im.mode in ("RGBA", "LA", "P") and "transparency" in im.info) or                     im.mode == "RGBA" and im.getextrema()[3][0] < 255
+        if has_alpha:
+            im.save(buf, format="PNG", optimize=True)
+            out, oct_ = buf.getvalue(), "image/png"
+        else:
+            if im.mode not in ("RGB", "L"):
+                im = im.convert("RGB")
+            im.save(buf, format="JPEG", quality=82, optimize=True, progressive=True)
+            out, oct_ = buf.getvalue(), "image/jpeg"
+        if len(out) < len(raw):
+            return out, oct_
+        return raw, ctype
+    except Exception:
+        return raw, ctype
+
+
+def _photos_iid(url: str) -> str:
+    return hashlib.sha1(str(url).strip().encode("utf-8", "replace")).hexdigest()[:24]
+
+
+def _photos_mirror(eng, cust: str, row, progress=None, redo=False) -> str:
+    """Pull every photo the source's image column names and keep a copy in
+    this app's own database, so the catalog serves them from Render instead
+    of leaning on the vendor's links. Returns a one-line summary."""
+    import pandas as pd
+    from sqlalchemy import text
+    cfg = _feed_of(row)
+    df = pd.read_sql_table(row["table_name"], eng)
+    try:
+        m = json.loads(row["mapping"] or "{}")
+    except Exception:
+        m = {}
+    col = str(cfg.get("photos_col") or "").strip() or str(m.get("ItemImage2") or "")
+    if not col or col not in df.columns:
+        low = {str(c).lower(): str(c) for c in df.columns}
+        col = next((low[c] for c in low
+                    if "image" in c or "photo" in c or "picture" in c), "")
+    if not col:
+        raise ValueError("No image-URL column found — pick one on the card.")
+    urls = [u for u in df[col].astype(str).str.strip().unique().tolist()
+            if u.lower().startswith(("http://", "https://"))]
+    if not urls:
+        return ("no web photo links in this source", 0, 0)
+    have = set()
+    from sqlalchemy import bindparam
+    with eng.connect() as c:
+        for i in range(0, len(urls), 500):
+            batch = [_photos_iid(u) for u in urls[i:i + 500]]
+            q = text("select iid from cat_images where customer=:c and iid in :ids") \
+                .bindparams(bindparam("ids", expanding=True))
+            rs = c.execute(q, {"c": cust, "ids": batch}).all()
+            have.update(r[0] for r in rs)
+    todo = ([u for u in urls] if redo else [u for u in urls if _photos_iid(u) not in have])[:4000]
+    got, bad = 0, 0
+    if todo:
+        tmo = httpx.Timeout(25.0, connect=10.0)
+        with httpx.Client(timeout=tmo, follow_redirects=True) as cl:
+            for i, u in enumerate(todo, 1):
+                try:
+                    r = cl.get(u)
+                    ct = r.headers.get("content-type", "").split(";")[0].strip().lower()
+                    okc = r.status_code == 200 and len(r.content) and                         len(r.content) <= 3 * 1024 * 1024 and                         (ct.startswith("image/") or u.lower().split("?")[0]
+                         .endswith((".jpg", ".jpeg", ".png", ".gif", ".webp")))
+                    if okc:
+                        if not ct.startswith("image/"):
+                            ct = "image/jpeg"
+                        body2, ct2 = _photo_shrink(r.content, ct)
+                        iid2 = _photos_iid(u)
+                        with eng.begin() as c:
+                            if redo or iid2 in have:
+                                c.execute(text("update cat_images set body=:b, ctype=:t, size=:s, "
+                                               "rev=coalesce(rev,1)+1 where iid=:i and customer=:c"),
+                                          {"b": body2, "t": ct2[:60], "s": len(body2),
+                                           "i": iid2, "c": cust})
+                                if c.execute(text("select 1 from cat_images where iid=:i and customer=:c"),
+                                             {"i": iid2, "c": cust}).first() is None:
+                                    c.execute(text("insert into cat_images(iid,customer,url,ctype,body,size,rev) "
+                                                   "values(:i,:c,:u,:t,:b,:s,1)"),
+                                              {"i": iid2, "c": cust, "u": u[:900],
+                                               "t": ct2[:60], "b": body2, "s": len(body2)})
+                            else:
+                                c.execute(text("insert into cat_images(iid,customer,url,ctype,body,size,rev) "
+                                               "values(:i,:c,:u,:t,:b,:s,1)"),
+                                          {"i": iid2, "c": cust, "u": u[:900],
+                                           "t": ct2[:60], "b": body2, "s": len(body2)})
+                        got += 1
+                    else:
+                        bad += 1
+                except Exception:
+                    bad += 1
+                if progress and (i % 25 == 0 or i == len(todo)):
+                    progress(i, got, f"photos ({len(todo)} to fetch)")
+                time.sleep(0.15)
+    hosted_now = len(have) + got
+    return (f"photos: {hosted_now} of {len(urls)} hosted" +
+            (f", {bad} failed" if bad else ""), len(urls), hosted_now)
+
+
 def _builder_do_build(eng, cust: str):
     """Append every ready source into one catalog table. Raises ValueError with
     a human sentence when it cannot. Keeps the current serving switch."""
@@ -2341,23 +3061,69 @@ def _builder_do_build(eng, cust: str):
         raise ValueError("Not built — these sources still have required fields with no "
                          "column: " + " · ".join(blocked[:4]))
     frames, per = [], []
+    photo_have = None
     for r in srcs:
         df = pd.read_sql_table(r["table_name"], eng)
+        fd = _feed_of(r)
+        if fd.get("etl"):
+            df = _builder_apply_etl(df, fd.get("etl"))
         m = json.loads(r["mapping"] or "{}")
         out = pd.DataFrame()
+        norms = {}
+        for c0 in df.columns:
+            norms.setdefault(_bnorm(c0), str(c0))
+        _fall = {"Price": ("promocost", "promo", "promoprice", "saleprice", "salecost"),
+                 "QtyAvailable": ("qtyavailable", "qtyavail")}
         for name, _req, _h in BUILDER_FIELDS:
             src = m.get(name)
             if src and src in df.columns:
                 out[name] = df[src].astype(str)
+                continue
+            # an ETL step may write its column under the canonical name or a
+            # recognisable one ("Promo Cost", "Sale Price") — it flows into
+            # the build without extra mapping
+            picked = ""
+            for cn in (_bnorm(name),) + _fall.get(name, ()):
+                if cn in norms:
+                    picked = norms[cn]
+                    break
+            if picked:
+                out[name] = df[picked].astype(str)
             elif name == "Vendor" and r["vendor_label"]:
                 out[name] = r["vendor_label"]
             else:
                 out[name] = ""
+        for name, _req, _h in BUILDER_FIELDS:
+            kind, blank = _BTYPES.get(name, ("text", ""))
+            out[name] = _btype_convert(out[name], kind, blank)
         out = out[out["ModelNum"].astype(str).str.strip() != ""]
+        # A source named at upload time ("VENDOR 1") adopts the real vendor the
+        # moment its rows show exactly one — the line reads like the catalog.
+        if not str(r["vendor_label"] or "").strip():
+            uniq = [v for v in out["Vendor"].astype(str).str.strip().unique() if v]
+            if len(uniq) == 1:
+                with eng.begin() as c2:
+                    c2.execute(text("update cat_sources set vendor_label=:v, name=:v "
+                                    "where id=:i and customer=:c"),
+                               {"v": uniq[0][:80], "i": r["id"], "c": cust})
+        if fd.get("photos_on"):
+            if photo_have is None:
+                with eng.connect() as c2r:
+                    photo_have = {x[0]: int(x[1] or 1) for x in c2r.execute(
+                        text("select iid, rev from cat_images where customer=:c"),
+                        {"c": cust}).all()}
+            def _loc(u):
+                u = str(u or "").strip()
+                if u.lower().startswith(("http://", "https://")):
+                    i2 = _photos_iid(u)
+                    rv = photo_have.get(i2)
+                    if rv:
+                        return "/api/images/" + i2 + ("" if rv <= 1 else "?r=%d" % rv)
+                return u
+            out["ItemImage2"] = out["ItemImage2"].map(_loc)
         frames.append(out)
         per.append({"source": r["name"], "rows": int(len(out))})
     allf = pd.concat(frames, ignore_index=True)
-    allf = _builder_apply_edits(eng, cust, allf)
     table = f"built_{cust}"
     allf.to_sql(table, eng, if_exists="replace", index=False, chunksize=2000)
     with eng.begin() as c:
@@ -2365,83 +3131,6 @@ def _builder_do_build(eng, cust: str):
         c.execute(text("insert into cat_built(customer,table_name,row_count,serving) "
                        "values(:c,:t,:r,true)"), {"c": cust, "t": table, "r": int(len(allf))})
     return int(len(allf)), per
-
-
-def _builder_apply_edits(eng, cust: str, allf):
-    """Vendor Edit changes folded into the catalog at build time: promo prices
-    land in Price, qty/order/image/name overrides apply, packages (EditType
-    ADD) append as their own catalog rows. Latest edit per vendor+model wins;
-    an expired promo simply stops applying."""
-    import datetime as _dt
-    import pandas as pd
-    from sqlalchemy import text
-    try:
-        with eng.connect() as c:
-            rows = c.execute(text("select content from cat_orders where customer=:c and "
-                                  "lower(coll) like '%catalogedit%' order by created_at"),
-                             {"c": cust}).all()
-    except Exception:
-        return allf
-    if not rows:
-        return allf
-    today = _dt.date.today().isoformat()
-    latest = {}
-    for (content,) in rows:
-        try:
-            d = json.loads(content or "{}")
-        except Exception:
-            continue
-        if d.get("_deleted"):
-            continue
-        key = (str(d.get("Vendor") or "").strip().upper(),
-               str(d.get("ModelNum") or "").strip().upper())
-        if not key[1]:
-            continue
-        prev = latest.get(key)
-        if prev is None or str(d.get("EditedAt") or "") >= str(prev.get("EditedAt") or ""):
-            latest[key] = d
-    if not latest:
-        return allf
-    cols = set(allf.columns)
-    mu = allf["ModelNum"].astype(str).str.strip().str.upper()
-    vu = allf["Vendor"].astype(str).str.strip().str.upper() if "Vendor" in cols else None
-    adds = []
-    for (ven, mod), d in latest.items():
-        exp = str(d.get("ExpirationDate") or "").strip()
-        expired = bool(exp) and exp[:10] < today
-        mask = (mu == mod)
-        if vu is not None and ven:
-            mask = mask & (vu == ven)
-        pc = str(d.get("PromoCost") or "").strip()
-        if str(d.get("EditType") or "").upper() == "ADD":
-            if expired or mask.any():
-                continue
-            row = {c2: "" for c2 in allf.columns}
-            for k in ("Vendor", "ModelNum", "ItemName", "RegularCost", "ItemImage2",
-                      "DisplayOrder", "Collection", "Brand", "Category"):
-                if k in row and str(d.get(k) or "").strip():
-                    row[k] = str(d.get(k)).strip()
-            q = str(d.get("QTYAvailable") or d.get("QtyAvailable") or "").strip()
-            if q and "QtyAvailable" in row:
-                row["QtyAvailable"] = q
-            if "Price" in row and pc:
-                row["Price"] = pc
-            adds.append(row)
-            continue
-        if not mask.any():
-            continue
-        if pc and not expired and "Price" in cols:
-            allf.loc[mask, "Price"] = pc
-        q = str(d.get("QTYAvailable") or d.get("QtyAvailable") or "").strip()
-        if q and "QtyAvailable" in cols:
-            allf.loc[mask, "QtyAvailable"] = q
-        for k in ("DisplayOrder", "ItemImage2", "ItemName"):
-            v = str(d.get(k) or "").strip()
-            if v and k in cols:
-                allf.loc[mask, k] = v
-    if adds:
-        allf = pd.concat([allf, pd.DataFrame(adds)], ignore_index=True)
-    return allf
 
 
 @app.post("/api/admin/builder/build")
@@ -2506,7 +3195,15 @@ async def _builder_rows_local(ident: str, request: Request):
                               {"c": cust}).mappings().first()
         if not built:
             return None
-        df = pd.read_sql_table(built["table_name"], eng)
+        _ck = (str(built["table_name"]), str(built["built_at"]), int(built["row_count"] or 0))
+        _hit = _BDF_CACHE.get(cust)
+        if _hit is not None and _hit[0] == _ck:
+            df = _hit[1]
+        else:
+            df = pd.read_sql_table(built["table_name"], eng)
+            _BDF_CACHE[cust] = (_ck, df)
+            if len(_BDF_CACHE) > 20:
+                _BDF_CACHE.pop(next(iter(_BDF_CACHE)))
         # Access still means something here: a person whose reach is a set of
         # vendors sees exactly those vendors of the built catalog — and "all
         # except these" stays durable as new vendors arrive.
@@ -2524,19 +3221,26 @@ async def _builder_rows_local(ident: str, request: Request):
             by_norm = {}
             for c in df.columns:
                 by_norm.setdefault(_bnorm(c), c)
-            # The built schema stores the promo as "Price"; older pages ask for
-            # "PromoCost". Serve the stored column under the asked-for name.
-            if "promocost" not in by_norm and "price" in by_norm:
-                by_norm["promocost"] = by_norm["price"]
-            have, names = [], {}
+            # The storefront asks in dataset names (PromoCost, QTYAvailable);
+            # the built table keeps canonical ones (Price, QtyAvailable).
+            # Answer in the names the caller asked with, so promos and stock
+            # from builder-fed vendors reach the page.
+            alias = {"promocost": ("price", "promo", "promoprice", "saleprice", "salecost"),
+                     "qtyavailable": ("qty", "qtyavail", "stock", "instock", "quantityavailable")}
+            sel = []
             for w in want:
-                key = _bnorm(w)
-                col = by_norm.get(key)
-                if col and col not in have:
-                    have.append(col)
-                    names[col] = w      # answer in the spelling the page asked with
-            if have:
-                df = df[have].rename(columns=names)
+                n = _bnorm(w)
+                col = by_norm.get(n)
+                if col is None:
+                    for al in alias.get(n, ()):
+                        if al in by_norm:
+                            col = by_norm[al]
+                            break
+                if col is not None and all(col != c2 for _, c2 in sel):
+                    sel.append((w, col))
+            if sel:
+                df = df[[c2 for _, c2 in sel]]
+                df.columns = [w for w, _ in sel]
                 if params.get("groupby"):
                     df = df.drop_duplicates()
         try:
@@ -2544,7 +3248,8 @@ async def _builder_rows_local(ident: str, request: Request):
         except Exception:
             lim = 100000
         df = df.head(lim)
-        return JSONResponse(json.loads(df.to_json(orient="records")))
+        recs = json.loads(df.to_json(orient="records"))
+        return JSONResponse(_absolutize_images(recs, _self_base(request)))
     except HTTPException:
         return None
     except Exception:
@@ -2637,7 +3342,8 @@ def _person(email: str):
 # and Pending orders (none / read / write / delete-anything). Nothing set
 # anywhere means everything — you limit by setting less on a group or a person.
 _PERM_DEFAULT = {"catalog": True, "order": True, "pending": "delete",
-                 "approver": False, "purchasing": False, "vendorpage": False}
+                 "approver": False, "purchasing": False, "vendorpage": False,
+                 "stats": False}
 _PENDING_LEVELS = {"none": 0, "read": 1, "write": 2, "delete": 3}
 _ROLES = ("AUTO", "ADMIN", "PD", "DM", "STORE", "VENDOR", "NONE")
 
@@ -2649,13 +3355,14 @@ def _role_defaults(role) -> dict:
     out = dict(_PERM_DEFAULT)
     if r == "NONE":
         return {"catalog": False, "order": False, "pending": "none",
-                "approver": False, "purchasing": False, "vendorpage": False}
+                "approver": False, "purchasing": False, "vendorpage": False,
+                "stats": False}
     if r == "VENDOR":
         out.update(order=False, pending="none", vendorpage=True)
     elif r == "DM":
-        out.update(approver=True)
+        out.update(approver=True, stats=True)
     elif r == "PD":
-        out.update(approver=True, purchasing=True, vendorpage=True)
+        out.update(approver=True, purchasing=True, vendorpage=True, stats=True)
     return out
 
 
@@ -2663,7 +3370,7 @@ def _clean_perms(d) -> dict:
     out = {}
     if not isinstance(d, dict):
         return out
-    for k in ("catalog", "order", "approver", "purchasing", "vendorpage"):
+    for k in ("catalog", "order", "approver", "purchasing", "vendorpage", "stats"):
         v = d.get(k)
         if isinstance(v, bool):
             out[k] = v
@@ -2885,7 +3592,7 @@ def _person_scope(p) -> dict:
     cust = str(p["customer"] or "").strip() or _builder_only_customer()
     if _is_admin_row(p):
         pr = dict(_PERM_DEFAULT)
-        pr.update(approver=True, purchasing=True, vendorpage=True)
+        pr.update(approver=True, purchasing=True, vendorpage=True, stats=True)
         return {"all": True, "customer": cust, "vendors_all": True, "vendors": [],
                 "perms": pr, "role": "ADMIN"}
     dl, sl = _person_memberships(p)
@@ -3137,6 +3844,35 @@ async def _aux_rows_local(ident: str, request: Request):
                              "FreightMinQtyorTotalCost": r["freight_qty_or_cost"] if r else ""})
             df = pd.DataFrame(recs)
         else:
+            with eng.connect() as c:
+                locs = c.execute(text("select * from cat_locations where customer=:c "
+                                      "order by group_id, loc_num"), {"c": cust}).mappings().all()
+            if locs:
+                recs = [{"DistrictID": l["group_id"], "District": l["group_name"],
+                         "StoreNum": l["loc_num"], "StoreName": l["loc_name"],
+                         "GeneralManagersName": l["loc_owner_name"],
+                         "ManagerEmail": l["loc_owner_email"],
+                         "StoreEmail": l["loc_email"],
+                         "DistrictManager": l["group_owner_name"],
+                         "DistrictManagerEmail": l["group_owner_email"],
+                         "PurchasingDirector": l["pd_email"],
+                         "ManagerEmail2": l["owner2_email"],
+                         "DistrictManagerEmail2": l["group_owner2_email"],
+                         "RegionID": ""} for l in locs]
+                df = pd.DataFrame(recs)
+                params = dict(request.query_params)
+                want = [c.strip() for c in (params.get("groupby") or params.get("fields") or "")
+                        .split(",") if c.strip()]
+                if want:
+                    by_norm = {}
+                    for c in df.columns:
+                        by_norm.setdefault(_bnorm(c), c)
+                    have = list(dict.fromkeys(by_norm[_bnorm(w)] for w in want if _bnorm(w) in by_norm))
+                    if have:
+                        df = df[have]
+                        if params.get("groupby"):
+                            df = df.drop_duplicates()
+                return JSONResponse(json.loads(df.to_json(orient="records")))
             with eng.connect() as c:
                 ppl = c.execute(text("select * from cat_people order by group2, user_label"))\
                         .mappings().all()
@@ -3444,7 +4180,30 @@ def _feed_status_of(row) -> dict:
     return s if isinstance(s, dict) else {}
 
 
+def _mailbox_stored() -> dict:
+    """The mailbox saved on the admin page — the owner's own, so nobody's
+    personal address has to live in the Render account. Falls back to the
+    EMAIL_IMAP_* environment variables when nothing is saved."""
+    try:
+        from sqlalchemy import text
+        with _builder_engine().connect() as c:
+            row = c.execute(text("select v from cat_kv where k='mailbox'")).first()
+        d = json.loads(row[0]) if row and row[0] else {}
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
 def _email_env():
+    st = _mailbox_stored()
+    if str(st.get("host") or "").strip() and str(st.get("user") or "").strip() \
+            and str(st.get("password") or ""):
+        try:
+            port = int(st.get("port") or 993)
+        except Exception:
+            port = 993
+        return (str(st["host"]).strip(), port, str(st["user"]).strip(),
+                str(st["password"]))
     return (os.environ.get("EMAIL_IMAP_HOST", "").strip(),
             int(os.environ.get("EMAIL_IMAP_PORT", "993") or 993),
             os.environ.get("EMAIL_IMAP_USER", "").strip(),
@@ -4062,9 +4821,8 @@ def _feed_address(sid: str) -> str:
 def _feed_fetch_email(cfg: dict, sid: str = ""):
     host, port, user, pw = _email_env()
     if not (host and user and pw):
-        raise ValueError("Connect a mailbox first: on this service's Environment page in Render, "
-                         "set EMAIL_IMAP_HOST, EMAIL_IMAP_USER and EMAIL_IMAP_PASS "
-                         "(and EMAIL_IMAP_PORT if it is not 993).")
+        raise ValueError("Connect a mailbox first: fill in the 'Mailbox for email feeds' "
+                         "box at the bottom of the Catalog Builder tab and press Save.")
     frm = str(cfg.get("from_contains") or "").strip()
     subj = str(cfg.get("subject_contains") or "").strip()
     addr = _feed_address(sid)
@@ -4205,6 +4963,19 @@ def _feed_run_source(eng, row) -> dict:
             else:
                 out.update(ok=True, changed=True, sha=sha, rows=int(len(df)),
                            note=f"Pulled {fname} — {len(df)} rows.")
+        if cfg.get("photos_on") and out.get("ok") and out.get("changed"):
+            try:
+                fresh = None
+                with eng.connect() as c:
+                    fresh = c.execute(text("select * from cat_sources where id=:i"),
+                                      {"i": row["id"]}).mappings().first()
+                note2, _pt, _ph = _photos_mirror(eng, str(row["customer"]), fresh or row,
+                                                 progress=_progress)
+                out["note"] = out["note"].rstrip(".") + " · " + note2
+                out["photos_total"] = _pt
+                out["photos_hosted"] = _ph
+            except Exception as pe:
+                out["note"] = out["note"] + f" · photos failed: {str(pe)[:120]}"
         # Freight by store rides along on every successful API check — it is
         # not part of the file, so it refreshes even when the file is unchanged.
         if kind == "api" and cfg.get("frt_on") and out.get("ok"):
@@ -4395,8 +5166,28 @@ async def builder_feed_save(request: Request):
                 keep["every_hours"] = max(1, min(int(cfg.get("every_hours") or 24), 168))
             except Exception:
                 keep["every_hours"] = 24
+        # The small ETL area and the photo host ride on every feed type —
+        # manual uploads use them exactly like API pulls.
+        steps = []
+        for st in (cfg.get("etl") or [])[:12]:
+            if not isinstance(st, dict):
+                continue
+            o = str(st.get("out") or "").strip()[:60]
+            op = str(st.get("op") or "").strip()
+            av = str(st.get("a") or "").strip()[:80]
+            bv = str(st.get("b") or "").strip()[:80]
+            if o and av and op in ("subtract", "percent_off", "add", "multiply", "fill_blank"):
+                steps.append({"out": o, "op": op, "a": av, "b": bv})
+        if steps:
+            keep["etl"] = steps
+        if bool(cfg.get("photos_on")):
+            keep["photos_on"] = True
+            keep["photos_col"] = str(cfg.get("photos_col") or "").strip()[:80]
+        stored = keep if kind != "manual" else (
+            {k: keep[k] for k in ("type", "etl", "photos_on", "photos_col") if k in keep}
+            if ("etl" in keep or "photos_on" in keep) else {})
         c.execute(text("update cat_sources set feed=:f where id=:i"),
-                  {"f": json.dumps({} if kind == "manual" else keep), "i": sid})
+                  {"f": json.dumps(stored), "i": sid})
     return {"ok": True}
 
 
@@ -4428,4 +5219,6 @@ async def builder_feed_run(request: Request):
 
 # The static-file mount goes LAST: a mount at "/" catches every path, so every
 # API route above must already be registered before it.
+if _pwa_router is not None:
+    app.include_router(_pwa_router)   # before the static catch-all, or /sw.js never resolves
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

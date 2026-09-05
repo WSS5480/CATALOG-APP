@@ -2822,7 +2822,9 @@ async def builder_preview(request: Request, id: str = ""):
     out = pd.DataFrame()
     for name, _req, _h in BUILDER_FIELDS:
         src = m.get(name)
-        if src and src in df.columns:
+        if isinstance(src, str) and src.startswith("="):
+            out[name] = src[1:]              # fixed value shows in the preview too
+        elif src and src in df.columns:
             out[name] = df[src].astype(str)
         elif name == "Vendor" and row["vendor_label"]:
             out[name] = row["vendor_label"]
@@ -3076,6 +3078,9 @@ def _builder_do_build(eng, cust: str):
                  "QtyAvailable": ("qtyavailable", "qtyavail")}
         for name, _req, _h in BUILDER_FIELDS:
             src = m.get(name)
+            if isinstance(src, str) and src.startswith("="):
+                out[name] = src[1:]          # a fixed value, e.g. Brand "=Ashley"
+                continue
             if src and src in df.columns:
                 out[name] = df[src].astype(str)
                 continue
@@ -4977,7 +4982,8 @@ def _feed_run_source(eng, row) -> dict:
             except Exception:
                 m = {}
             cols = {str(c) for c in df.columns}
-            m = {k: v for k, v in m.items() if v in cols}     # drop vanished columns
+            m = {k: v for k, v in m.items()                   # drop vanished columns —
+                 if v in cols or str(v).startswith("=")}      # fixed values always keep
             for k, v in _builder_automap(df.columns).items():  # recognise new ones
                 m.setdefault(k, v)
             with eng.begin() as c:

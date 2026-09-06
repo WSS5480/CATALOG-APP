@@ -134,7 +134,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v69</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v70</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1068,6 +1068,9 @@ function drawBuilder(){
               '<select class="f" style="padding:7px 9px;font-size:13.5px"' +
               ' onchange="bldMap(\'' + esc(src.id) + '\',\'' + esc(f.name) + '\',this.value)">' +
               '<option value="">— not in this file —</option>' +
+              '<option value="__const__">✎ Fixed value…</option>' +
+              (cur && cur.charAt(0) === '=' ? '<option value="' + esc(cur) + '" selected>✎ "' +
+                esc(cur.slice(1)) + '" (fixed)</option>' : '') +
               (((src.feed || {}).etl) || []).map(st => '<option value="' + esc(st.out) + '"' +
                 (st.out === cur ? ' selected' : '') + '>' + esc(st.out) + ' · ETL</option>').join('') +
               [...src.columns].sort((a, b) => String(a).toLowerCase()
@@ -1161,6 +1164,13 @@ async function bldUpload(){
 
 async function bldMap(id, field, col){
   const src = (BLD.sources || []).find(s => s.id === id); if(!src) return;
+  if(col === '__const__'){
+    const curFx = (src.mapping[field] || '').charAt(0) === '=' ? src.mapping[field].slice(1) : '';
+    const txt = window.prompt('Fixed value for ' + field + ' — every row of this source gets ' +
+      'exactly this text (e.g. Ashley):', curFx);
+    if(txt === null || !txt.trim()){ drawBuilder(); return; }
+    col = '=' + txt.trim();
+  }
   if(col) src.mapping[field] = col; else delete src.mapping[field];
   try{
     await api('/api/admin/builder/map', {method:'POST',

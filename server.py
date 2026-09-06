@@ -2759,6 +2759,20 @@ async def builder_upload(request: Request):
             "mapped": len(mapping), "missing": _builder_missing(mapping, vendor)}
 
 
+def _rebuild_later(cust: str):
+    """Rebuild the served catalog in the background — so a mapping pick, a
+    fixed value, or a deleted source shows on the storefront by itself,
+    without anyone pressing ⚒ Build."""
+    import threading
+
+    def _run():
+        try:
+            _builder_do_build(_builder_engine(), cust)
+        except Exception:
+            pass                     # not buildable yet — the button still works
+    threading.Thread(target=_run, daemon=True).start()
+
+
 @app.post("/api/admin/builder/map")
 async def builder_map(request: Request):
     sc, cust, _label = await _builder_admin(request)
@@ -2782,9 +2796,10 @@ async def builder_map(request: Request):
         if vals:
             sets = ", ".join(f"{k}=:{k}" for k in vals)
             vals.update({"i": sid, "c": cust})
-            c.execute(text(f"update cat_sources set {sets}, updated_at=now() "
+            c.execute(text(f"update cat_sources set {sets}, updated_at=current_timestamp "
                            "where id=:i and customer=:c"), vals)
-    return {"ok": True}
+    _rebuild_later(cust)
+    return {"ok": True, "rebuilding": True}
 
 
 @app.post("/api/admin/builder/remove")
@@ -2802,7 +2817,10 @@ async def builder_remove(request: Request):
         c.execute(text("delete from cat_sources where id=:i and customer=:c"),
                   {"i": sid, "c": cust})
         c.execute(text(f'drop table if exists "{row["table_name"]}"'))
-    return {"ok": True}
+    _rebuild_later(cust)
+    return {"ok": True, "rebuilding": True,
+            "message": "Source removed — the catalog is rebuilding itself now, its "
+                       "rows disappear from the storefront in a few seconds."}
 
 
 @app.get("/api/admin/builder/preview")

@@ -3175,6 +3175,42 @@ def _builder_do_build(eng, cust: str):
         allf.loc[on_sale, "DisplayOrder"] = "0"
     except Exception:
         pass
+    # SPECIAL BUY items lead even the sales: DisplayOrder -1. They come from
+    # the vendor-edit log — latest edit per item wins, expired ones don't count.
+    try:
+        import datetime as _dt
+        today = _dt.date.today().isoformat()
+        with eng.connect() as c:
+            eds = c.execute(text("select content from cat_orders where customer=:c "
+                                 "and coll='CatalogEdits'"), {"c": cust}).all()
+        latest = {}
+        for (content,) in eds:
+            try:
+                d = json.loads(content or "{}")
+            except Exception:
+                continue
+            key = (str(d.get("Vendor") or "").strip().upper(),
+                   str(d.get("ModelNum") or "").strip().upper())
+            if not key[1]:
+                continue
+            prev2 = latest.get(key)
+            if prev2 is None or str(d.get("EditedAt") or "") >= str(prev2.get("EditedAt") or ""):
+                latest[key] = d
+        sb = set()
+        for key2, d in latest.items():
+            if str(d.get("SpecialBuy") or "").strip().upper() != "YES":
+                continue
+            exp = str(d.get("ExpirationDate") or "").strip()
+            if exp and exp[:10] < today:
+                continue
+            sb.add(key2)
+        if sb:
+            vu = allf["Vendor"].astype(str).str.strip().str.upper()
+            mu = allf["ModelNum"].astype(str).str.strip().str.upper()
+            mask = pd.Series(list(zip(vu, mu)), index=allf.index).isin(sb)
+            allf.loc[mask, "DisplayOrder"] = "-1"
+    except Exception:
+        pass
     table = f"built_{cust}"
     allf.to_sql(table, eng, if_exists="replace", index=False, chunksize=2000)
     with eng.begin() as c:

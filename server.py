@@ -3166,6 +3166,15 @@ def _builder_do_build(eng, cust: str):
         frames.append(out)
         per.append({"source": r["name"], "rows": int(len(out))})
     allf = pd.concat(frames, ignore_index=True)
+    # SALE items lead the catalog: an active promo (Price below RegularCost)
+    # forces DisplayOrder to 0, so sales always sort first in display order.
+    try:
+        pr = pd.to_numeric(allf["Price"], errors="coerce")
+        rc = pd.to_numeric(allf["RegularCost"], errors="coerce")
+        on_sale = pr.notna() & rc.notna() & (pr > 0) & (pr < rc)
+        allf.loc[on_sale, "DisplayOrder"] = "0"
+    except Exception:
+        pass
     table = f"built_{cust}"
     allf.to_sql(table, eng, if_exists="replace", index=False, chunksize=2000)
     with eng.begin() as c:

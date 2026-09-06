@@ -2810,17 +2810,32 @@ async def builder_remove(request: Request):
     from sqlalchemy import text
     eng = _builder_engine()
     with eng.begin() as c:
-        row = c.execute(text("select table_name from cat_sources where id=:i and customer=:c"),
+        row = c.execute(text("select table_name, vendor_label, name from cat_sources "
+                             "where id=:i and customer=:c"),
                         {"i": sid, "c": cust}).mappings().first()
         if not row:
             raise HTTPException(404, "No such source.")
         c.execute(text("delete from cat_sources where id=:i and customer=:c"),
                   {"i": sid, "c": cust})
         c.execute(text(f'drop table if exists "{row["table_name"]}"'))
+        # the vendor's edits (special buys, packages) leave with it — otherwise
+        # they resurrect the vendor on every rebuild
+        gone = {str(row["vendor_label"] or "").strip().upper(),
+                str(row["name"] or "").strip().upper()} - {""}
+        if gone:
+            eds = c.execute(text("select id, content from cat_orders where customer=:c "
+                                 "and coll='CatalogEdits'"), {"c": cust}).all()
+            for eid, content in eds:
+                try:
+                    ven = str((json.loads(content or "{}") or {}).get("Vendor") or "").strip().upper()
+                except Exception:
+                    continue
+                if ven in gone:
+                    c.execute(text("delete from cat_orders where id=:i"), {"i": eid})
     _rebuild_later(cust)
     return {"ok": True, "rebuilding": True,
-            "message": "Source removed — the catalog is rebuilding itself now, its "
-                       "rows disappear from the storefront in a few seconds."}
+            "message": "Source removed, its vendor edits with it — the catalog is "
+                       "rebuilding itself now; its rows disappear in a few seconds."}
 
 
 @app.get("/api/admin/builder/preview")
@@ -3067,6 +3082,10 @@ def _builder_do_build(eng, cust: str):
                          {"c": cust}).mappings().all()
     if not srcs:
         raise ValueError("No sources yet — upload at least one vendor file first.")
+    # every vendor that still legitimately exists — sources (pending included)
+    # protect their edits from the orphan sweep below
+    src_vendors = {str(r[k] or "").strip().upper()
+                   for r in srcs for k in ("vendor_label", "name")}
     srcs = [r for r in srcs
             if int(r["row_count"] or 0) > 0 or str(r["filename"] or "").strip()]
     if not srcs:
@@ -3153,6 +3172,26 @@ def _builder_do_build(eng, cust: str):
         c.execute(text("delete from cat_built where customer=:c"), {"c": cust})
         c.execute(text("insert into cat_built(customer,table_name,row_count,serving) "
                        "values(:c,:t,:r,true)"), {"c": cust, "t": table, "r": int(len(allf))})
+    # Orphan sweep: a vendor edit (special buy, package…) whose vendor no
+    # longer exists — no source card, nothing in the built rows — is a ghost
+    # that would keep resurrecting deleted vendors on the storefront. Out.
+    try:
+        keep = set(src_vendors)
+        keep |= {str(v).strip().upper() for v in allf["Vendor"].astype(str) if str(v).strip()}
+        keep.discard("")
+        with eng.connect() as c:
+            eds = c.execute(text("select id, content from cat_orders where customer=:c "
+                                 "and coll='CatalogEdits'"), {"c": cust}).all()
+        for eid, content in eds:
+            try:
+                ven = str((json.loads(content or "{}") or {}).get("Vendor") or "").strip().upper()
+            except Exception:
+                continue
+            if ven and ven not in keep:
+                with eng.begin() as c:
+                    c.execute(text("delete from cat_orders where id=:i"), {"i": eid})
+    except Exception:
+        pass
     return int(len(allf)), per
 
 

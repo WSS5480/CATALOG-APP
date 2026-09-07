@@ -4434,6 +4434,26 @@ def _atp_build_fidx(customer, shipto, duns, skus):
             f'</inquiry><items>{items}</items></fniia:inventoryInqAdv>')
 
 
+def _atp_error(advice_xml):
+    """Ashley's advice carries any service-level error in
+    inquirySystemReference (e.g. 'Security verification failed…') — the text,
+    or '' when the answer is a normal one."""
+    import xml.etree.ElementTree as ET
+    def ln(e):
+        return e.tag.split("}")[-1]
+    try:
+        root = ET.fromstring(advice_xml)
+    except Exception:
+        return ""
+    for ref in (e for e in root.iter() if ln(e) == "inquirySystemReference"):
+        kind = "".join((c.text or "") for c in ref.iter() if ln(c) == "partyIdentifier")
+        desc = "".join((c.text or "") for c in ref.iter()
+                       if ln(c) == "systemReferenceDescription")
+        if "ERROR" in kind.upper() or "fail" in desc.lower() or "invalid" in desc.lower():
+            return desc.strip() or "the quantity service reported an error"
+    return ""
+
+
 def _atp_parse_advice(advice_xml):
     """The advice document back -> one row per SKU: qty, lead time, exception."""
     import xml.etree.ElementTree as ET
@@ -4444,6 +4464,8 @@ def _atp_parse_advice(advice_xml):
     for adv in (e for e in root.iter() if ln(e) == "itemAdvice"):
         sku = next((i.get("itemNumber") for i in adv.iter()
                     if ln(i) == "itemIdentifier"), None)
+        if not sku:                      # an empty <itemAdvice/> is not an item
+            continue
         qty = lead = exc = None
         for av in (e for e in adv.iter() if ln(e) == "itemAvailability"):
             if av.get("availability") == "current":
@@ -4475,9 +4497,9 @@ def _feed_atp_join(cfg: dict, df, progress=None):
     qd = {str(k).lower(): str(v) for k, v in (cfg.get("qparams") or [])}
     url = str(cfg.get("atp_url") or "").strip() or _ATP_URL
     ext = str(cfg.get("atp_external_id") or "").strip()
-    key = str(cfg.get("atp_keycode") or "")
+    key = str(cfg.get("atp_keycode") or "").strip()      # a pasted newline = "verification failed"
     usr = str(cfg.get("atp_user") or "").strip()
-    pw = str(cfg.get("atp_password") or "")
+    pw = str(cfg.get("atp_password") or "").strip()
     customer = str(cfg.get("atp_customer") or "").strip() or qd.get("customer", "")
     shipto = str(cfg.get("atp_shipto") or "").strip() or qd.get("shipto", "")
     duns = str(cfg.get("atp_duns") or "").strip() or _ATP_DUNS
@@ -4552,6 +4574,11 @@ def _feed_atp_join(cfg: dict, df, progress=None):
             _flog(tag, f"batch 1 asked {chunk[:5]}…, answer head: "
                        f"{((res if res is not None else r.text) or '')[:700]!r}")
         if res and res.strip().startswith("<"):
+            err = _atp_error(res)
+            if err:                       # bad credentials etc. — say so, loudly
+                raise ValueError(f"The quantity service refused the request: {err} "
+                                 f"(check the ATP External ID, KeyCode, user and password "
+                                 f"on the card, then 🧪 Test quantities).")
             try:
                 got = _atp_parse_advice(res)
             except Exception as pe:
@@ -5584,9 +5611,9 @@ async def builder_feed_atptest(request: Request):
     cfg = _feed_of(row)
     qd = {str(k).lower(): str(v) for k, v in (cfg.get("qparams") or [])}
     ext = str(cfg.get("atp_external_id") or "").strip()
-    key = str(cfg.get("atp_keycode") or "")
+    key = str(cfg.get("atp_keycode") or "").strip()
     usr = str(cfg.get("atp_user") or "").strip()
-    pw = str(cfg.get("atp_password") or "")
+    pw = str(cfg.get("atp_password") or "").strip()
     if not (ext and key and usr and pw):
         raise HTTPException(400, "Fill and SAVE the ATP External ID, KeyCode, user and password first.")
     customer = str(cfg.get("atp_customer") or "").strip() or qd.get("customer", "")
@@ -5632,12 +5659,16 @@ async def builder_feed_atptest(request: Request):
     except Exception as e:
         err = f"answer is not XML: {str(e)[:100]}"
     if res and res.strip().startswith("<"):
-        try:
-            rows = _atp_parse_advice(res)
-        except Exception as e:
-            err = f"advice did not parse: {str(e)[:100]}"
-    out = {"ok": r.status_code == 200 and len(rows) == len(skus),
+        err = _atp_error(res)
+        if not err:
+            try:
+                rows = _atp_parse_advice(res)
+            except Exception as e:
+                err = f"advice did not parse: {str(e)[:100]}"
+    out = {"ok": r.status_code == 200 and not err and len(rows) == len(skus),
            "status": r.status_code, "secs": round(secs, 1), "asked": skus,
+           "sent": {"external_id": ext, "user": usr, "keycode_len": len(key),
+                    "keycode_tail": key[-4:], "password_len": len(pw)},
            "customer": customer, "shipto": shipto, "duns": duns, "url": url,
            "request_fidx": fidx[:2500],
            "answer": (res if res is not None else r.text)[:3000],

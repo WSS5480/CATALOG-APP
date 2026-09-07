@@ -134,7 +134,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v76</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v77</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1280,6 +1280,10 @@ function bldFeedBox(src){
             '" placeholder="ATP password" value="' + esc(f.atp_password || '') + '" style="max-width:150px">' +
           inp('atp-customer', 'customer (blank = from parameters)', f.atp_customer, '200px') +
           inp('atp-shipto', 'shipto (blank = from parameters)', f.atp_shipto, '180px') +
+          '<button class="btn ghost sm" onclick="bldAtpTest(this,\'' + esc(src.id) + '\')" ' +
+            'title="Asks the quantity service for 5 SKUs with the SAVED settings and shows the raw answer">' +
+            '🧪 Test quantities</button>' +
+          '<div id="fd-atptest-' + esc(src.id) + '" style="flex-basis:100%"></div>' +
           '<div style="flex-basis:100%;margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
             '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-frton-' + esc(src.id) + '"' +
             (f.frt_on ? ' checked' : '') + '> <b>Also pull freight by store</b> — the same API asked once per ' +
@@ -1526,6 +1530,31 @@ async function bldFeedRun(btn, id){
     say(e.message, 'bad');
     btn.disabled = false; btn.textContent = 'Check now';
   }
+}
+
+async function bldAtpTest(btn, id){
+  const box = $('fd-atptest-' + id);
+  btn.disabled = true; btn.textContent = 'Asking…';
+  if(box) box.innerHTML = '<span class="muted small">Asking the quantity service for 5 SKUs…</span>';
+  try{
+    const out = await api('/api/admin/builder/feed/atptest', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id})});
+    const parsed = (out.parsed || []).map(p => esc(p.sku) + ' → qty ' + esc(p.qty_available == null ? '?' : p.qty_available) +
+      (p.lead_time_days != null ? ', lead ' + esc(p.lead_time_days) + 'd' : '') +
+      (p.exception ? ' ⚠ ' + esc(p.exception) : '')).join('<br>') || '<i>nothing parsed</i>';
+    if(box) box.innerHTML =
+      '<div class="small" style="background:' + (out.ok ? '#eef8ee' : '#fff4e5') + ';border-radius:8px;padding:8px 11px;margin-top:6px">' +
+      '<b>' + (out.ok ? '✓ Quantities work' : '⚠ Answered ' + esc(out.status) + ', ' + (out.parsed||[]).length + ' of ' + (out.asked||[]).length + ' SKUs came back') + '</b>' +
+      ' — ' + esc(out.secs) + 's, customer ' + esc(out.customer) + ', shipto ' + esc(out.shipto) + ', asked: ' + esc((out.asked||[]).join(', ')) +
+      (out.error ? '<br>' + esc(out.error) : '') +
+      '<br><b>Parsed:</b><br>' + parsed +
+      '<details style="margin-top:6px"><summary>Raw answer</summary><pre style="white-space:pre-wrap;word-break:break-all;max-height:260px;overflow:auto;font-size:11px">' + esc(out.answer || '') + '</pre></details>' +
+      '<details><summary>Request sent</summary><pre style="white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto;font-size:11px">' + esc(out.request_fidx || '') + '</pre></details>' +
+      '</div>';
+  }catch(e){
+    if(box) box.innerHTML = '<span class="small" style="color:#b00020">' + esc(e.message) + '</span>';
+  }
+  btn.disabled = false; btn.textContent = '🧪 Test quantities';
 }
 
 /* ───────────────────────── start ───────────────────────── */

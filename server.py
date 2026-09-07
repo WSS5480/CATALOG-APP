@@ -4548,6 +4548,9 @@ def _feed_atp_join(cfg: dict, df, progress=None):
         except Exception:
             res = None
         got = []
+        if bi == 1:
+            _flog(tag, f"batch 1 asked {chunk[:5]}…, answer head: "
+                       f"{((res if res is not None else r.text) or '')[:700]!r}")
         if res and res.strip().startswith("<"):
             try:
                 got = _atp_parse_advice(res)
@@ -5559,6 +5562,88 @@ async def builder_feed_run(request: Request):
     return {"ok": True, "started": True,
             "message": "Checking — running in the background. A big API can take a few "
                        "minutes; the status line on the card updates when it finishes."}
+
+
+@app.post("/api/admin/builder/feed/atptest")
+async def builder_feed_atptest(request: Request):
+    """One ATP batch of a few SKUs from the saved table, with the raw request
+    and raw answer shown — so a quantity problem is read in seconds, not
+    after a full pull. Uses the card's SAVED credentials."""
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json() or {}
+    sid = str(body.get("id") or "")
+    from sqlalchemy import text
+    from xml.sax.saxutils import escape as _xesc
+    import xml.etree.ElementTree as ET
+    eng = _builder_engine()
+    with eng.connect() as c:
+        row = c.execute(text("select * from cat_sources where id=:i and customer=:c"),
+                        {"i": sid, "c": cust}).mappings().first()
+    if row is None:
+        raise HTTPException(404, "No such source.")
+    cfg = _feed_of(row)
+    qd = {str(k).lower(): str(v) for k, v in (cfg.get("qparams") or [])}
+    ext = str(cfg.get("atp_external_id") or "").strip()
+    key = str(cfg.get("atp_keycode") or "")
+    usr = str(cfg.get("atp_user") or "").strip()
+    pw = str(cfg.get("atp_password") or "")
+    if not (ext and key and usr and pw):
+        raise HTTPException(400, "Fill and SAVE the ATP External ID, KeyCode, user and password first.")
+    customer = str(cfg.get("atp_customer") or "").strip() or qd.get("customer", "")
+    shipto = str(cfg.get("atp_shipto") or "").strip() or qd.get("shipto", "")
+    duns = str(cfg.get("atp_duns") or "").strip() or _ATP_DUNS
+    url = str(cfg.get("atp_url") or "").strip() or _ATP_URL
+    skus = [str(s) for s in (body.get("skus") or []) if str(s).strip()]
+    if not skus:
+        try:
+            import pandas as pd
+            with eng.connect() as c:
+                df = pd.read_sql(text(f'select * from "{row["table_name"]}" limit 200'), c)
+            col = _feed_sku_col(df)
+            if col:
+                skus = [s for s in df[col].astype(str).str.strip().unique().tolist()
+                        if s and s.lower() != "nan"][:5]
+        except Exception:
+            skus = []
+    if not skus:
+        raise HTTPException(400, "No SKUs to test with — run the main pull once first.")
+    fidx = _atp_build_fidx(customer, shipto, duns, skus)
+    env = ('<?xml version="1.0" encoding="utf-8"?>'
+           '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+           f'<soap:Body><ATPRequest xmlns="{_ATP_NS}">'
+           f'<ExternalID>{_xesc(ext)}</ExternalID><KeyCode>{_xesc(key)}</KeyCode>'
+           f'<sUser>{_xesc(usr)}</sUser><sPassword>{_xesc(pw)}</sPassword>'
+           f'<sXml>{_xesc(fidx)}</sXml></ATPRequest></soap:Body></soap:Envelope>')
+    headers = {"Content-Type": "text/xml; charset=utf-8",
+               "SOAPAction": f'"{_ATP_NS}/ATPRequest"'}
+
+    def _call():
+        t1 = time.time()
+        with httpx.Client(timeout=120, follow_redirects=True) as cl:
+            r = cl.post(url, content=env.encode("utf-8"), headers=headers)
+        return r, time.time() - t1
+    r, secs = await asyncio.to_thread(_call)
+    res, rows, err = None, [], ""
+    try:
+        sr = ET.fromstring(r.content)
+        res = next((e.text for e in sr.iter() if e.tag.split('}')[-1] == "ATPRequestResult"), None)
+        if res is None:
+            res = next((e.text for e in sr.iter() if e.tag.split('}')[-1].endswith("Result")), None)
+    except Exception as e:
+        err = f"answer is not XML: {str(e)[:100]}"
+    if res and res.strip().startswith("<"):
+        try:
+            rows = _atp_parse_advice(res)
+        except Exception as e:
+            err = f"advice did not parse: {str(e)[:100]}"
+    out = {"ok": r.status_code == 200 and len(rows) == len(skus),
+           "status": r.status_code, "secs": round(secs, 1), "asked": skus,
+           "customer": customer, "shipto": shipto, "duns": duns, "url": url,
+           "request_fidx": fidx[:2500],
+           "answer": (res if res is not None else r.text)[:3000],
+           "parsed": rows[:20], "error": err}
+    _flog("ATP test", json.dumps(out, default=str)[:4000])
+    return out
 
 
 @app.post("/api/admin/builder/feed/stop")

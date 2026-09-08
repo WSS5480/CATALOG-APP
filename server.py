@@ -131,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "81"
+APP_VERSION = "82"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
     # The installed-app name lives in pwa_catalog.py, a file that is easy
@@ -4466,20 +4466,26 @@ def _atp_parse_advice(advice_xml):
                     if ln(i) == "itemIdentifier"), None)
         if not sku:                      # an empty <itemAdvice/> is not an item
             continue
-        qty = lead = exc = None
+        qty = lead = exc = other = None
         for av in (e for e in adv.iter() if ln(e) == "itemAvailability"):
+            q = next((x.get("value") for x in av.iter() if ln(x) == "availQty"), None)
             if av.get("availability") == "current":
-                qty = next((q.get("value") for q in av.iter()
-                            if ln(q) == "availQty"), qty)
-                ds = [e for e in av.iter() if ln(e) == "systemReferenceDescription"]
-                vs = [e for e in av.iter() if ln(e) == "systemReferenceValue"]
-                for d, v in zip(ds, vs):
-                    if (d.text or "") == "LoadLeadTime":
-                        lead = v.text
-                    elif (d.text or "") == "EXCEPTION":
-                        exc = v.text
-                if qty is not None:
-                    break
+                qty = q if q is not None else qty
+            elif other is None:
+                other = q                 # "future" etc. — used only if no current block
+            # lead time / exception notes ride on ANY availability block (as in
+            # the Domo notebook), not just the current one
+            ds = [e for e in av.iter() if ln(e) == "systemReferenceDescription"]
+            vs = [e for e in av.iter() if ln(e) == "systemReferenceValue"]
+            for d, v in zip(ds, vs):
+                if (d.text or "") == "LoadLeadTime":
+                    lead = v.text
+                elif (d.text or "") == "EXCEPTION":
+                    exc = v.text
+            if qty is not None:
+                break
+        if qty is None and other is not None:
+            qty = other
         rows.append({"sku": sku, "qty_available": qty,
                      "lead_time_days": lead, "exception": exc})
     return rows

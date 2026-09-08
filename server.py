@@ -131,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "83"
+APP_VERSION = "84"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
     # The installed-app name lives in pwa_catalog.py, a file that is easy
@@ -2494,6 +2494,16 @@ def _builder_migrate(engine):
                 freight_min_by_brand text default '',
                 freight_qty_or_cost text default '',
                 primary key (customer, vendor))""",
+        """create table if not exists cat_trash(
+                id text primary key,
+                customer text not null default '',
+                name text default '',
+                vendor_label text default '',
+                filename text default '',
+                mapping text default '{}',
+                feed text default '{}',
+                row_count integer default 0,
+                deleted_at timestamp default current_timestamp)""",
         """create table if not exists cat_locations(
                 customer text not null,
                 group_id text default '',
@@ -2767,9 +2777,10 @@ def _rebuild_later(cust: str):
 
     def _run():
         try:
-            _builder_do_build(_builder_engine(), cust)
-        except Exception:
-            pass                     # not buildable yet — the button still works
+            total, _per = _builder_do_build(_builder_engine(), cust)
+            _flog("build", f"auto-rebuild for {cust}: {total:,} rows")
+        except Exception as e:       # not buildable yet — the button still works
+            _flog("build", f"auto-rebuild for {cust} did not run: {str(e)[:200]}")
     threading.Thread(target=_run, daemon=True).start()
 
 
@@ -2826,11 +2837,19 @@ async def builder_remove(request: Request):
     from sqlalchemy import text
     eng = _builder_engine()
     with eng.begin() as c:
-        row = c.execute(text("select table_name, vendor_label, name from cat_sources "
-                             "where id=:i and customer=:c"),
+        row = c.execute(text("select * from cat_sources where id=:i and customer=:c"),
                         {"i": sid, "c": cust}).mappings().first()
         if not row:
             raise HTTPException(404, "No such source.")
+        # the card's settings (feed, credentials, mapping) go to the recycle
+        # bin — one press of Restore brings the card back; its rows re-pull
+        c.execute(text("delete from cat_trash where id=:i"), {"i": sid})
+        c.execute(text("insert into cat_trash(id,customer,name,vendor_label,filename,mapping,"
+                       "feed,row_count) values(:i,:c,:n,:v,:f,:m,:fd,:r)"),
+                  {"i": sid, "c": cust, "n": row["name"], "v": row["vendor_label"],
+                   "f": row["filename"], "m": row["mapping"] or "{}",
+                   "fd": row["feed"] or "{}", "r": int(row["row_count"] or 0)})
+        _flog("admin", f"source {sid} ({row['name']}) removed by {_label} — kept in the recycle bin")
         c.execute(text("delete from cat_sources where id=:i and customer=:c"),
                   {"i": sid, "c": cust})
         c.execute(text(f'drop table if exists "{row["table_name"]}"'))
@@ -2858,6 +2877,54 @@ async def builder_remove(request: Request):
     return {"ok": True, "rebuilding": True,
             "message": "Source removed, its vendor edits, info and freight with it — the "
                        "catalog is rebuilding itself now; its rows disappear in a few seconds."}
+
+
+@app.get("/api/admin/builder/trash")
+async def builder_trash(request: Request):
+    """Cards deleted in the last 30 days, restorable."""
+    sc, cust, _label = await _builder_admin(request)
+    from sqlalchemy import text
+    with _builder_engine().connect() as c:
+        rows = c.execute(text("select id, name, vendor_label, row_count, deleted_at from cat_trash "
+                              "where customer=:c order by deleted_at desc"),
+                         {"c": cust}).mappings().all()
+    return {"items": [{"id": r["id"], "name": r["name"], "vendor": r["vendor_label"],
+                       "rows": int(r["row_count"] or 0), "deleted_at": str(r["deleted_at"] or "")}
+                      for r in rows[:20]]}
+
+
+@app.post("/api/admin/builder/restore")
+async def builder_restore(request: Request):
+    """Bring a deleted card back with every setting it had. Its rows are
+    gone with the table, so the feed re-pulls (Check now) or the file is
+    dropped in again."""
+    sc, cust, _label = await _builder_admin(request)
+    body = await request.json() or {}
+    sid = str(body.get("id") or "")
+    from sqlalchemy import text
+    eng = _builder_engine()
+    with eng.begin() as c:
+        t = c.execute(text("select * from cat_trash where id=:i and customer=:c"),
+                      {"i": sid, "c": cust}).mappings().first()
+        if not t:
+            raise HTTPException(404, "Nothing to restore under that id.")
+        if c.execute(text("select 1 from cat_sources where id=:i"), {"i": sid}).first():
+            raise HTTPException(400, "That card already exists.")
+        c.execute(text("insert into cat_sources(id,customer,name,filename,vendor_label,"
+                       "table_name,mapping,row_count,feed) values(:i,:c,:n,:f,:v,:t,:m,0,:fd)"),
+                  {"i": sid, "c": cust, "n": t["name"], "f": "", "v": t["vendor_label"],
+                   "t": f"src_{cust}_{sid}", "m": t["mapping"] or "{}", "fd": t["feed"] or "{}"})
+        c.execute(text("delete from cat_trash where id=:i"), {"i": sid})
+    _flog("admin", f"source {sid} ({t['name']}) restored by {_label}")
+    kind = ""
+    try:
+        kind = str((json.loads(t["feed"] or "{}") or {}).get("type") or "manual")
+    except Exception:
+        pass
+    return {"ok": True, "id": sid,
+            "message": (f"“{t['name']}” is back with all its settings — press Check now on it "
+                        f"to pull its rows again." if kind in ("api", "sftp", "email") else
+                        f"“{t['name']}” is back — drop its file in again to refill it.")}
 
 
 @app.get("/api/admin/builder/preview")
@@ -3225,6 +3292,14 @@ def _builder_do_build(eng, cust: str):
                 out[name] = r["vendor_label"]
             else:
                 out[name] = ""
+        # Whatever produced the Vendor column — a mapping, a fixed value, an
+        # ETL step — the card's label names the vendor unless the file truly
+        # carries several vendors (more than one distinct value).
+        lab = str(r["vendor_label"] or "").strip()
+        if lab:
+            uniq = [v for v in out["Vendor"].astype(str).str.strip().unique() if v]
+            if len(uniq) <= 1:
+                out["Vendor"] = lab
         for name, _req, _h in BUILDER_FIELDS:
             kind, blank = _BTYPES.get(name, ("text", ""))
             out[name] = _btype_convert(out[name], kind, blank)
@@ -4587,9 +4662,10 @@ def _feed_atp_join(cfg: dict, df, progress=None):
     key = str(cfg.get("atp_keycode") or "").strip()      # a pasted newline = "verification failed"
     usr = str(cfg.get("atp_user") or "").strip()
     pw = str(cfg.get("atp_password") or "").strip()
-    customer = str(cfg.get("atp_customer") or "").strip() or qd.get("customer", "")
-    shipto = str(cfg.get("atp_shipto") or "").strip() or qd.get("shipto", "")
+    customer, shipto = qd.get("customer", ""), qd.get("shipto", "")   # the card's parameters
     duns = str(cfg.get("atp_duns") or "").strip() or _ATP_DUNS
+    if not (customer and shipto):
+        raise ValueError("Quantities need the customer and shipto query parameters on the card.")
     try:
         batch = max(1, min(int(cfg.get("atp_batch") or 40), 200))
     except Exception:
@@ -5000,10 +5076,6 @@ def _feed_fetch_api(cfg: dict, progress=None):
 def _feed_freight_stores(eng, cust, cfg):
     """Store numbers to quote: the card's own list when given, otherwise every
     store found in Users (the leading number of "104 - MCALLEN")."""
-    manual = [s.strip() for s in str(cfg.get("frt_stores") or "")
-              .replace(";", ",").split(",") if s.strip()]
-    if manual:
-        return manual
     from sqlalchemy import text
     with eng.connect() as c:
         ppl = c.execute(text("select user_label, group1 from cat_people where customer=:c"),
@@ -5034,7 +5106,7 @@ def _feed_freight_pull(eng, row, cfg, progress=None) -> str:
     cust, vendor = str(row["customer"]), str(row["name"])
     stores = _feed_freight_stores(eng, cust, cfg)
     if not stores:
-        return "freight: no store numbers yet — list them on the card or add Users"
+        return "freight: no store numbers yet — add store people under Users (e.g. “354 - PTL”)"
     url = str(cfg.get("url") or "").strip()
     headers = {}
     for part in [p for p in str(cfg.get("header") or "").replace("\n", ";").split(";")
@@ -5703,8 +5775,9 @@ async def builder_feed_atptest(request: Request):
     pw = str(cfg.get("atp_password") or "").strip()
     if not (ext and key and usr and pw):
         raise HTTPException(400, "Fill and SAVE the ATP External ID, KeyCode, user and password first.")
-    customer = str(cfg.get("atp_customer") or "").strip() or qd.get("customer", "")
-    shipto = str(cfg.get("atp_shipto") or "").strip() or qd.get("shipto", "")
+    customer, shipto = qd.get("customer", ""), qd.get("shipto", "")   # the card's parameters
+    if not (customer and shipto):
+        raise HTTPException(400, "Add the customer and shipto query parameters to the card first.")
     duns = str(cfg.get("atp_duns") or "").strip() or _ATP_DUNS
     url = str(cfg.get("atp_url") or "").strip() or _ATP_URL
     skus = [str(s) for s in (body.get("skus") or []) if str(s).strip()]

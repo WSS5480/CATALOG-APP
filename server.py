@@ -131,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "86"
+APP_VERSION = "87"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
     # The installed-app name lives in pwa_catalog.py, a file that is easy
@@ -4524,41 +4524,53 @@ def _builder_read_frame(filename: str, raw: bytes):
     return df
 
 
-def _feed_merge_frames(frames):
-    """Several endpoint pulls -> one wide table. Each extra frame is joined on
-    the item-number-ish column it shares with the first (so its columns are
-    appended beside the products); a frame that shares no column at all is
-    appended as extra rows instead."""
+def _feed_merge_frames(frames, names=None):
+    """Several endpoint pulls -> one wide table. Each extra frame is joined
+    onto the first by the column whose VALUES actually line up (a product
+    list joins prices on ProductNumber, a category list on CategoryCode —
+    not on a same-named 'Name' column that means something else). A frame
+    that shares nothing usable is appended as extra rows. Columns that clash
+    with the first frame are named after their endpoint (GetCategoryList.Name)."""
     import pandas as pd
     hints = ("sku", "itemnumber", "item_number", "itemno", "item_no", "item", "itemid",
              "item_id", "modelnum", "model", "productnumber", "product_number", "productid",
              "product_id", "productcode", "product_code", "partnumber", "part_number",
              "itemcode", "item_code", "upc", "id")
+    names = list(names or [])
     base = frames[0]
-    for f in frames[1:]:
+    for fi, f in enumerate(frames[1:], 1):
+        tag = str(names[fi]) if fi < len(names) and names[fi] else f"feed{fi + 1}"
         low = {str(c).lower(): str(c) for c in base.columns}
         shared = [(low[str(c).lower()], str(c)) for c in f.columns
                   if str(c).lower() in low]
-        pick = None
+        pick, best = None, 0.0
         for bk, fk in shared:
-            if bk.lower() in hints:
-                pick = (bk, fk)
-                break
-        if pick is None and shared:
-            # no known key name — take the shared column that looks most like
-            # one: the most distinct values on the products side
-            pick = max(shared, key=lambda p: base[p[0]].astype(str).nunique())
-            if base[pick[0]].astype(str).nunique() < 2:
-                pick = None
-        if pick is None:
+            fv = set(f[fk].astype(str).str.strip())
+            fv.discard("")
+            fv.discard("nan")
+            if len(fv) < 2 or len(fv) < 0.9 * f[fk].notna().sum():
+                continue                     # not a key on the lookup side
+            bv = set(base[bk].astype(str).str.strip())
+            bv.discard("")
+            bv.discard("nan")
+            if not bv:
+                continue
+            overlap = len(bv & fv) / len(bv)  # how much of the products side it explains
+            score = overlap + (0.05 if bk.lower() in hints else 0)
+            if score > best:
+                pick, best = (bk, fk), score
+        if pick is None or best < 0.05:
             base = pd.concat([base, f], ignore_index=True, sort=False)
             continue
         bk, fk = pick
         f2 = f.rename(columns={fk: bk}) if fk != bk else f
-        base[bk] = base[bk].astype(str)
-        f2[bk] = f2[bk].astype(str)
+        base[bk] = base[bk].astype(str).str.strip()
+        f2[bk] = f2[bk].astype(str).str.strip()
         f2 = f2.drop_duplicates(subset=[bk])
-        base = base.merge(f2, on=bk, how="left", suffixes=("", "_2"))
+        clash = {c: f"{tag}.{c}" for c in f2.columns if c != bk and c in base.columns}
+        if clash:
+            f2 = f2.rename(columns=clash)
+        base = base.merge(f2, on=bk, how="left")
     return base
 
 
@@ -5016,6 +5028,9 @@ def _feed_fetch_api(cfg: dict, progress=None):
 
             raw_json = json.loads(data.decode("utf-8", "replace"))
             parsed = _unwrap(raw_json)
+            if tag and isinstance(parsed, list) and not parsed:
+                _flog(ltag, f"{seg}: empty list — nothing to join, skipped")
+                return "feed.csv", b"", pd.DataFrame()
             if not isinstance(parsed, list) or not parsed:
                 shape = (", ".join(list(raw_json.keys())[:8])
                          if isinstance(raw_json, dict) else type(raw_json).__name__)
@@ -5131,13 +5146,14 @@ def _feed_fetch_api(cfg: dict, progress=None):
             # Several endpoints (products + prices + freight…): pull each with
             # the same credentials and parameters, then join them into one
             # wide table on the item column they share.
-            frames = []
+            frames, segs = [], []
             for i, u in enumerate(urls, 1):
                 tag = f"feed {i} of {len(urls)}"
                 name, data, df = _pull_one(cl, u, tag)
                 frames.append(df if df is not None else _builder_read_frame(name, data))
+                segs.append(u.rsplit("/", 1)[-1].split("?")[0])
                 data = df = None
-            df = _feed_merge_frames(frames)
+            df = _feed_merge_frames(frames, segs)
             frames = None
     df = _feed_atp_join(cfg, df, progress)
     buf = io.BytesIO()

@@ -131,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "67"
+APP_VERSION = "68"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
     # The installed-app name lives in pwa_catalog.py, a file that is easy
@@ -2759,20 +2759,6 @@ async def builder_upload(request: Request):
             "mapped": len(mapping), "missing": _builder_missing(mapping, vendor)}
 
 
-def _rebuild_later(cust: str):
-    """Rebuild the served catalog in the background — so a mapping pick, a
-    fixed value, or a deleted source shows on the storefront by itself,
-    without anyone pressing ⚒ Build."""
-    import threading
-
-    def _run():
-        try:
-            _builder_do_build(_builder_engine(), cust)
-        except Exception:
-            pass                     # not buildable yet — the button still works
-    threading.Thread(target=_run, daemon=True).start()
-
-
 @app.post("/api/admin/builder/map")
 async def builder_map(request: Request):
     sc, cust, _label = await _builder_admin(request)
@@ -2796,10 +2782,9 @@ async def builder_map(request: Request):
         if vals:
             sets = ", ".join(f"{k}=:{k}" for k in vals)
             vals.update({"i": sid, "c": cust})
-            c.execute(text(f"update cat_sources set {sets}, updated_at=current_timestamp "
+            c.execute(text(f"update cat_sources set {sets}, updated_at=now() "
                            "where id=:i and customer=:c"), vals)
-    _rebuild_later(cust)
-    return {"ok": True, "rebuilding": True}
+    return {"ok": True}
 
 
 @app.post("/api/admin/builder/remove")
@@ -2810,32 +2795,14 @@ async def builder_remove(request: Request):
     from sqlalchemy import text
     eng = _builder_engine()
     with eng.begin() as c:
-        row = c.execute(text("select table_name, vendor_label, name from cat_sources "
-                             "where id=:i and customer=:c"),
+        row = c.execute(text("select table_name from cat_sources where id=:i and customer=:c"),
                         {"i": sid, "c": cust}).mappings().first()
         if not row:
             raise HTTPException(404, "No such source.")
         c.execute(text("delete from cat_sources where id=:i and customer=:c"),
                   {"i": sid, "c": cust})
         c.execute(text(f'drop table if exists "{row["table_name"]}"'))
-        # the vendor's edits (special buys, packages) leave with it — otherwise
-        # they resurrect the vendor on every rebuild
-        gone = {str(row["vendor_label"] or "").strip().upper(),
-                str(row["name"] or "").strip().upper()} - {""}
-        if gone:
-            eds = c.execute(text("select id, content from cat_orders where customer=:c "
-                                 "and coll='CatalogEdits'"), {"c": cust}).all()
-            for eid, content in eds:
-                try:
-                    ven = str((json.loads(content or "{}") or {}).get("Vendor") or "").strip().upper()
-                except Exception:
-                    continue
-                if ven in gone:
-                    c.execute(text("delete from cat_orders where id=:i"), {"i": eid})
-    _rebuild_later(cust)
-    return {"ok": True, "rebuilding": True,
-            "message": "Source removed, its vendor edits with it — the catalog is "
-                       "rebuilding itself now; its rows disappear in a few seconds."}
+    return {"ok": True}
 
 
 @app.get("/api/admin/builder/preview")
@@ -2855,9 +2822,7 @@ async def builder_preview(request: Request, id: str = ""):
     out = pd.DataFrame()
     for name, _req, _h in BUILDER_FIELDS:
         src = m.get(name)
-        if isinstance(src, str) and src.startswith("="):
-            out[name] = src[1:]              # fixed value shows in the preview too
-        elif src and src in df.columns:
+        if src and src in df.columns:
             out[name] = df[src].astype(str)
         elif name == "Vendor" and row["vendor_label"]:
             out[name] = row["vendor_label"]
@@ -3082,10 +3047,6 @@ def _builder_do_build(eng, cust: str):
                          {"c": cust}).mappings().all()
     if not srcs:
         raise ValueError("No sources yet — upload at least one vendor file first.")
-    # every vendor that still legitimately exists — sources (pending included)
-    # protect their edits from the orphan sweep below
-    src_vendors = {str(r[k] or "").strip().upper()
-                   for r in srcs for k in ("vendor_label", "name")}
     srcs = [r for r in srcs
             if int(r["row_count"] or 0) > 0 or str(r["filename"] or "").strip()]
     if not srcs:
@@ -3115,9 +3076,6 @@ def _builder_do_build(eng, cust: str):
                  "QtyAvailable": ("qtyavailable", "qtyavail")}
         for name, _req, _h in BUILDER_FIELDS:
             src = m.get(name)
-            if isinstance(src, str) and src.startswith("="):
-                out[name] = src[1:]          # a fixed value, e.g. Brand "=Ashley"
-                continue
             if src and src in df.columns:
                 out[name] = df[src].astype(str)
                 continue
@@ -3166,77 +3124,12 @@ def _builder_do_build(eng, cust: str):
         frames.append(out)
         per.append({"source": r["name"], "rows": int(len(out))})
     allf = pd.concat(frames, ignore_index=True)
-    # SALE items lead the catalog: an active promo (Price below RegularCost)
-    # forces DisplayOrder to 0, so sales always sort first in display order.
-    try:
-        pr = pd.to_numeric(allf["Price"], errors="coerce")
-        rc = pd.to_numeric(allf["RegularCost"], errors="coerce")
-        on_sale = pr.notna() & rc.notna() & (pr > 0) & (pr < rc)
-        allf.loc[on_sale, "DisplayOrder"] = "0"
-    except Exception:
-        pass
-    # SPECIAL BUY items lead even the sales: DisplayOrder -1. They come from
-    # the vendor-edit log — latest edit per item wins, expired ones don't count.
-    try:
-        import datetime as _dt
-        today = _dt.date.today().isoformat()
-        with eng.connect() as c:
-            eds = c.execute(text("select content from cat_orders where customer=:c "
-                                 "and coll='CatalogEdits'"), {"c": cust}).all()
-        latest = {}
-        for (content,) in eds:
-            try:
-                d = json.loads(content or "{}")
-            except Exception:
-                continue
-            key = (str(d.get("Vendor") or "").strip().upper(),
-                   str(d.get("ModelNum") or "").strip().upper())
-            if not key[1]:
-                continue
-            prev2 = latest.get(key)
-            if prev2 is None or str(d.get("EditedAt") or "") >= str(prev2.get("EditedAt") or ""):
-                latest[key] = d
-        sb = set()
-        for key2, d in latest.items():
-            if str(d.get("SpecialBuy") or "").strip().upper() != "YES":
-                continue
-            exp = str(d.get("ExpirationDate") or "").strip()
-            if exp and exp[:10] < today:
-                continue
-            sb.add(key2)
-        if sb:
-            vu = allf["Vendor"].astype(str).str.strip().str.upper()
-            mu = allf["ModelNum"].astype(str).str.strip().str.upper()
-            mask = pd.Series(list(zip(vu, mu)), index=allf.index).isin(sb)
-            allf.loc[mask, "DisplayOrder"] = "-1"
-    except Exception:
-        pass
     table = f"built_{cust}"
     allf.to_sql(table, eng, if_exists="replace", index=False, chunksize=2000)
     with eng.begin() as c:
         c.execute(text("delete from cat_built where customer=:c"), {"c": cust})
         c.execute(text("insert into cat_built(customer,table_name,row_count,serving) "
                        "values(:c,:t,:r,true)"), {"c": cust, "t": table, "r": int(len(allf))})
-    # Orphan sweep: a vendor edit (special buy, package…) whose vendor no
-    # longer exists — no source card, nothing in the built rows — is a ghost
-    # that would keep resurrecting deleted vendors on the storefront. Out.
-    try:
-        keep = set(src_vendors)
-        keep |= {str(v).strip().upper() for v in allf["Vendor"].astype(str) if str(v).strip()}
-        keep.discard("")
-        with eng.connect() as c:
-            eds = c.execute(text("select id, content from cat_orders where customer=:c "
-                                 "and coll='CatalogEdits'"), {"c": cust}).all()
-        for eid, content in eds:
-            try:
-                ven = str((json.loads(content or "{}") or {}).get("Vendor") or "").strip().upper()
-            except Exception:
-                continue
-            if ven and ven not in keep:
-                with eng.begin() as c:
-                    c.execute(text("delete from cat_orders where id=:i"), {"i": eid})
-    except Exception:
-        pass
     return int(len(allf)), per
 
 
@@ -4376,31 +4269,6 @@ def _feed_merge_frames(frames):
     return base
 
 
-def _flog(tag, msg):
-    """One line per feed step into the service log (Render's Logs tab), so a
-    pull that stalls can be read back: which page, how long, what answered."""
-    try:
-        print(f"[feed] {time.strftime('%H:%M:%S')} {tag}: {msg}", flush=True)
-    except Exception:
-        pass
-
-
-_FEED_MAX_SEC = 3 * 3600     # a pull past this is declared dead, never frozen
-
-
-def _feed_sku_col(df):
-    """The item-number column of a pulled frame — a plain name first, then a
-    nested one the JSON flattener made (price.sku, product.itemNumber…)."""
-    low = {str(c).lower(): str(c) for c in df.columns}
-    for c in ("sku", "itemnumber", "item_number", "itemno", "item", "modelnum"):
-        if c in low:
-            return low[c]
-    for c in low:
-        if c.endswith((".sku", ".itemnumber", ".item_number", ".modelnum")):
-            return low[c]
-    return None
-
-
 # ── Ashley ATP quantities: a SOAP service, asked 40 SKUs at a time ──────────
 _ATP_URL = "https://aws.ashleyfurniture.com/atpinquiryservice_aws/atpinquiry.asmx"
 _ATP_NS = "http://api.AshleyFurniture.com/AtpInquiryService_AWS/AtpInquiry"
@@ -4434,26 +4302,6 @@ def _atp_build_fidx(customer, shipto, duns, skus):
             f'</inquiry><items>{items}</items></fniia:inventoryInqAdv>')
 
 
-def _atp_error(advice_xml):
-    """Ashley's advice carries any service-level error in
-    inquirySystemReference (e.g. 'Security verification failed…') — the text,
-    or '' when the answer is a normal one."""
-    import xml.etree.ElementTree as ET
-    def ln(e):
-        return e.tag.split("}")[-1]
-    try:
-        root = ET.fromstring(advice_xml)
-    except Exception:
-        return ""
-    for ref in (e for e in root.iter() if ln(e) == "inquirySystemReference"):
-        kind = "".join((c.text or "") for c in ref.iter() if ln(c) == "partyIdentifier")
-        desc = "".join((c.text or "") for c in ref.iter()
-                       if ln(c) == "systemReferenceDescription")
-        if "ERROR" in kind.upper() or "fail" in desc.lower() or "invalid" in desc.lower():
-            return desc.strip() or "the quantity service reported an error"
-    return ""
-
-
 def _atp_parse_advice(advice_xml):
     """The advice document back -> one row per SKU: qty, lead time, exception."""
     import xml.etree.ElementTree as ET
@@ -4464,8 +4312,6 @@ def _atp_parse_advice(advice_xml):
     for adv in (e for e in root.iter() if ln(e) == "itemAdvice"):
         sku = next((i.get("itemNumber") for i in adv.iter()
                     if ln(i) == "itemIdentifier"), None)
-        if not sku:                      # an empty <itemAdvice/> is not an item
-            continue
         qty = lead = exc = None
         for av in (e for e in adv.iter() if ln(e) == "itemAvailability"):
             if av.get("availability") == "current":
@@ -4497,9 +4343,9 @@ def _feed_atp_join(cfg: dict, df, progress=None):
     qd = {str(k).lower(): str(v) for k, v in (cfg.get("qparams") or [])}
     url = str(cfg.get("atp_url") or "").strip() or _ATP_URL
     ext = str(cfg.get("atp_external_id") or "").strip()
-    key = str(cfg.get("atp_keycode") or "").strip()      # a pasted newline = "verification failed"
+    key = str(cfg.get("atp_keycode") or "")
     usr = str(cfg.get("atp_user") or "").strip()
-    pw = str(cfg.get("atp_password") or "").strip()
+    pw = str(cfg.get("atp_password") or "")
     customer = str(cfg.get("atp_customer") or "").strip() or qd.get("customer", "")
     shipto = str(cfg.get("atp_shipto") or "").strip() or qd.get("shipto", "")
     duns = str(cfg.get("atp_duns") or "").strip() or _ATP_DUNS
@@ -4510,42 +4356,27 @@ def _feed_atp_join(cfg: dict, df, progress=None):
     if not (ext and key and usr and pw):
         raise ValueError("Quantities are switched on, but the ATP External ID, KeyCode, "
                          "user or password box is empty.")
-    skucol = _feed_sku_col(df)
+    low = {str(c).lower(): str(c) for c in df.columns}
+    skucol = next((low[c] for c in ("sku", "itemnumber", "item_number", "itemno",
+                                    "item", "modelnum") if c in low), None)
     if not skucol:
-        raise ValueError("Quantities need a SKU column in the pulled data — none was found "
-                         f"(columns: {', '.join(str(c) for c in list(df.columns)[:12])}).")
+        raise ValueError("Quantities need a SKU column in the pulled data — none was found.")
     skus = [s for s in df[skucol].astype(str).str.strip().unique().tolist()
             if s and s.lower() != "nan"]
     headers = {"Content-Type": "text/xml; charset=utf-8",
                "SOAPAction": f'"{_ATP_NS}/ATPRequest"'}
-    try:
-        pause = max(0.0, min(float(cfg.get("atp_sleep") or 1.0), 10.0))
-    except Exception:
-        pause = 1.0
-    try:
-        workers = max(1, min(int(cfg.get("atp_workers") or 6), 8))
-    except Exception:
-        workers = 6
-    total = (len(skus) + batch - 1) // batch
-    tag = "ATP"
-    _flog(tag, f"{len(skus):,} SKUs from column {skucol!r} → {total} batches of {batch}, "
-               f"{workers} at a time")
-    t_all = _time.time()
-
-    def one_batch(bi, chunk):
-        fidx = _atp_build_fidx(customer, shipto, duns, chunk)
-        env = ('<?xml version="1.0" encoding="utf-8"?>'
-               '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
-               f'<soap:Body><ATPRequest xmlns="{_ATP_NS}">'
-               f'<ExternalID>{_xesc(ext)}</ExternalID><KeyCode>{_xesc(key)}</KeyCode>'
-               f'<sUser>{_xesc(usr)}</sUser><sPassword>{_xesc(pw)}</sPassword>'
-               f'<sXml>{_xesc(fidx)}</sXml></ATPRequest></soap:Body></soap:Envelope>')
-        last_err, r = "", None
-        with httpx.Client(timeout=120, follow_redirects=True) as cl:
+    rows, total = [], (len(skus) + batch - 1) // batch
+    with httpx.Client(timeout=90, follow_redirects=True) as cl:
+        for bi, i in enumerate(range(0, len(skus), batch), 1):
+            fidx = _atp_build_fidx(customer, shipto, duns, skus[i:i + batch])
+            env = ('<?xml version="1.0" encoding="utf-8"?>'
+                   '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+                   f'<soap:Body><ATPRequest xmlns="{_ATP_NS}">'
+                   f'<ExternalID>{_xesc(ext)}</ExternalID><KeyCode>{_xesc(key)}</KeyCode>'
+                   f'<sUser>{_xesc(usr)}</sUser><sPassword>{_xesc(pw)}</sPassword>'
+                   f'<sXml>{_xesc(fidx)}</sXml></ATPRequest></soap:Body></soap:Envelope>')
+            last_err, r = "", None
             for attempt in range(4):
-                if _FEED_STOP["at"] > t_all:
-                    raise ValueError("Stopped from the admin — press Check now to start fresh.")
-                t1 = _time.time()
                 try:
                     r = cl.post(url, content=env.encode("utf-8"), headers=headers)
                     if r.status_code == 200:
@@ -4553,64 +4384,35 @@ def _feed_atp_join(cfg: dict, df, progress=None):
                     last_err = f"answered {r.status_code}"
                 except Exception as e:
                     last_err = (str(e) or type(e).__name__)[:120]
-                _flog(tag, f"batch {bi}/{total} try {attempt + 1}: {last_err} "
-                           f"after {_time.time() - t1:.1f}s")
                 r = None
-                _time.sleep(3 * (attempt + 1))
-        if r is None:
-            raise ValueError(f"The quantity service kept failing on batch {bi} of "
-                             f"{total}: {last_err}")
-        try:
-            sr = ET.fromstring(r.content)
-            res = next((e.text for e in sr.iter()
-                        if e.tag.split('}')[-1] == "ATPRequestResult"), None)
-            if res is None:
-                res = next((e.text for e in sr.iter()
-                            if e.tag.split('}')[-1].endswith("Result")), None)
-        except Exception:
-            res = None
-        got = []
-        if bi == 1:
-            _flog(tag, f"batch 1 asked {chunk[:5]}…, answer head: "
-                       f"{((res if res is not None else r.text) or '')[:700]!r}")
-        if res and res.strip().startswith("<"):
-            err = _atp_error(res)
-            if err:                       # bad credentials etc. — say so, loudly
-                raise ValueError(f"The quantity service refused the request: {err} "
-                                 f"(check the ATP External ID, KeyCode, user and password "
-                                 f"on the card, then 🧪 Test quantities).")
+                _time.sleep(2 * (attempt + 1))
+            if r is None:
+                raise ValueError(f"The quantity service kept failing on batch {bi} of "
+                                 f"{total}: {last_err}")
             try:
-                got = _atp_parse_advice(res)
-            except Exception as pe:
-                _flog(tag, f"batch {bi}/{total}: advice did not parse ({str(pe)[:80]})")
-        else:
-            _flog(tag, f"batch {bi}/{total}: 200 but no advice XML inside "
-                       f"({(res or '')[:100]!r})")
-        _time.sleep(pause)
-        return got
-
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    rows, done = [], 0
-    chunks = [(bi, skus[i:i + batch]) for bi, i in enumerate(range(0, len(skus), batch), 1)]
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futs = {pool.submit(one_batch, bi, ch): bi for bi, ch in chunks}
-        for fut in as_completed(futs):
-            got = fut.result()          # a failed batch raises through here
-            rows.extend(got)
-            done += 1
-            if done % 5 == 0 or done == total:
-                _flog(tag, f"{done}/{total} batches, {len(rows):,} SKUs answered, "
-                           f"{_time.time() - t_all:.0f}s")
+                sr = ET.fromstring(r.content)
+                res = next((e.text for e in sr.iter()
+                            if e.tag.split('}')[-1] == "ATPRequestResult"), None)
+                if res is None:
+                    res = next((e.text for e in sr.iter()
+                                if e.tag.split('}')[-1].endswith("Result")), None)
+            except Exception:
+                res = None
+            if res and res.strip().startswith("<"):
+                try:
+                    rows.extend(_atp_parse_advice(res))
+                except Exception:
+                    pass
             if progress:
-                progress(done, len(rows), f"quantities (of {total} parts)")
+                progress(bi, len(rows), f"quantities (of {total} parts)")
+            try:
+                _time.sleep(max(0.0, min(float(cfg.get("atp_sleep") or 1.0), 10.0)))
+            except Exception:
+                _time.sleep(1.0)
     if not rows:
         raise ValueError("The quantity service answered, but no availability came back — "
                          "check the ATP External ID, KeyCode, user and password.")
     qdf = pd.DataFrame(rows).drop_duplicates(subset=["sku"])
-    if skucol.lower() != "sku" and "sku" not in {str(c).lower() for c in df.columns}:
-        qdf = qdf.rename(columns={"sku": skucol})
-    _flog(tag, f"joined {len(qdf):,} quantities onto {len(df):,} rows in "
-               f"{_time.time() - t_all:.0f}s")
     return _feed_merge_frames([df, qdf])
 
 
@@ -4682,45 +4484,15 @@ def _feed_fetch_api(cfg: dict, progress=None):
                 return found
         return payload
 
-    _run_t0 = time.time()
-    ltag = str(cfg.get("_log_tag") or "api")
-
-    def _get_retry(cl, url, params, seg, page=1):
-        import time as _time
-        last = None
-        for attempt in range(4):
-            if _FEED_STOP["at"] > _run_t0:
-                raise ValueError("Stopped from the admin — press Check now to start fresh.")
-            if _time.time() - _run_t0 > _FEED_MAX_SEC:
-                raise ValueError(f"Gave up after {_FEED_MAX_SEC // 3600} hours — the vendor "
-                                 f"never finished answering. Try again later.")
-            t1 = _time.time()
+    def _get_retry(cl, url, params, seg):
+        try:
             try:
-                r = cl.get(url, headers=headers, params=params)
+                return cl.get(url, headers=headers, params=params)
             except httpx.TimeoutException:
-                last = "timeout"
-                _flog(ltag, f"{seg} page {page} try {attempt + 1}: timed out after "
-                            f"{_time.time() - t1:.0f}s")
-                _time.sleep(5)
-                continue
-            except httpx.HTTPError as e:
-                last = (str(e) or type(e).__name__)[:100]
-                _flog(ltag, f"{seg} page {page} try {attempt + 1}: {last} after "
-                            f"{_time.time() - t1:.0f}s")
-                _time.sleep(10 * (attempt + 1))
-                continue
-            _flog(ltag, f"{seg} page {page} try {attempt + 1}: {r.status_code} in "
-                        f"{_time.time() - t1:.1f}s, {len(r.content):,} bytes")
-            # 429/5xx = the vendor throttling or hiccuping — wait and re-ask
-            # rather than accepting a cut-short download.
-            if r.status_code in (429, 500, 502, 503, 504):
-                last = f"answered {r.status_code}"
-                _time.sleep(15 * (attempt + 1))
-                continue
-            return r
-        raise ValueError(f"{seg} kept failing ({last}) — the vendor is likely "
-                         f"rate-limiting after many pulls today. Wait a while and "
-                         f"press Check now once.")
+                return cl.get(url, headers=headers, params=params)
+        except httpx.TimeoutException:
+            raise ValueError(f"{seg} took too long to answer — over 5 minutes, twice in "
+                             f"a row. A smaller limit parameter usually fixes this.")
 
     def _pull_one(cl, url, tag=""):
         """One endpoint -> (filename, raw bytes, dataframe-or-None)."""
@@ -4773,9 +4545,7 @@ def _feed_fetch_api(cfg: dict, progress=None):
                         if len(v) > 1:
                             out[k] = json.dumps(v)[:300]
                     else:
-                        s = json.dumps(v)
-                        # empty structures become blank, not "[]" litter on cards
-                        out[k] = "" if s in ("[]", "{}", "null") else s[:300]
+                        out[k] = json.dumps(v)[:300]
                 return out
 
             raw_json = json.loads(data.decode("utf-8", "replace"))
@@ -4786,29 +4556,11 @@ def _feed_fetch_api(cfg: dict, progress=None):
                 where = f" from {seg}" if tag else ""
                 raise ValueError(f"The API returned JSON{where}, but no list of records "
                                  f"was found inside it (top-level keys: {shape}).")
-            # The record count the API itself reports (Ashley: metadata.totalRecords)
-            # tells us exactly how many pages there are — no guessing from short pages.
-            total_records = 0
-            if isinstance(raw_json, dict):
-                md = raw_json.get("metadata")
-                for src in ((md if isinstance(md, dict) else {}), raw_json):
-                    for k in ("totalRecords", "total_records", "totalCount", "total",
-                              "recordCount", "count"):
-                        try:
-                            total_records = int(src.get(k) or 0)
-                        except Exception:
-                            total_records = 0
-                        if total_records:
-                            break
-                    if total_records:
-                        break
             records = [_flat(r) for r in parsed if isinstance(r, dict)]
             first_page_n = len(parsed)
             raw_json = parsed = data = None   # free the parsed page before the next
             import gc
             gc.collect()
-            _flog(ltag, f"{seg} page 1: {first_page_n} records"
-                        f"{f', API reports {total_records:,} total' if total_records else ''}")
             if progress:
                 progress(1, len(records), tag)
             qd = {str(k).lower(): str(v) for k, v in qparams}
@@ -4816,61 +4568,27 @@ def _feed_fetch_api(cfg: dict, progress=None):
                 limit_val = int(qd.get("limit") or 0)
             except Exception:
                 limit_val = 0
-            # keep the vendor's own spelling of the page parameter (Page next to Limit)
-            pkey = "Page" if any(str(k) == "Limit" for k, _ in qparams) else "page"
             if limit_val > 0 and first_page_n >= limit_val and "page" not in qd:
-                def _page_records(pg):
-                    r2 = _get_retry(cl, url, qparams + [(pkey, str(pg))], seg, pg)
+                page = 2
+                while page <= 200:
+                    r2 = _get_retry(cl, url, qparams + [("page", str(page))], seg)
                     if r2.status_code != 200:
-                        raise ValueError(f"{seg} page {pg} answered {r2.status_code}")
-                    more = _unwrap(json.loads(r2.content.decode("utf-8", "replace")))
-                    if not isinstance(more, list):
-                        return []
-                    return [_flat(x) for x in more if isinstance(x, dict)]
-
-                if total_records > first_page_n:
-                    # Known size: ask for the remaining pages a few at a time.
-                    from concurrent.futures import ThreadPoolExecutor, as_completed
-                    last_page = min(200, (total_records + limit_val - 1) // limit_val)
-                    pages = list(range(2, last_page + 1))
+                        break
                     try:
-                        pw_ = max(1, min(int(cfg.get("page_workers") or 4), 8))
+                        more = _unwrap(json.loads(r2.content.decode("utf-8", "replace")))
                     except Exception:
-                        pw_ = 4
-                    _flog(ltag, f"{seg}: pages 2–{last_page} of {limit_val} records, "
-                                f"{pw_} at a time")
-                    got, done = {}, 1
-                    with ThreadPoolExecutor(max_workers=pw_) as pool:
-                        futs = {pool.submit(_page_records, pg): pg for pg in pages}
-                        for fut in as_completed(futs):
-                            pg = futs[fut]
-                            got[pg] = fut.result()      # a dead page raises through here
-                            done += 1
-                            if progress:
-                                progress(done, len(records) + sum(len(v) for v in got.values()),
-                                         tag)
-                    for pg in pages:
-                        records.extend(got.get(pg) or [])
-                    got = None
+                        break
+                    if not isinstance(more, list) or not more:
+                        break
+                    records.extend(_flat(x) for x in more if isinstance(x, dict))
+                    short = len(more) < limit_val
+                    more = None
                     gc.collect()
-                else:
-                    # Unknown size: turn pages until a short one says done.
-                    page = 2
-                    while page <= 200:
-                        more = _page_records(page)
-                        if not more:
-                            break
-                        records.extend(more)
-                        short = len(more) < limit_val
-                        more = None
-                        gc.collect()
-                        if progress:
-                            progress(page, len(records), tag)
-                        if short or len(records) >= 150000:
-                            break
-                        page += 1
-            _flog(ltag, f"{seg}: {len(records):,} records in all, "
-                        f"{time.time() - _run_t0:.0f}s into the run")
+                    if progress:
+                        progress(page, len(records), tag)
+                    if short or len(records) >= 150000:
+                        break
+                    page += 1
             return "feed.csv", b"", pd.DataFrame(records)
         return name, data, None
 
@@ -4878,12 +4596,7 @@ def _feed_fetch_api(cfg: dict, progress=None):
     # Some vendor APIs (price endpoints especially) think for minutes before
     # answering, so give each page five minutes rather than two — and retry a
     # page once when it times out, since a second ask often lands.
-    tmo = httpx.Timeout(600.0, connect=30.0)
-    _flog(ltag, f"start: {len(urls)} endpoint{'s' if len(urls) > 1 else ''} "
-                f"{[u.rsplit('/', 1)[-1][:40] for u in urls]}, params "
-                f"{[(k, v) for k, v in qparams if 'pass' not in k.lower() and 'key' not in k.lower()]}, "
-                f"quantities={'on' if cfg.get('atp_on') else 'off'}, "
-                f"freight={'on' if cfg.get('frt_on') else 'off'}")
+    tmo = httpx.Timeout(300.0, connect=30.0)
     with httpx.Client(timeout=tmo, follow_redirects=True, auth=auth) as cl:
         if len(urls) == 1:
             name, data, df = _pull_one(cl, urls[0])
@@ -4968,39 +4681,25 @@ def _feed_freight_pull(eng, row, cfg, progress=None) -> str:
         except Exception:
             return ""
 
-    tag = f"freight {vendor}"
-    t_all = _time.time()
-    _flog(tag, f"{len(stores)} stores {stores[:12]}{'…' if len(stores) > 12 else ''}, "
-               f"customer {customer!r}, {limit}/page")
-
     def pull_store(store):
         rows, page = [], 1
-        t_s = _time.time()
-        with httpx.Client(timeout=600, follow_redirects=True, auth=auth) as cl:
+        with httpx.Client(timeout=120, follow_redirects=True, auth=auth) as cl:
             while True:
-                if _FEED_STOP["at"] > t_all:
-                    raise ValueError("stopped from the admin")
-                if _time.time() - t_all > _FEED_MAX_SEC:
-                    raise ValueError("out of time")
                 r, last = None, ""
                 for attempt in range(3):
-                    t1 = _time.time()
                     try:
                         r = cl.get(url, headers=headers,
                                    params={"Customer": customer, "ShipTo": store,
                                            "Limit": str(limit), "Page": str(page),
                                            "IncludeTentative": "False"})
-                        if r.status_code in (429, 500, 502, 503, 504):   # back off
-                            last, r = f"answered {r.status_code}", None
-                            _flog(tag, f"store {store} page {page} try {attempt + 1}: {last}")
-                            _time.sleep(10 * (attempt + 1))
+                        if r.status_code == 429:      # rate-limited: back off
+                            last, r = "429", None
+                            _time.sleep(2 * (attempt + 1))
                             continue
                         break
                     except Exception as e:
                         last, r = (str(e) or type(e).__name__)[:80], None
-                        _flog(tag, f"store {store} page {page} try {attempt + 1}: {last} "
-                                   f"after {_time.time() - t1:.0f}s")
-                        _time.sleep(5 * (attempt + 1))
+                        _time.sleep(2 * (attempt + 1))
                 if r is None:
                     raise ValueError(last or "no answer")
                 if r.status_code != 200:
@@ -5023,11 +4722,9 @@ def _feed_freight_pull(eng, row, cfg, progress=None) -> str:
                     break
                 page += 1
                 _time.sleep(0.2)
-        _flog(tag, f"store {store}: {len(rows):,} rows over {page} page(s) in "
-                   f"{_time.time() - t_s:.0f}s")
         return rows
 
-    all_rows, failed, why, done = [], [], {}, 0
+    all_rows, failed, done = [], [], 0
     with ThreadPoolExecutor(max_workers=4) as pool:
         futs = {pool.submit(pull_store, s): s for s in stores}
         for fut in as_completed(futs):
@@ -5035,14 +4732,10 @@ def _feed_freight_pull(eng, row, cfg, progress=None) -> str:
             done += 1
             try:
                 all_rows.extend(fut.result())
-            except Exception as e:
+            except Exception:
                 failed.append(s)
-                why[s] = str(e)[:60]
-                _flog(tag, f"store {s} skipped: {why[s]}")
             if progress:
                 progress(done, len(all_rows), f"freight ({done} of {len(stores)} stores)")
-    _flog(tag, f"done: {len(all_rows):,} rows, {len(stores) - len(failed)} stores ok, "
-               f"{len(failed)} skipped, {_time.time() - t_all:.0f}s")
     import datetime as _dt
     with eng.begin() as c:
         c.execute(text("delete from cat_freight where customer=:c and vendor=:v"),
@@ -5057,8 +4750,7 @@ def _feed_freight_pull(eng, row, cfg, progress=None) -> str:
     bit = f"freight: {len(all_rows):,} rows for {len(stores) - len(failed)} stores"
     if failed:
         failed.sort()
-        named = ", ".join((s + " " + why.get(s, "")).strip() for s in failed[:8])
-        bit += (f" ({len(failed)} skipped: {named}"
+        bit += (f" ({len(failed)} skipped: {', '.join(failed[:8])}"
                 f"{'…' if len(failed) > 8 else ''})")
     return bit
 
@@ -5203,9 +4895,6 @@ def _feed_alert(subject: str, body: str) -> bool:
         return False
 
 
-_FEED_STOP = {"at": 0.0}     # the admin's ⏹ Stop — runs started before this die
-
-
 def _feed_run_source(eng, row) -> dict:
     """Fetch one source's feed and refresh its table. Always records a status,
     and raises an alert when a file fails or stops matching the schema."""
@@ -5213,24 +4902,13 @@ def _feed_run_source(eng, row) -> dict:
     cfg = _feed_of(row)
     kind = str(cfg.get("type") or "manual")
     prev = _feed_status_of(row)
-    t0 = time.time()
-    out = {"last_run": time.strftime("%Y-%m-%d %H:%M"), "last_ts": t0,
+    out = {"last_run": time.strftime("%Y-%m-%d %H:%M"), "last_ts": time.time(),
            "ok": False, "changed": False, "note": ""}
-    ltag = f"{row['name']}"
-    cfg["_log_tag"] = ltag
-
     def _progress(page, count, tag=""):
-        if _FEED_STOP["at"] > t0:
-            raise ValueError("Stopped from the admin — press Check now to start fresh.")
-        if time.time() - t0 > _FEED_MAX_SEC:
-            raise ValueError(f"Gave up after {_FEED_MAX_SEC // 3600} hours — the vendor never "
-                             f"finished answering. Try again later.")
         try:
             from sqlalchemy import text as _t
             lead = f"{tag} — " if tag else ""
-            mins = int((time.time() - t0) // 60)
-            note = (f"Downloading {lead}page {page}, {count:,} records so far… "
-                    f"({mins} min)")
+            note = f"Downloading {lead}page {page}, {count:,} records so far…"
             with eng.begin() as c:
                 c.execute(_t("update cat_sources set feed_status=:s where id=:i"),
                           {"s": json.dumps({"running": True, "note": note,
@@ -5238,20 +4916,9 @@ def _feed_run_source(eng, row) -> dict:
                                             "last_ts": out["last_ts"],
                                             "sha": prev.get("sha", "")}),
                            "i": row["id"]})
-        except Exception as pe:
-            _flog(ltag, f"could not write progress: {str(pe)[:120]}")
+        except Exception:
+            pass
 
-    _flog(ltag, f"run start: {kind}, last good {int(row['row_count'] or 0):,} rows")
-    try:
-        with eng.begin() as c:      # visible as running from the first second
-            c.execute(text("update cat_sources set feed_status=:s where id=:i"),
-                      {"s": json.dumps({"running": True, "note": "Starting the pull…",
-                                        "last_run": out["last_run"],
-                                        "last_ts": out["last_ts"],
-                                        "sha": prev.get("sha", "")}),
-                       "i": row["id"]})
-    except Exception:
-        pass
     try:
         if kind == "api":
             fname, raw = _feed_fetch_api(cfg, progress=_progress)
@@ -5262,17 +4929,10 @@ def _feed_run_source(eng, row) -> dict:
         else:
             raise ValueError("This source has no feed.")
         sha = hashlib.sha256(raw).hexdigest()
-        _flog(ltag, f"fetched {fname} ({len(raw):,} bytes) in {time.time() - t0:.0f}s"
-                    f"{' — unchanged' if prev.get('sha') == sha else ''}")
         if prev.get("sha") == sha:
             out.update(ok=True, sha=sha, note="Checked — same file as last time.")
         else:
             df = _builder_read_frame(fname, raw)
-            prev_rows = int(row["row_count"] or 0)
-            if prev_rows >= 1000 and len(df) < prev_rows * 0.5:
-                raise ValueError(f"Pulled only {len(df):,} rows but the last good pull had "
-                                 f"{prev_rows:,} — the vendor likely cut the download short. "
-                                 f"Keeping the existing data; try again later.")
             df.astype(str).to_sql(row["table_name"], eng, if_exists="replace",
                                   index=False, chunksize=2000)
             try:
@@ -5280,8 +4940,7 @@ def _feed_run_source(eng, row) -> dict:
             except Exception:
                 m = {}
             cols = {str(c) for c in df.columns}
-            m = {k: v for k, v in m.items()                   # drop vanished columns —
-                 if v in cols or str(v).startswith("=")}      # fixed values always keep
+            m = {k: v for k, v in m.items() if v in cols}     # drop vanished columns
             for k, v in _builder_automap(df.columns).items():  # recognise new ones
                 m.setdefault(k, v)
             with eng.begin() as c:
@@ -5325,29 +4984,15 @@ def _feed_run_source(eng, row) -> dict:
                 out["note"] = out["note"] + f" · freight failed: {str(fe)[:120]}"
     except Exception as e:
         out["note"] = str(e)[:300]
-        import traceback
-        _flog(ltag, f"FAILED after {time.time() - t0:.0f}s: {out['note']}\n"
-                    + traceback.format_exc()[-1500:])
         if prev.get("ok", True):        # tell a human once, not every retry
             _feed_alert(f"Catalog feed failed: {row['name']}",
                         f"The {kind} feed for \"{row['name']}\" failed:\n\n{out['note']}\n\n"
                         f"The catalog keeps serving its last good build. The feed retries "
                         f"on its schedule; this mail repeats only after it has recovered "
                         f"and broken again.")
-    out["secs"] = int(time.time() - t0)
-    _flog(ltag, f"run {'ok' if out.get('ok') else 'failed'} in {out['secs']}s: "
-                f"{out.get('note', '')[:200]}")
-    # The final status must land — a card left saying "running" is the one
-    # thing worse than a failed pull, so this write is retried.
-    for attempt in range(5):
-        try:
-            with eng.begin() as c:
-                c.execute(text("update cat_sources set feed_status=:s where id=:i"),
-                          {"s": json.dumps(out), "i": row["id"]})
-            break
-        except Exception as we:
-            _flog(ltag, f"status write try {attempt + 1} failed: {str(we)[:120]}")
-            time.sleep(3 * (attempt + 1))
+    with eng.begin() as c:
+        c.execute(text("update cat_sources set feed_status=:s where id=:i"),
+                  {"s": json.dumps(out), "i": row["id"]})
     return out
 
 
@@ -5564,145 +5209,10 @@ async def builder_feed_run(request: Request):
         kind = "manual"
     if kind not in ("api", "sftp", "email"):
         raise HTTPException(400, "That source has no feed set up yet — pick one and save it first.")
-    # One run at a time: a second press while one is going just stacks a racing
-    # copy that slows everything down. ⏹ Stop clears a stuck one.
-    with _builder_engine().connect() as c:
-        strow = c.execute(text("select feed_status from cat_sources where id=:i"),
-                          {"i": sid}).mappings().first()
-    st = _feed_status_of(strow) if strow else {}
-    if st.get("running") and (time.time() - float(st.get("last_ts") or 0)) < 7200:
-        return {"ok": True, "started": False,
-                "message": "A pull is already running for this source — let it finish, "
-                           "or press ⏹ Stop runs first if it looks stuck."}
-    _flog("admin", f"Check now pressed for source {sid} ({kind}) by {_label}")
-
-    def _bg():
-        try:
-            res = _feed_run_due({sid}, cust)
-            _flog("admin", f"run finished for source {sid}: "
-                           f"{json.dumps(res, default=str)[:600]}")
-        except BaseException as e:      # never let a run vanish without a trace
-            import traceback
-            _flog("admin", f"run CRASHED for source {sid}: {e!r}\n"
-                           + traceback.format_exc()[-2000:])
-    threading.Thread(target=_bg, name=f"feed-{sid}", daemon=True).start()
+    asyncio.create_task(asyncio.to_thread(_feed_run_due, {sid}, cust))
     return {"ok": True, "started": True,
             "message": "Checking — running in the background. A big API can take a few "
                        "minutes; the status line on the card updates when it finishes."}
-
-
-@app.post("/api/admin/builder/feed/atptest")
-async def builder_feed_atptest(request: Request):
-    """One ATP batch of a few SKUs from the saved table, with the raw request
-    and raw answer shown — so a quantity problem is read in seconds, not
-    after a full pull. Uses the card's SAVED credentials."""
-    sc, cust, _label = await _builder_admin(request)
-    body = await request.json() or {}
-    sid = str(body.get("id") or "")
-    from sqlalchemy import text
-    from xml.sax.saxutils import escape as _xesc
-    import xml.etree.ElementTree as ET
-    eng = _builder_engine()
-    with eng.connect() as c:
-        row = c.execute(text("select * from cat_sources where id=:i and customer=:c"),
-                        {"i": sid, "c": cust}).mappings().first()
-    if row is None:
-        raise HTTPException(404, "No such source.")
-    cfg = _feed_of(row)
-    qd = {str(k).lower(): str(v) for k, v in (cfg.get("qparams") or [])}
-    ext = str(cfg.get("atp_external_id") or "").strip()
-    key = str(cfg.get("atp_keycode") or "").strip()
-    usr = str(cfg.get("atp_user") or "").strip()
-    pw = str(cfg.get("atp_password") or "").strip()
-    if not (ext and key and usr and pw):
-        raise HTTPException(400, "Fill and SAVE the ATP External ID, KeyCode, user and password first.")
-    customer = str(cfg.get("atp_customer") or "").strip() or qd.get("customer", "")
-    shipto = str(cfg.get("atp_shipto") or "").strip() or qd.get("shipto", "")
-    duns = str(cfg.get("atp_duns") or "").strip() or _ATP_DUNS
-    url = str(cfg.get("atp_url") or "").strip() or _ATP_URL
-    skus = [str(s) for s in (body.get("skus") or []) if str(s).strip()]
-    if not skus:
-        try:
-            import pandas as pd
-            with eng.connect() as c:
-                df = pd.read_sql(text(f'select * from "{row["table_name"]}" limit 200'), c)
-            col = _feed_sku_col(df)
-            if col:
-                skus = [s for s in df[col].astype(str).str.strip().unique().tolist()
-                        if s and s.lower() != "nan"][:5]
-        except Exception:
-            skus = []
-    if not skus:
-        raise HTTPException(400, "No SKUs to test with — run the main pull once first.")
-    fidx = _atp_build_fidx(customer, shipto, duns, skus)
-    env = ('<?xml version="1.0" encoding="utf-8"?>'
-           '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
-           f'<soap:Body><ATPRequest xmlns="{_ATP_NS}">'
-           f'<ExternalID>{_xesc(ext)}</ExternalID><KeyCode>{_xesc(key)}</KeyCode>'
-           f'<sUser>{_xesc(usr)}</sUser><sPassword>{_xesc(pw)}</sPassword>'
-           f'<sXml>{_xesc(fidx)}</sXml></ATPRequest></soap:Body></soap:Envelope>')
-    headers = {"Content-Type": "text/xml; charset=utf-8",
-               "SOAPAction": f'"{_ATP_NS}/ATPRequest"'}
-
-    def _call():
-        t1 = time.time()
-        with httpx.Client(timeout=120, follow_redirects=True) as cl:
-            r = cl.post(url, content=env.encode("utf-8"), headers=headers)
-        return r, time.time() - t1
-    r, secs = await asyncio.to_thread(_call)
-    res, rows, err = None, [], ""
-    try:
-        sr = ET.fromstring(r.content)
-        res = next((e.text for e in sr.iter() if e.tag.split('}')[-1] == "ATPRequestResult"), None)
-        if res is None:
-            res = next((e.text for e in sr.iter() if e.tag.split('}')[-1].endswith("Result")), None)
-    except Exception as e:
-        err = f"answer is not XML: {str(e)[:100]}"
-    if res and res.strip().startswith("<"):
-        err = _atp_error(res)
-        if not err:
-            try:
-                rows = _atp_parse_advice(res)
-            except Exception as e:
-                err = f"advice did not parse: {str(e)[:100]}"
-    out = {"ok": r.status_code == 200 and not err and len(rows) == len(skus),
-           "status": r.status_code, "secs": round(secs, 1), "asked": skus,
-           "sent": {"external_id": ext, "user": usr, "keycode_len": len(key),
-                    "keycode_tail": key[-4:], "password_len": len(pw)},
-           "customer": customer, "shipto": shipto, "duns": duns, "url": url,
-           "request_fidx": fidx[:2500],
-           "answer": (res if res is not None else r.text)[:3000],
-           "parsed": rows[:20], "error": err}
-    _flog("ATP test", json.dumps(out, default=str)[:4000])
-    return out
-
-
-@app.post("/api/admin/builder/feed/stop")
-async def builder_feed_stop(request: Request):
-    """The admin's ⏹ Stop: running pulls die at their next step, and every
-    card stuck saying 'running' is cleared to a plain try-again note."""
-    sc, cust, _label = await _builder_admin(request)
-    _FEED_STOP["at"] = time.time()
-    from sqlalchemy import text
-    eng = _builder_engine()
-    with eng.connect() as c:
-        rows = c.execute(text("select id, feed_status from cat_sources where customer=:c"),
-                         {"c": cust}).mappings().all()
-    n = 0
-    for r in rows:
-        st = _feed_status_of(r)
-        if st.get("running"):
-            st.pop("running", None)
-            st["ok"] = False
-            st["note"] = "Stopped from the admin — press Check now when ready to run fresh."
-            with eng.begin() as c:
-                c.execute(text("update cat_sources set feed_status=:s where id=:i"),
-                          {"s": json.dumps(st), "i": r["id"]})
-            n += 1
-    return {"ok": True, "stopped": n,
-            "message": (f"Stopped {n} run{'' if n == 1 else 's'} — background work winds "
-                        f"down within a minute." if n else
-                        "Nothing was running — all clear.")}
 
 
 # The static-file mount goes LAST: a mount at "/" catches every path, so every

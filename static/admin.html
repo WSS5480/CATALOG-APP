@@ -134,7 +134,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v78</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v79</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1272,14 +1272,24 @@ function bldFeedBox(src){
             '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-atpon-' + esc(src.id) + '"' +
             (f.atp_on ? ' checked' : '') + '> <b>Also pull quantities</b> (Ashley ATP) — after the main pull, ' +
             'every SKU is checked for availability + lead time and joined on. Adds 10–25 minutes for a big catalog.</label></div>' +
-          inp('atp-external', 'ATP External ID — e.g. Company3989100', f.atp_external_id, '210px') +
-          '<input class="f" type="password" id="fd-atp-keycode-' + esc(src.id) +
-            '" placeholder="ATP KeyCode" value="' + esc(f.atp_keycode || '') + '" style="max-width:170px">' +
-          inp('atp-user', 'ATP user — e.g. AD_…_VP', f.atp_user, '160px') +
-          '<input class="f" type="password" id="fd-atp-pass-' + esc(src.id) +
-            '" placeholder="ATP password" value="' + esc(f.atp_password || '') + '" style="max-width:150px">' +
-          inp('atp-customer', 'customer (blank = from parameters)', f.atp_customer, '200px') +
-          inp('atp-shipto', 'shipto (blank = from parameters)', f.atp_shipto, '180px') +
+          // each box carries its name ABOVE it — a placeholder vanishes once
+          // typed over, and four look-alike secret boxes were getting mixed up
+          '<div style="display:flex;flex-wrap:wrap;gap:8px;flex-basis:100%">' +
+            '<label class="small" style="display:block"><b>External ID</b> (Buddys + customer no.)<br>' +
+              inp('atp-external', 'Buddys3989100', f.atp_external_id, '190px') + '</label>' +
+            '<label class="small" style="display:block"><b>KeyCode</b> (24 chars, ends ==)<br>' +
+              '<input class="f" type="password" id="fd-atp-keycode-' + esc(src.id) +
+              '" placeholder="the ATP_KEYCODE value" value="' + esc(f.atp_keycode || '') + '" style="max-width:190px"></label>' +
+            '<label class="small" style="display:block"><b>User</b> (AD_…_VP)<br>' +
+              inp('atp-user', 'AD_3989100_VP', f.atp_user, '160px') + '</label>' +
+            '<label class="small" style="display:block"><b>Password</b> (the AD_PASSWORD value)<br>' +
+              '<input class="f" type="password" id="fd-atp-pass-' + esc(src.id) +
+              '" placeholder="password" value="' + esc(f.atp_password || '') + '" style="max-width:160px"></label>' +
+            '<label class="small" style="display:block"><b>Customer</b> (blank = from parameters)<br>' +
+              inp('atp-customer', '3989100', f.atp_customer, '150px') + '</label>' +
+            '<label class="small" style="display:block"><b>Ship-to</b> (blank = from parameters)<br>' +
+              inp('atp-shipto', '571', f.atp_shipto, '110px') + '</label>' +
+          '</div>' +
           '<button class="btn ghost sm" onclick="bldAtpTest(this,\'' + esc(src.id) + '\')" ' +
             'title="Asks the quantity service for 5 SKUs with the SAVED settings and shows the raw answer">' +
             '🧪 Test quantities</button>' +

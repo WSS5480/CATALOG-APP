@@ -134,7 +134,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v83</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v84</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1082,6 +1082,7 @@ function drawBuilder(){
         '<div id="bld-prev-' + esc(src.id) + '"></div>' +
         '</div>' +
       '</div>'; }).join('') || '') +
+    '<div id="bld-trash"></div>' +
     '<div id="bld-vinfo"></div>' +
     '<div class="row" style="margin-top:14px">' +
       '<button class="btn green" onclick="bldBuild()">⚒ Build the catalog</button>' +
@@ -1090,6 +1091,7 @@ function drawBuilder(){
       '⏹ kills a stuck or runaway feed pull — then press Check now when ready.</span>' +
     '</div>';
   loadVendInfo();
+  bldTrash();
 }
 
 /* ── vendor ordering details: order email + freight minimums ── */
@@ -1191,11 +1193,68 @@ async function bldVendor(id, v){
   }catch(e){ say(e.message, 'bad'); }
 }
 
-async function bldRemove(id, name){
-  if(!confirm('Remove the source "' + name + '"?\n\nIts rows leave the next build.')) return;
+function bldRemove(id, name){
+  // A vendor is a lot to lose by one stray click: its rows, feed settings,
+  // credentials, mapping, vendor edits and freight all go. So: a red, full
+  // stop that only unlocks when the vendor's name is typed back.
+  const src = (BLD.sources || []).find(s => s.id === id) || {};
+  const label = String(src.vendor || src.name || name || '').trim();
+  const old = $('bld-danger'); if(old) old.remove();
+  const ov = document.createElement('div'); ov.id = 'bld-danger';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(20,0,0,.62);z-index:5000;display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.innerHTML =
+    '<div style="background:#fff;border:4px solid #c62828;border-radius:14px;max-width:560px;width:100%;padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.4)">' +
+      '<div style="font-size:26px;font-weight:900;color:#c62828;letter-spacing:.5px">⚠ DANGER — ABOUT TO DELETE A VENDOR</div>' +
+      '<div style="font-size:18px;margin:12px 0 6px"><b>' + esc(label) + '</b>' +
+        (src.rows ? ' <span class="muted">(' + Number(src.rows).toLocaleString() + ' rows)</span>' : '') + '</div>' +
+      '<div style="line-height:1.5">This removes the vendor <b>everywhere</b>: its catalog rows at the next build, its feed ' +
+        'settings and API/ATP credentials, its column mapping and ETL steps, its vendor edits (special buys, packages), ' +
+        'its vendor info and its freight-by-store rows.<br><span class="muted">The card’s settings stay in the recycle ' +
+        'bin below the sources for 30 days (Restore brings them back; the rows re-pull) — the rest does not come back.</span></div>' +
+      '<div style="margin-top:14px"><label class="small">Type the vendor’s name to unlock: <b>' + esc(label) + '</b></label>' +
+        '<input class="f" id="bld-danger-in" autocomplete="off" placeholder="' + esc(label) + '" style="max-width:100%;margin-top:4px"></div>' +
+      '<div class="row" style="margin-top:14px;justify-content:flex-end;gap:10px">' +
+        '<button class="btn ghost" onclick="document.getElementById(\'bld-danger\').remove()">Keep it</button>' +
+        '<button class="btn" id="bld-danger-go" disabled style="background:#c62828;color:#fff;opacity:.45">Delete ' + esc(label) + '</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  const inp = $('bld-danger-in'), go = $('bld-danger-go');
+  inp.focus();
+  inp.oninput = () => { const ok = inp.value.trim().toUpperCase() === label.toUpperCase(); go.disabled = !ok; go.style.opacity = ok ? '1' : '.45'; };
+  go.onclick = async () => {
+    go.disabled = true; go.textContent = 'Deleting…';
+    try{
+      const out = await api('/api/admin/builder/remove', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id})});
+      ov.remove();
+      say(out.message || 'Removed.', 'info');
+      await loadBuilder();
+    }catch(e){ ov.remove(); say(e.message, 'bad'); }
+  };
+}
+
+async function bldTrash(){
+  // the recycle bin under the sources: deleted cards, one press to restore
+  const box = $('bld-trash'); if(!box) return;
   try{
-    await api('/api/admin/builder/remove', {method:'POST',
+    const t = await api('/api/admin/builder/trash');
+    const items = (t && t.items) || [];
+    if(!items.length){ box.innerHTML = ''; return; }
+    box.innerHTML = '<div class="small" style="margin-top:12px;padding:10px 12px;border:1px dashed #c62828;border-radius:10px;background:#fff7f7">' +
+      '<b style="color:#c62828">Recently deleted</b> — settings kept; Restore brings the card back and it re-pulls:<br>' +
+      items.map(i => '<span style="display:inline-block;margin:6px 10px 0 0">' + esc(i.vendor || i.name) +
+        ' <span class="muted">(' + Number(i.rows || 0).toLocaleString() + ' rows · ' + esc(String(i.deleted_at || '').slice(0, 16)) + ')</span> ' +
+        '<button class="btn sm" onclick="bldRestore(\'' + esc(i.id) + '\')">↺ Restore</button></span>').join('') +
+      '</div>';
+  }catch(e){ box.innerHTML = ''; }
+}
+
+async function bldRestore(id){
+  try{
+    const out = await api('/api/admin/builder/restore', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id})});
+    say('✓ ' + (out.message || 'Restored.'), 'ok');
     await loadBuilder();
   }catch(e){ say(e.message, 'bad'); }
 }
@@ -1240,55 +1299,47 @@ function bldFeedBox(src){
   if(t === 'api'){
     const qrows = ((f.qparams && f.qparams.length ? f.qparams : [['','']]).map(q =>
       '<div class="row" style="margin-top:5px;flex-basis:100%">' +
-      '<input class="f fd-qpk-' + esc(src.id) + '" placeholder="Key — e.g. Customer" value="' +
+      '<input class="f fd-qpk-' + esc(src.id) + '" placeholder="customer / shipto / limit" value="' +
         esc(q[0] || '') + '" style="max-width:200px">' +
-      '<input class="f fd-qpv-' + esc(src.id) + '" placeholder="Value — e.g. 3989100" value="' +
+      '<input class="f fd-qpv-' + esc(src.id) + '" placeholder="3989000 / 354 / 200" value="' +
         esc(q[1] || '') + '" style="max-width:240px"></div>').join(''));
-    const xurls = (f.urls || []).map(u =>
-      '<input class="f fd-xurl-' + esc(src.id) + '" placeholder="https://…/Prices — joined by item number"' +
-      ' value="' + esc(u || '') + '" style="max-width:380px">').join('');
-    cfg = inp('url', 'https://vendor.com/api/prices (or a CSV/JSON file URL)', f.url, '380px') +
-          '<span id="fd-xurls-' + esc(src.id) + '" style="display:contents">' + xurls + '</span>' +
-          '<button class="btn ghost sm" onclick="bldUrlAdd(\'' + esc(src.id) + '\')" ' +
-            'title="Pull a second endpoint too — Prices, Freight, Quantity… Same credentials and ' +
-            'parameters; its columns are joined onto the first by item number.">＋ endpoint</button>' +
-          inp('header', 'Header if it needs one, e.g. Ocp-Apim-Subscription-Key: …', f.header, '330px') +
-          inp('auth-user', 'Basic auth user (optional)', f.auth_user, '180px') +
-          '<input class="f" type="password" id="fd-auth-pass-' + esc(src.id) +
-            '" placeholder="Basic auth password" value="' + esc(f.auth_pass || '') +
-            '" style="max-width:180px">' +
-          '<div style="flex-basis:100%"><span class="muted small">OAuth (only if the vendor ' +
-            'gave you a Client ID + Secret — the app trades them for a token first):</span></div>' +
-          inp('token-url', 'Token URL from the vendor\'s API docs', f.token_url, '340px') +
-          inp('client-id', 'Client ID', f.client_id, '250px') +
-          '<input class="f" type="password" id="fd-client-secret-' + esc(src.id) +
-            '" placeholder="Client Secret" value="' + esc(f.client_secret || '') +
-            '" style="max-width:220px">' +
-          '<div style="flex-basis:100%"><span class="muted small">Query parameters — sent with ' +
-            'every pull, like Domo\'s key/value rows:</span></div>' +
+    // Every box carries its name and a real example ABOVE it (a placeholder
+    // vanishes once typed over). Only what an Ashley account needs is shown —
+    // OAuth, extra endpoints and per-card store lists were never used.
+    const fld = (title, hint, inner, w) =>
+      '<label class="small" style="display:block;max-width:' + (w || '220px') + ';width:100%"><b>' + title + '</b>' +
+      (hint ? ' <span class="muted">' + hint + '</span>' : '') + '<br>' + inner + '</label>';
+    const txt = (k, ph, val, w) => '<input class="f" id="fd-' + k + '-' + esc(src.id) +
+      '" placeholder="' + ph + '" value="' + esc(val === undefined || val === null ? '' : val) + '" style="max-width:100%">';
+    const pwd = (k, ph, val) => '<input class="f" type="password" id="fd-' + k + '-' + esc(src.id) +
+      '" placeholder="' + ph + '" value="' + esc(val || '') + '" style="max-width:100%">';
+    const noPass = f.auth_user && !f.auth_pass;
+    cfg = '<div style="display:flex;flex-wrap:wrap;gap:8px 12px;flex-basis:100%">' +
+          fld('API URL *', 'the ProductsAndPrices endpoint',
+              txt('url', 'https://apigw3.ashleyfurniture.com/productinformation/ProductsAndPrices', f.url), '460px') +
+          fld('Header *', 'client_id: … (from the Domo notebook’s HDRS line)',
+              txt('header', 'client_id: 3f53978ff77a4cb0bbae140913240322', f.header), '380px') +
+          fld('API user *', 'the AD user for this account',
+              txt('auth-user', 'AD_3989000_VP', f.auth_user), '190px') +
+          fld('API password *' + (noPass ? ' <span style="color:#c62828">— empty!</span>' : ''), 'same AD password',
+              pwd('auth-pass', 'the AD password', f.auth_pass), '190px') +
+          '</div>' +
+          '<div style="flex-basis:100%;margin-top:8px"><span class="small"><b>Query parameters *</b> ' +
+            '<span class="muted">— sent with every pull. Ashley needs exactly these three: ' +
+            '<code>customer</code> = the account’s customer number (e.g. 3989000), <code>shipto</code> = the account’s ' +
+            'representative store (e.g. 354), <code>limit</code> = 200. Quantities and freight read customer and ' +
+            'shipto from here too.</span></span></div>' +
           '<div id="fd-qps-' + esc(src.id) + '" style="flex-basis:100%">' + qrows + '</div>' +
           '<button class="btn ghost sm" onclick="bldQpAdd(\'' + esc(src.id) + '\')">＋ parameter</button>' +
           '<div style="flex-basis:100%;margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
             '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-atpon-' + esc(src.id) + '"' +
             (f.atp_on ? ' checked' : '') + '> <b>Also pull quantities</b> (Ashley ATP) — after the main pull, ' +
-            'every SKU is checked for availability + lead time and joined on. Adds 10–25 minutes for a big catalog.</label></div>' +
-          // each box carries its name ABOVE it — a placeholder vanishes once
-          // typed over, and four look-alike secret boxes were getting mixed up
-          '<div style="display:flex;flex-wrap:wrap;gap:8px;flex-basis:100%">' +
-            '<label class="small" style="display:block"><b>External ID</b> (Buddys + customer no.)<br>' +
-              inp('atp-external', 'Buddys3989100', f.atp_external_id, '190px') + '</label>' +
-            '<label class="small" style="display:block"><b>KeyCode</b> (24 chars, ends ==)<br>' +
-              '<input class="f" type="password" id="fd-atp-keycode-' + esc(src.id) +
-              '" placeholder="the ATP_KEYCODE value" value="' + esc(f.atp_keycode || '') + '" style="max-width:190px"></label>' +
-            '<label class="small" style="display:block"><b>User</b> (AD_…_VP)<br>' +
-              inp('atp-user', 'AD_3989100_VP', f.atp_user, '160px') + '</label>' +
-            '<label class="small" style="display:block"><b>Password</b> (the AD_PASSWORD value)<br>' +
-              '<input class="f" type="password" id="fd-atp-pass-' + esc(src.id) +
-              '" placeholder="password" value="' + esc(f.atp_password || '') + '" style="max-width:160px"></label>' +
-            '<label class="small" style="display:block"><b>Customer</b> (blank = from parameters)<br>' +
-              inp('atp-customer', '3989100', f.atp_customer, '150px') + '</label>' +
-            '<label class="small" style="display:block"><b>Ship-to</b> (blank = from parameters)<br>' +
-              inp('atp-shipto', '571', f.atp_shipto, '110px') + '</label>' +
+            'every SKU is checked for availability + lead time and joined on. A few minutes for a big catalog.</label></div>' +
+          '<div style="display:flex;flex-wrap:wrap;gap:8px 12px;flex-basis:100%">' +
+          fld('External ID *', '“Buddys” + customer number', txt('atp-external', 'Buddys3989000', f.atp_external_id), '200px') +
+          fld('KeyCode *', '24 characters, ends in ==', pwd('atp-keycode', 'the ATP_KEYCODE_… value', f.atp_keycode), '220px') +
+          fld('ATP user *', 'same AD user', txt('atp-user', 'AD_3989000_VP', f.atp_user), '180px') +
+          fld('ATP password *', 'same AD password', pwd('atp-pass', 'the AD password', f.atp_password), '180px') +
           '</div>' +
           '<button class="btn ghost sm" onclick="bldAtpTest(this,\'' + esc(src.id) + '\')" ' +
             'title="Asks the quantity service for 5 SKUs with the SAVED settings and shows the raw answer">' +
@@ -1297,10 +1348,8 @@ function bldFeedBox(src){
           '<div style="flex-basis:100%;margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
             '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-frton-' + esc(src.id) + '"' +
             (f.frt_on ? ' checked' : '') + '> <b>Also pull freight by store</b> — the same API asked once per ' +
-            'ship-to, keeping the freight fields (fob, freight, express, net). Skips ship-tos the account ' +
-            'can\'t quote.</label></div>' +
-          inp('frt-stores', 'Ship-to numbers, comma-separated — blank = store numbers from Users',
-              f.frt_stores, '420px');
+            'store number from Users, keeping the freight fields (fob, freight, express, net). Stores this account ' +
+            'can\'t quote are skipped.</label></div>';
   }else if(t === 'sftp'){
     cfg = inp('host', 'sftp.vendor.com', f.host, '190px') +
           inp('port', '22', f.port || 22, '70px') +
@@ -1456,13 +1505,8 @@ async function bldFeedSave(id){
   const feed = {type: t, every_hours: g('every') || 24};
   if(t === 'api'){
     feed.url = g('url'); feed.header = g('header');
-    feed.urls = [...document.querySelectorAll('.fd-xurl-' + id)]
-      .map(e => e.value.trim()).filter(Boolean);
     feed.auth_user = g('auth-user');
     feed.auth_pass = ($('fd-auth-pass-' + id) || {value:''}).value;
-    feed.token_url = g('token-url');
-    feed.client_id = g('client-id');
-    feed.client_secret = ($('fd-client-secret-' + id) || {value:''}).value;
     const ks = [...document.querySelectorAll('.fd-qpk-' + id)].map(e => e.value.trim());
     const vs = [...document.querySelectorAll('.fd-qpv-' + id)].map(e => e.value.trim());
     feed.qparams = ks.map((k, j) => [k, vs[j] || '']).filter(p => p[0]);
@@ -1471,10 +1515,7 @@ async function bldFeedSave(id){
     feed.atp_keycode = ($('fd-atp-keycode-' + id) || {value:''}).value;
     feed.atp_user = g('atp-user');
     feed.atp_password = ($('fd-atp-pass-' + id) || {value:''}).value;
-    feed.atp_customer = g('atp-customer');
-    feed.atp_shipto = g('atp-shipto');
     feed.frt_on = ($('fd-frton-' + id) || {checked:false}).checked;
-    feed.frt_stores = g('frt-stores');
   }
   if(t === 'sftp'){ feed.host = g('host'); feed.port = g('port') || 22; feed.user = g('user');
                     feed.password = ($('fd-pass-' + id) || {value:''}).value;

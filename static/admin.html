@@ -134,7 +134,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v80</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v81</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1558,8 +1558,8 @@ async function bldAtpTest(btn, id){
       ' — ' + esc(out.secs) + 's, customer ' + esc(out.customer) + ', shipto ' + esc(out.shipto) + ', asked: ' + esc((out.asked||[]).join(', ')) +
       (out.error ? '<br><b style="color:#b00020">Ashley says: ' + esc(out.error) + '</b>' : '') +
       (out.sent ? '<br><span class="muted">Sent with External ID <b>' + esc(out.sent.external_id) + '</b>, user <b>' + esc(out.sent.user) +
-        '</b>, KeyCode ' + esc(out.sent.keycode_len) + ' chars ending “' + esc(out.sent.keycode_tail) + '”, password ' + esc(out.sent.password_len) +
-        ' chars — compare with the Domo notebook’s SECRETS cell, retype what differs, Save feed, test again.</span>' : '') +
+        '</b>, KeyCode ' + esc(out.sent.keycode_len) + ' chars ending “' + esc(out.sent.keycode_tail) + '” [fp ' + esc(out.sent.keycode_fp||'') + '], password ' + esc(out.sent.password_len) +
+        ' chars [fp ' + esc(out.sent.password_fp||'') + '] — compare with the Domo notebook’s SECRETS cell, retype what differs, Save feed, test again.</span>' : '') +
       '<br><b>Parsed:</b><br>' + parsed +
       '<details style="margin-top:6px"><summary>Raw answer</summary><pre style="white-space:pre-wrap;word-break:break-all;max-height:260px;overflow:auto;font-size:11px">' + esc(out.answer || '') + '</pre></details>' +
       '<details><summary>Request sent</summary><pre style="white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto;font-size:11px">' + esc(out.request_fidx || '') + '</pre></details>' +

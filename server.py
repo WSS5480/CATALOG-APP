@@ -131,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "79"
+APP_VERSION = "80"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
     # The installed-app name lives in pwa_catalog.py, a file that is easy
@@ -4493,7 +4493,7 @@ def _feed_atp_join(cfg: dict, df, progress=None):
     import time as _time
     import pandas as pd
     import xml.etree.ElementTree as ET
-    from xml.sax.saxutils import escape as _xesc
+    from html import escape as _xesc      # same escaper the Domo notebook uses
     qd = {str(k).lower(): str(v) for k, v in (cfg.get("qparams") or [])}
     url = str(cfg.get("atp_url") or "").strip() or _ATP_URL
     ext = str(cfg.get("atp_external_id") or "").strip()
@@ -4537,8 +4537,8 @@ def _feed_atp_join(cfg: dict, df, progress=None):
         env = ('<?xml version="1.0" encoding="utf-8"?>'
                '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
                f'<soap:Body><ATPRequest xmlns="{_ATP_NS}">'
-               f'<ExternalID>{_xesc(ext)}</ExternalID><KeyCode>{_xesc(key)}</KeyCode>'
-               f'<sUser>{_xesc(usr)}</sUser><sPassword>{_xesc(pw)}</sPassword>'
+               f'<ExternalID>{ext}</ExternalID><KeyCode>{key}</KeyCode>'
+               f'<sUser>{usr}</sUser><sPassword>{_xesc(pw)}</sPassword>'
                f'<sXml>{_xesc(fidx)}</sXml></ATPRequest></soap:Body></soap:Envelope>')
         last_err, r = "", None
         with httpx.Client(timeout=120, follow_redirects=True) as cl:
@@ -5600,7 +5600,7 @@ async def builder_feed_atptest(request: Request):
     body = await request.json() or {}
     sid = str(body.get("id") or "")
     from sqlalchemy import text
-    from xml.sax.saxutils import escape as _xesc
+    from html import escape as _xesc      # same escaper the Domo notebook uses
     import xml.etree.ElementTree as ET
     eng = _builder_engine()
     with eng.connect() as c:
@@ -5638,8 +5638,8 @@ async def builder_feed_atptest(request: Request):
     env = ('<?xml version="1.0" encoding="utf-8"?>'
            '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
            f'<soap:Body><ATPRequest xmlns="{_ATP_NS}">'
-           f'<ExternalID>{_xesc(ext)}</ExternalID><KeyCode>{_xesc(key)}</KeyCode>'
-           f'<sUser>{_xesc(usr)}</sUser><sPassword>{_xesc(pw)}</sPassword>'
+           f'<ExternalID>{ext}</ExternalID><KeyCode>{key}</KeyCode>'
+           f'<sUser>{usr}</sUser><sPassword>{_xesc(pw)}</sPassword>'
            f'<sXml>{_xesc(fidx)}</sXml></ATPRequest></soap:Body></soap:Envelope>')
     headers = {"Content-Type": "text/xml; charset=utf-8",
                "SOAPAction": f'"{_ATP_NS}/ATPRequest"'}

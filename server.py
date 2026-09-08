@@ -131,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "85"
+APP_VERSION = "86"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
     # The installed-app name lives in pwa_catalog.py, a file that is easy
@@ -2405,7 +2405,17 @@ def _builder_engine():
                                  "CATALOG_DATABASE_URL, and this screen comes alive.")
     if _BDB["engine"] is None:
         from sqlalchemy import create_engine
-        _BDB["engine"] = create_engine(url, pool_pre_ping=True, pool_size=3, max_overflow=2)
+        kw = dict(pool_pre_ping=True, pool_size=8, max_overflow=8, pool_timeout=15,
+                  pool_recycle=1800)
+        if url.startswith(("postgres://", "postgresql://", "postgresql+psycopg2://")):
+            # A dead socket must error out, never hang the whole app: TCP
+            # keepalives notice a broken link within ~1 minute, and no single
+            # statement may run past 3 minutes.
+            kw["connect_args"] = {"keepalives": 1, "keepalives_idle": 30,
+                                  "keepalives_interval": 10, "keepalives_count": 3,
+                                  "connect_timeout": 15,
+                                  "options": "-c statement_timeout=180000"}
+        _BDB["engine"] = create_engine(url, **kw)
         _builder_migrate(_BDB["engine"])
     return _BDB["engine"]
 
@@ -3181,11 +3191,17 @@ def _photos_mirror(eng, cust: str, row, progress=None, redo=False) -> str:
             rs = c.execute(q, {"c": cust, "ids": batch}).all()
             have.update(r[0] for r in rs)
     todo = ([u for u in urls] if redo else [u for u in urls if _photos_iid(u) not in have])[:4000]
-    got, bad = 0, 0
+    got, bad, dberr = 0, 0, 0
+    tag = f"photos {row['name']}"
+    _flog(tag, f"{len(urls):,} photo links, {len(have):,} already hosted, {len(todo):,} to fetch")
+    t_all = time.time()
     if todo:
         tmo = httpx.Timeout(25.0, connect=10.0)
         with httpx.Client(timeout=tmo, follow_redirects=True) as cl:
             for i, u in enumerate(todo, 1):
+                if dberr >= 3:
+                    raise ValueError(f"the database stopped answering after {i - 1} photos "
+                                     f"({got} saved) — press Host photos now again to continue")
                 try:
                     r = cl.get(u)
                     ct = r.headers.get("content-type", "").split(";")[0].strip().lower()
@@ -3214,12 +3230,20 @@ def _photos_mirror(eng, cust: str, row, progress=None, redo=False) -> str:
                                           {"i": iid2, "c": cust, "u": u[:900],
                                            "t": ct2[:60], "b": body2, "s": len(body2)})
                         got += 1
+                        dberr = 0
                     else:
                         bad += 1
-                except Exception:
+                except Exception as pe:
                     bad += 1
+                    if "pool" in str(pe).lower() or "timeout" in type(pe).__name__.lower() \
+                            or "OperationalError" in type(pe).__name__:
+                        dberr += 1
+                        _flog(tag, f"photo {i}: database trouble: {str(pe)[:120]}")
                 if progress and (i % 25 == 0 or i == len(todo)):
                     progress(i, got, f"photos ({len(todo)} to fetch)")
+                if i % 100 == 0 or i == len(todo):
+                    _flog(tag, f"{i}/{len(todo)} checked, {got} saved, {bad} failed, "
+                               f"{time.time() - t_all:.0f}s")
                 time.sleep(0.15)
     hosted_now = len(have) + got
     return (f"photos: {hosted_now} of {len(urls)} hosted" +
@@ -5643,9 +5667,38 @@ async def _feed_loop():
         await asyncio.sleep(15 * 60)
 
 
+def _watchdog_start(loop):
+    """Every 30 s ask the web loop to answer; when it cannot within 20 s the
+    app is frozen — log it with every thread's stack so the cause is visible
+    in Render's log, then keep checking."""
+    import sys
+    import traceback
+
+    def _run():
+        while True:
+            time.sleep(30)
+            ev = threading.Event()
+            try:
+                loop.call_soon_threadsafe(ev.set)
+            except Exception:
+                continue
+            if not ev.wait(20):
+                stacks = []
+                for tid, frame in sys._current_frames().items():
+                    name = next((t.name for t in threading.enumerate() if t.ident == tid), str(tid))
+                    stacks.append(f"--- thread {name} ---\n" + "".join(traceback.format_stack(frame)[-6:]))
+                _flog("watchdog", "the web loop has not answered for 20s — frozen. Stacks:\n"
+                                  + "\n".join(stacks)[:6000])
+    threading.Thread(target=_run, name="watchdog", daemon=True).start()
+
+
 @app.on_event("startup")
 async def _feed_start():
     asyncio.create_task(_feed_loop())
+    try:
+        _watchdog_start(asyncio.get_running_loop())
+    except Exception:
+        pass
 
 
 def _feed_public(cfg: dict) -> dict:

@@ -131,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "80"
+APP_VERSION = "81"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
     # The installed-app name lives in pwa_catalog.py, a file that is easy
@@ -5668,7 +5668,11 @@ async def builder_feed_atptest(request: Request):
     out = {"ok": r.status_code == 200 and not err and len(rows) == len(skus),
            "status": r.status_code, "secs": round(secs, 1), "asked": skus,
            "sent": {"external_id": ext, "user": usr, "keycode_len": len(key),
-                    "keycode_tail": key[-4:], "password_len": len(pw)},
+                    "keycode_tail": key[-4:], "password_len": len(pw),
+                    # short hashes: lets a saved value be checked against the
+                    # notebook's without either being shown to anyone
+                    "keycode_fp": hashlib.sha256(key.encode()).hexdigest()[:6],
+                    "password_fp": hashlib.sha256(pw.encode()).hexdigest()[:6]},
            "customer": customer, "shipto": shipto, "duns": duns, "url": url,
            "request_fidx": fidx[:2500],
            "answer": (res if res is not None else r.text)[:3000],

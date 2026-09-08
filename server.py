@@ -131,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "82"
+APP_VERSION = "83"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
     # The installed-app name lives in pwa_catalog.py, a file that is easy
@@ -2786,18 +2786,34 @@ async def builder_map(request: Request):
         if not row:
             raise HTTPException(404, "No such source.")
         vals = {}
+        old_label = str(row["vendor_label"] or "").strip()
         if "mapping" in (body or {}):
             m = {str(k): str(v) for k, v in ((body or {}).get("mapping") or {}).items() if str(v)}
             vals["mapping"] = json.dumps(m)
         if "vendor" in (body or {}):
-            vals["vendor_label"] = str((body or {}).get("vendor") or "")[:80]
+            vals["vendor_label"] = str((body or {}).get("vendor") or "").strip()[:80]
             if vals["vendor_label"]:
                 vals["name"] = vals["vendor_label"]   # the line is titled by the vendor you enter
+                # a fixed Vendor value in the mapping follows the label, so the
+                # dropdown and the storefront never disagree with the card
+                try:
+                    m2 = json.loads(vals.get("mapping") or row["mapping"] or "{}") or {}
+                except Exception:
+                    m2 = {}
+                if str(m2.get("Vendor") or "").startswith("="):
+                    m2["Vendor"] = "=" + vals["vendor_label"]
+                    vals["mapping"] = json.dumps(m2)
         if vals:
             sets = ", ".join(f"{k}=:{k}" for k in vals)
             vals.update({"i": sid, "c": cust})
             c.execute(text(f"update cat_sources set {sets}, updated_at=current_timestamp "
                            "where id=:i and customer=:c"), vals)
+    new_label = str((body or {}).get("vendor") or "").strip() if "vendor" in (body or {}) else ""
+    if new_label and old_label and new_label.upper() != old_label.upper():
+        try:
+            _vendor_rename(eng, cust, old_label, new_label)
+        except Exception:
+            pass
     _rebuild_later(cust)
     return {"ok": True, "rebuilding": True}
 
@@ -2832,10 +2848,16 @@ async def builder_remove(request: Request):
                     continue
                 if ven in gone:
                     c.execute(text("delete from cat_orders where id=:i"), {"i": eid})
+            # vendor info and freight-by-store rows filed under it go too
+            for v in gone:
+                c.execute(text("delete from cat_vendorinfo where customer=:c and "
+                               "upper(vendor)=:v"), {"c": cust, "v": v})
+                c.execute(text("delete from cat_freight where customer=:c and "
+                               "upper(vendor)=:v"), {"c": cust, "v": v})
     _rebuild_later(cust)
     return {"ok": True, "rebuilding": True,
-            "message": "Source removed, its vendor edits with it — the catalog is "
-                       "rebuilding itself now; its rows disappear in a few seconds."}
+            "message": "Source removed, its vendor edits, info and freight with it — the "
+                       "catalog is rebuilding itself now; its rows disappear in a few seconds."}
 
 
 @app.get("/api/admin/builder/preview")
@@ -2855,7 +2877,10 @@ async def builder_preview(request: Request, id: str = ""):
     out = pd.DataFrame()
     for name, _req, _h in BUILDER_FIELDS:
         src = m.get(name)
-        if isinstance(src, str) and src.startswith("="):
+        if name == "Vendor" and str(row["vendor_label"] or "").strip() \
+                and not (src and not str(src).startswith("=") and src in df.columns):
+            out[name] = str(row["vendor_label"]).strip()   # the label names the vendor
+        elif isinstance(src, str) and src.startswith("="):
             out[name] = src[1:]              # fixed value shows in the preview too
         elif src and src in df.columns:
             out[name] = df[src].astype(str)
@@ -2864,6 +2889,63 @@ async def builder_preview(request: Request, id: str = ""):
         else:
             out[name] = ""
     return {"columns": list(out.columns), "rows": json.loads(out.to_json(orient="records"))}
+
+
+def _vendor_rename(eng, cust: str, old: str, new: str):
+    """A card's vendor label changed: everything filed under the old name —
+    vendor info (order email, freight minimums), vendor edits (special buys,
+    packages), freight-by-store rows — moves to the new name, so the vendor
+    is renamed rather than duplicated or left behind."""
+    from sqlalchemy import text
+    old, new = str(old or "").strip(), str(new or "").strip()
+    if not old or not new or old.upper() == new.upper():
+        return
+    with eng.begin() as c:
+        have = c.execute(text("select 1 from cat_vendorinfo where customer=:c and "
+                              "upper(vendor)=upper(:v)"), {"c": cust, "v": new}).first()
+        if have:
+            c.execute(text("delete from cat_vendorinfo where customer=:c and "
+                           "upper(vendor)=upper(:v)"), {"c": cust, "v": old})
+        else:
+            c.execute(text("update cat_vendorinfo set vendor=:n where customer=:c and "
+                           "upper(vendor)=upper(:v)"), {"c": cust, "v": old, "n": new})
+        c.execute(text("update cat_freight set vendor=:n where customer=:c and "
+                       "upper(vendor)=upper(:v)"), {"c": cust, "v": old, "n": new})
+        eds = c.execute(text("select id, content from cat_orders where customer=:c "
+                             "and coll='CatalogEdits'"), {"c": cust}).all()
+        for eid, content in eds:
+            try:
+                d = json.loads(content or "{}") or {}
+            except Exception:
+                continue
+            if str(d.get("Vendor") or "").strip().upper() == old.upper():
+                d["Vendor"] = new
+                c.execute(text("update cat_orders set content=:j where id=:i"),
+                          {"j": json.dumps(d), "i": eid})
+
+
+def _vendor_sweep(eng, cust: str, keep: set):
+    """Vendors that no longer exist anywhere (no card, no built rows) leave
+    nothing behind: vendor info, vendor edits and freight rows go with them."""
+    from sqlalchemy import text
+    keep = {str(k).strip().upper() for k in keep if str(k).strip()}
+    with eng.begin() as c:
+        for tbl in ("cat_vendorinfo", "cat_freight"):
+            vs = [r[0] for r in c.execute(text(f"select distinct vendor from {tbl} "
+                                               f"where customer=:c"), {"c": cust}).all()]
+            for v in vs:
+                if str(v or "").strip().upper() not in keep:
+                    c.execute(text(f"delete from {tbl} where customer=:c and vendor=:v"),
+                              {"c": cust, "v": v})
+        eds = c.execute(text("select id, content from cat_orders where customer=:c "
+                             "and coll='CatalogEdits'"), {"c": cust}).all()
+        for eid, content in eds:
+            try:
+                ven = str((json.loads(content or "{}") or {}).get("Vendor") or "").strip().upper()
+            except Exception:
+                continue
+            if ven and ven not in keep:
+                c.execute(text("delete from cat_orders where id=:i"), {"i": eid})
 
 
 # Every schema field has a type, and the build converts to it: text is
@@ -3115,6 +3197,14 @@ def _builder_do_build(eng, cust: str):
                  "QtyAvailable": ("qtyavailable", "qtyavail")}
         for name, _req, _h in BUILDER_FIELDS:
             src = m.get(name)
+            # The card's VENDOR LABEL is the vendor's name everywhere: it beats a
+            # stale fixed value (only a real Vendor column in the file, i.e. a
+            # multi-vendor file, is allowed to say otherwise). Renaming the card
+            # therefore renames the vendor on the storefront at the next build.
+            if name == "Vendor" and str(r["vendor_label"] or "").strip() \
+                    and not (src and not str(src).startswith("=") and src in df.columns):
+                out[name] = str(r["vendor_label"]).strip()
+                continue
             if isinstance(src, str) and src.startswith("="):
                 out[name] = src[1:]          # a fixed value, e.g. Brand "=Ashley"
                 continue
@@ -3217,24 +3307,15 @@ def _builder_do_build(eng, cust: str):
         c.execute(text("delete from cat_built where customer=:c"), {"c": cust})
         c.execute(text("insert into cat_built(customer,table_name,row_count,serving) "
                        "values(:c,:t,:r,true)"), {"c": cust, "t": table, "r": int(len(allf))})
-    # Orphan sweep: a vendor edit (special buy, package…) whose vendor no
-    # longer exists — no source card, nothing in the built rows — is a ghost
-    # that would keep resurrecting deleted vendors on the storefront. Out.
+    # Orphan sweep: anything filed under a vendor that no longer exists — no
+    # source card, nothing in the built rows — is a ghost that would keep
+    # resurrecting deleted or renamed vendors on the storefront. Out: vendor
+    # edits (special buys, packages), vendor info, freight-by-store rows.
     try:
         keep = set(src_vendors)
         keep |= {str(v).strip().upper() for v in allf["Vendor"].astype(str) if str(v).strip()}
         keep.discard("")
-        with eng.connect() as c:
-            eds = c.execute(text("select id, content from cat_orders where customer=:c "
-                                 "and coll='CatalogEdits'"), {"c": cust}).all()
-        for eid, content in eds:
-            try:
-                ven = str((json.loads(content or "{}") or {}).get("Vendor") or "").strip().upper()
-            except Exception:
-                continue
-            if ven and ven not in keep:
-                with eng.begin() as c:
-                    c.execute(text("delete from cat_orders where id=:i"), {"i": eid})
+        _vendor_sweep(eng, cust, keep)
     except Exception:
         pass
     return int(len(allf)), per

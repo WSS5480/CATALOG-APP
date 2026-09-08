@@ -134,7 +134,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v84</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v85</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -1299,9 +1299,9 @@ function bldFeedBox(src){
   if(t === 'api'){
     const qrows = ((f.qparams && f.qparams.length ? f.qparams : [['','']]).map(q =>
       '<div class="row" style="margin-top:5px;flex-basis:100%">' +
-      '<input class="f fd-qpk-' + esc(src.id) + '" placeholder="customer / shipto / limit" value="' +
+      '<input class="f fd-qpk-' + esc(src.id) + '" placeholder="customer  ·  customerNumber" value="' +
         esc(q[0] || '') + '" style="max-width:200px">' +
-      '<input class="f fd-qpv-' + esc(src.id) + '" placeholder="3989000 / 354 / 200" value="' +
+      '<input class="f fd-qpv-' + esc(src.id) + '" placeholder="3989000" value="' +
         esc(q[1] || '') + '" style="max-width:240px"></div>').join(''));
     // Every box carries its name and a real example ABOVE it (a placeholder
     // vanishes once typed over). Only what an Ashley account needs is shown —
@@ -1314,26 +1314,33 @@ function bldFeedBox(src){
     const pwd = (k, ph, val) => '<input class="f" type="password" id="fd-' + k + '-' + esc(src.id) +
       '" placeholder="' + ph + '" value="' + esc(val || '') + '" style="max-width:100%">';
     const noPass = f.auth_user && !f.auth_pass;
+    const xurls = (f.urls || []).map(u =>
+      '<input class="f fd-xurl-' + esc(src.id) + '" placeholder="https://…/api/product/GetPriceList — joined by item number"' +
+      ' value="' + esc(u || '') + '" style="max-width:460px;margin-top:6px">').join('');
     cfg = '<div style="display:flex;flex-wrap:wrap;gap:8px 12px;flex-basis:100%">' +
-          fld('API URL *', 'the ProductsAndPrices endpoint',
-              txt('url', 'https://apigw3.ashleyfurniture.com/productinformation/ProductsAndPrices', f.url), '460px') +
-          fld('Header *', 'client_id: … (from the Domo notebook’s HDRS line)',
-              txt('header', 'client_id: 3f53978ff77a4cb0bbae140913240322', f.header), '380px') +
-          fld('API user *', 'the AD user for this account',
-              txt('auth-user', 'AD_3989000_VP', f.auth_user), '190px') +
-          fld('API password *' + (noPass ? ' <span style="color:#c62828">— empty!</span>' : ''), 'same AD password',
+          fld('API URL *', 'the vendor’s DATA endpoint from its API docs — not the bare domain. ' +
+              'Ashley: …/productinformation/ProductsAndPrices · Coaster: …/api/product/GetProductList',
+              txt('url', 'https://api.vendor.com/api/product/GetProductList', f.url) +
+              '<span id="fd-xurls-' + esc(src.id) + '" style="display:block">' + xurls + '</span>' +
+              '<button class="btn ghost sm" style="margin-top:6px" onclick="bldUrlAdd(\'' + esc(src.id) + '\')" ' +
+              'title="A second data endpoint pulled with the same credentials — its columns are joined onto the ' +
+              'first by item number. Coaster: add GetPriceList and GetInventoryList.">＋ endpoint</button>', '520px') +
+          fld('Header', 'the vendor’s API-key header, if it uses one. Ashley: client_id: … · Coaster: keycode: …',
+              txt('header', 'keycode: DB51…  or  client_id: 3f53…', f.header), '360px') +
+          fld('API user', 'basic-auth login, if the vendor uses one. Ashley: AD_3989000_VP · Coaster: leave blank',
+              txt('auth-user', 'AD_3989000_VP', f.auth_user), '210px') +
+          fld('API password' + (noPass ? ' <span style="color:#c62828">— empty!</span>' : ''), 'goes with the user above',
               pwd('auth-pass', 'the AD password', f.auth_pass), '190px') +
           '</div>' +
-          '<div style="flex-basis:100%;margin-top:8px"><span class="small"><b>Query parameters *</b> ' +
-            '<span class="muted">— sent with every pull. Ashley needs exactly these three: ' +
-            '<code>customer</code> = the account’s customer number (e.g. 3989000), <code>shipto</code> = the account’s ' +
-            'representative store (e.g. 354), <code>limit</code> = 200. Quantities and freight read customer and ' +
-            'shipto from here too.</span></span></div>' +
+          '<div style="flex-basis:100%;margin-top:8px"><span class="small"><b>Query parameters</b> ' +
+            '<span class="muted">— sent with every pull (every endpoint). Ashley needs <code>customer</code> (e.g. 3989000), ' +
+            '<code>shipto</code> (e.g. 354) and <code>limit</code> = 200. Coaster needs <code>customerNumber</code> and ' +
+            '<code>warehouseCode</code> (from its GetCustomerList) so prices and stock come back for your store.</span></span></div>' +
           '<div id="fd-qps-' + esc(src.id) + '" style="flex-basis:100%">' + qrows + '</div>' +
           '<button class="btn ghost sm" onclick="bldQpAdd(\'' + esc(src.id) + '\')">＋ parameter</button>' +
           '<div style="flex-basis:100%;margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
             '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-atpon-' + esc(src.id) + '"' +
-            (f.atp_on ? ' checked' : '') + '> <b>Also pull quantities</b> (Ashley ATP) — after the main pull, ' +
+            (f.atp_on ? ' checked' : '') + '> <b>Also pull quantities</b> <span class="muted">(Ashley only — its separate ATP service)</span> — after the main pull, ' +
             'every SKU is checked for availability + lead time and joined on. A few minutes for a big catalog.</label></div>' +
           '<div style="display:flex;flex-wrap:wrap;gap:8px 12px;flex-basis:100%">' +
           fld('External ID *', '“Buddys” + customer number', txt('atp-external', 'Buddys3989000', f.atp_external_id), '200px') +
@@ -1347,7 +1354,7 @@ function bldFeedBox(src){
           '<div id="fd-atptest-' + esc(src.id) + '" style="flex-basis:100%"></div>' +
           '<div style="flex-basis:100%;margin-top:9px;border-top:1px dashed var(--line);padding-top:8px">' +
             '<label class="small" style="cursor:pointer"><input type="checkbox" id="fd-frton-' + esc(src.id) + '"' +
-            (f.frt_on ? ' checked' : '') + '> <b>Also pull freight by store</b> — the same API asked once per ' +
+            (f.frt_on ? ' checked' : '') + '> <b>Also pull freight by store</b> <span class="muted">(Ashley only)</span> — the same API asked once per ' +
             'store number from Users, keeping the freight fields (fob, freight, express, net). Stores this account ' +
             'can\'t quote are skipped.</label></div>';
   }else if(t === 'sftp'){
@@ -1483,8 +1490,8 @@ function bldUrlAdd(id){
   const box = $('fd-xurls-' + id); if(!box) return;
   const el = document.createElement('input');
   el.className = 'f fd-xurl-' + id;
-  el.placeholder = 'https://…/Prices — joined by item number';
-  el.style.maxWidth = '380px';
+  el.placeholder = 'https://…/api/product/GetPriceList — joined by item number';
+  el.style.cssText = 'max-width:460px;margin-top:6px';
   box.appendChild(el);
   el.focus();
 }
@@ -1505,6 +1512,8 @@ async function bldFeedSave(id){
   const feed = {type: t, every_hours: g('every') || 24};
   if(t === 'api'){
     feed.url = g('url'); feed.header = g('header');
+    feed.urls = [...document.querySelectorAll('.fd-xurl-' + id)]
+      .map(e => e.value.trim()).filter(Boolean);
     feed.auth_user = g('auth-user');
     feed.auth_pass = ($('fd-auth-pass-' + id) || {value:''}).value;
     const ks = [...document.querySelectorAll('.fd-qpk-' + id)].map(e => e.value.trim());

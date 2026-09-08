@@ -1732,7 +1732,7 @@ function renderCart() {
       var nm=document.createElement('div'); nm.className='cat-name'; nm.textContent=(p.ItemName||''); body.appendChild(nm);
       var meta=document.createElement('div'); meta.className='cat-meta'; meta.textContent=(p.Vendor||'')+(p.ModelNum?(' - '+p.ModelNum):''); body.appendChild(meta);
       if(p.Category){ var cat=document.createElement('div'); cat.className='cat-meta'; cat.textContent=p.Category; body.appendChild(cat); }
-      var _col=String(p.Collection||'').trim(); if(/^[\[{]/.test(_col)||_col==='null')_col=''; if(_col){ var cln=document.createElement('div'); cln.className='cat-collection'; cln.textContent='('+_col+')'; cln.style.cssText='font-size:0.72rem;color:#666;margin-top:1px;white-space:normal;overflow-wrap:anywhere;word-break:break-word;'; body.appendChild(cln); }
+      var _col=String(p.Collection||'').trim(); if(_col){ var cln=document.createElement('div'); cln.className='cat-collection'; cln.textContent='('+_col+')'; cln.style.cssText='font-size:0.72rem;color:#666;margin-top:1px;white-space:normal;overflow-wrap:anywhere;word-break:break-word;'; body.appendChild(cln); }
       var pr=document.createElement('div'); pr.className='cat-price'; (function(){ var rc=num(p.RegularCost), eff=price(p); if(typeof isSale==='function' && isSale(p) && rc>0 && eff<rc){ pr.innerHTML='<span style="display:inline-block;color:#777;font-weight:400;margin-right:6px;padding:0 2px;background-image:linear-gradient(to top left, transparent calc(50% - 1px), #e53935 calc(50% - 1px), #e53935 calc(50% + 1px), transparent calc(50% + 1px));">$'+rc.toFixed(2)+'</span><span style="color:#e53935;font-weight:700;">$'+eff.toFixed(2)+'</span>'; } else { pr.textContent='$'+eff.toFixed(2); } })(); body.appendChild(pr);
       var st=document.createElement('div'); st.className='cat-stock'; st.textContent='In-Stock'; var _qa=parseFloat(p.QTYAvailable); if(!isNaN(_qa)){ var _qn=document.createElement('span'); _qn.textContent=Math.round(_qa); _qn.style.marginLeft='8px'; _qn.style.fontWeight='bold'; st.appendChild(_qn); } body.appendChild(st);
       card.appendChild(body);
@@ -2576,7 +2576,7 @@ body.qc-open #whoAmI{display:none !important;}
     document.body.classList.add('qc-topmenu');
     var btn = document.createElement('button');
     btn.id = 'qcMenuBtn'; btn.type = 'button';
-    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v70</span>';
+    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v68</span>';
     btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
     btn.style.cssText = 'position:fixed;top:60px;left:18px;z-index:1200;background:#16213f;color:#fff;' +
       'border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:11px 18px;font-weight:800;' +

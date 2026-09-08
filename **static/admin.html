@@ -134,7 +134,7 @@
 
 <div class="top">
   <span class="brand" id="brand">Admin</span>
-  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v70</span>
+  <span class="pill" style="background:rgba(255,255,255,.28)" title="build version">v68</span>
   <span class="pill" id="catpill" style="display:none"></span>
   <div class="who">
     <span id="whoami" class="small"></span>
@@ -690,7 +690,7 @@ function tickList(cls, i, names, have, empty){
 function pageTicks(cls, i, pp){
   const explicit = PAGES.some(([k]) => k in pp);
   const on = k => explicit ? (k === 'pending' ? (pp.pending || 'none') !== 'none' : !!pp[k]) : false;
-  return '<div style="min-width:150px"><div class="ticks compact" style="max-height:150px">' +
+  return '<div style="min-width:150px"><div class="ticks compact" style="max-height:232px">' +
     PAGES.map(([k, label]) =>
     '<label><input type="checkbox" class="' + cls + i + '" value="' + k + '"' +
     (on(k) ? ' checked' : '') + '><span><span class="nm">' + label + '</span></span></label>')
@@ -1068,9 +1068,6 @@ function drawBuilder(){
               '<select class="f" style="padding:7px 9px;font-size:13.5px"' +
               ' onchange="bldMap(\'' + esc(src.id) + '\',\'' + esc(f.name) + '\',this.value)">' +
               '<option value="">— not in this file —</option>' +
-              '<option value="__const__">✎ Fixed value…</option>' +
-              (cur && cur.charAt(0) === '=' ? '<option value="' + esc(cur) + '" selected>✎ "' +
-                esc(cur.slice(1)) + '" (fixed)</option>' : '') +
               (((src.feed || {}).etl) || []).map(st => '<option value="' + esc(st.out) + '"' +
                 (st.out === cur ? ' selected' : '') + '>' + esc(st.out) + ' · ETL</option>').join('') +
               [...src.columns].sort((a, b) => String(a).toLowerCase()
@@ -1085,9 +1082,7 @@ function drawBuilder(){
     '<div id="bld-vinfo"></div>' +
     '<div class="row" style="margin-top:14px">' +
       '<button class="btn green" onclick="bldBuild()">⚒ Build the catalog</button>' +
-      '<button class="btn sm" style="background:#c62828;color:#fff" onclick="bldFeedStop(this)">⏹ Stop runs</button>' +
-      '<span class="muted small">Appends every ready source into one dataset and serves it. ' +
-      '⏹ kills a stuck or runaway feed pull — then press Check now when ready.</span>' +
+      '<span class="muted small">Appends every ready source into one dataset and serves it.</span>' +
     '</div>';
   loadVendInfo();
 }
@@ -1164,13 +1159,6 @@ async function bldUpload(){
 
 async function bldMap(id, field, col){
   const src = (BLD.sources || []).find(s => s.id === id); if(!src) return;
-  if(col === '__const__'){
-    const curFx = (src.mapping[field] || '').charAt(0) === '=' ? src.mapping[field].slice(1) : '';
-    const txt = window.prompt('Fixed value for ' + field + ' — every row of this source gets ' +
-      'exactly this text (e.g. Ashley):', curFx);
-    if(txt === null || !txt.trim()){ drawBuilder(); return; }
-    col = '=' + txt.trim();
-  }
   if(col) src.mapping[field] = col; else delete src.mapping[field];
   try{
     await api('/api/admin/builder/map', {method:'POST',
@@ -1487,27 +1475,11 @@ async function bldFeedSave(id){
 }
 
 let _bldPoll = null;
-async function bldFeedStop(btn){
-  if(btn){ btn.disabled = true; btn.textContent = 'Stopping…'; }
-  try{
-    const out = await api('/api/admin/builder/feed/stop', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body: '{}'});
-    say('✓ ' + (out.message || 'Stopped.'), 'ok');
-    await loadBuilder();
-  }catch(e){ say(e.message, 'bad'); }
-  if(btn){ btn.disabled = false; btn.textContent = '⏹ Stop runs'; }
-}
-
 async function bldFeedRun(btn, id){
   btn.disabled = true; btn.textContent = 'Checking…';
   try{
     const out = await api('/api/admin/builder/feed/run', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: id})});
-    if(out.started === false){
-      say('⚠ ' + (out.message || 'Already running.'), 'info');
-      btn.disabled = false; btn.textContent = 'Check now';
-      return;
-    }
     say('⏳ ' + (out.message || 'Checking in the background…'), 'info');
     // the pull runs server-side — refresh the card every 10s until it lands
     clearInterval(_bldPoll);

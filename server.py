@@ -131,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "84"
+APP_VERSION = "85"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
     # The installed-app name lives in pwa_catalog.py, a file that is easy
@@ -2566,20 +2566,25 @@ BUILDER_FIELDS = [
     ("DisplayOrder", False, "Sort order"), ("QtyAvailable", False, "Stock on hand"),
 ]
 _BUILDER_ALIASES = {
-    "ModelNum": ["model", "model_num", "modelnum", "model_number", "model #", "sku", "item_number"],
-    "ItemName": ["item_name", "itemname", "description", "item_description",
-                 "product_name", "title", "item", "name"],
+    "ModelNum": ["model", "model_num", "modelnum", "model_number", "model #", "sku", "item_number",
+                 "productnumber", "product_number", "itemnumber", "itemno", "item_no", "partnumber",
+                 "part_number", "itemcode", "item_code", "productcode", "product_code"],
+    "ItemName": ["item_name", "itemname", "product_name", "productname", "title", "name",
+                 "description", "item_description", "item"],
     "Vendor": ["vendor", "vendor_name", "supplier"],
-    "Brand": ["brand"], "Category": ["category"],
-    "SubCategory": ["sub_category", "subcategory", "sub category"],
-    "Collection": ["collection"],
-    "RegularCost": ["regular_cost", "regularcost", "regular cost", "cost", "price"],
-    "Price": ["promo_cost", "promocost", "promo cost", "sale_price", "price"],
-    "Color": ["color", "colour"],
+    "Brand": ["brand", "subbrand", "sub_brand"],
+    "Category": ["category", "categorycode", "category_code", "categoryname"],
+    "SubCategory": ["sub_category", "subcategory", "sub category", "subcategorycode", "sub_category_code"],
+    "Collection": ["collection", "collectioncode", "collection_code", "collectionname"],
+    "RegularCost": ["regular_cost", "regularcost", "regular cost", "cost", "price", "baseprice",
+                    "base_price", "wholesale", "dealer_price", "net_price"],
+    "Price": ["promo_cost", "promocost", "promo cost", "sale_price", "saleprice", "price"],
+    "Color": ["color", "colour", "maincolor", "main_color", "fabriccolor", "finish", "mainfinish"],
     "ItemImage2": ["item_image_2", "item_image", "item_display_image_1", "image", "image_url",
-                   "item_image_jpeg"],
-    "DisplayOrder": ["display_order", "displayorder", "display order"],
-    "QtyAvailable": ["qty_available", "qtyavailable", "qty available", "quantity", "stock"],
+                   "imageurl", "item_image_jpeg", "picture", "photo", "thumbnail"],
+    "DisplayOrder": ["display_order", "displayorder", "display order", "sort", "sortorder"],
+    "QtyAvailable": ["qty_available", "qtyavailable", "qty available", "qtyavail", "qty_avail",
+                     "quantity", "stock", "onhand", "on_hand", "available", "inventory"],
 }
 
 
@@ -4501,9 +4506,10 @@ def _feed_merge_frames(frames):
     appended beside the products); a frame that shares no column at all is
     appended as extra rows instead."""
     import pandas as pd
-    hints = ("sku", "itemnumber", "item_number", "itemno", "item", "itemid",
-             "item_id", "modelnum", "model", "productid", "product_id",
-             "upc", "id")
+    hints = ("sku", "itemnumber", "item_number", "itemno", "item_no", "item", "itemid",
+             "item_id", "modelnum", "model", "productnumber", "product_number", "productid",
+             "product_id", "productcode", "product_code", "partnumber", "part_number",
+             "itemcode", "item_code", "upc", "id")
     base = frames[0]
     for f in frames[1:]:
         low = {str(c).lower(): str(c) for c in base.columns}
@@ -4792,6 +4798,8 @@ def _feed_fetch_api(cfg: dict, progress=None):
         if ":" in part:
             k, v = part.split(":", 1)
             headers[k.strip()] = v.strip()
+    if not any(k.lower() == "accept" for k in headers):
+        headers["Accept"] = "application/json"      # vendors that also speak XML
     auth = None
     if str(cfg.get("auth_user") or "").strip():
         auth = (str(cfg.get("auth_user")).strip(), str(cfg.get("auth_pass") or ""))
@@ -4835,15 +4843,47 @@ def _feed_fetch_api(cfg: dict, progress=None):
                         best = got
                 return best
             return None
+        def explode(recs):
+            """A short list of groups, each holding a long list of records
+            (price codes -> prices, warehouses -> stock): flatten to the
+            records, each carrying its group's own scalar fields."""
+            if not (isinstance(recs, list) and recs and all(isinstance(x, dict) for x in recs[:20])):
+                return recs
+            best_key, best_total = None, 0
+            for k in recs[0].keys():
+                tot, ok = 0, True
+                for rec in recs:
+                    v = rec.get(k)
+                    if isinstance(v, list) and (not v or isinstance(v[0], dict)):
+                        tot += len(v)
+                    elif v is None:
+                        continue
+                    else:
+                        ok = False
+                        break
+                if ok and tot > best_total:
+                    best_key, best_total = k, tot
+            if best_key and best_total >= max(10 * len(recs), 50):
+                out = []
+                for rec in recs:
+                    parent = {k: v for k, v in rec.items()
+                              if k != best_key and (isinstance(v, (str, int, float, bool)) or v is None)}
+                    for child in (rec.get(best_key) or []):
+                        row = dict(parent)
+                        row.update(child)
+                        out.append(row)
+                return out
+            return recs
+
         if isinstance(payload, dict):
-            for key in ("data", "items", "rows", "results", "products"):
+            for key in ("data", "items", "rows", "results", "products", "entities"):
                 if isinstance(payload.get(key), list) and payload[key] \
                         and all(isinstance(x, dict) for x in payload[key][:20]):
-                    return payload[key]
+                    return explode(payload[key])
             found = hunt(payload)
             if found is not None:
-                return found
-        return payload
+                return explode(found)
+        return explode(payload)
 
     _run_t0 = time.time()
     ltag = str(cfg.get("_log_tag") or "api")
@@ -4894,6 +4934,11 @@ def _feed_fetch_api(cfg: dict, progress=None):
             raise ValueError(f"The API answered {r.status_code}{where}.")
         data = r.content
         ctype = r.headers.get("content-type", "")
+        head = data[:300].lstrip().lower()
+        if "text/html" in ctype or head.startswith((b"<!doctype", b"<html")):
+            raise ValueError(f"{seg} answered with a web page, not data — that is the site's front "
+                             f"door. Use the data endpoint from the vendor's API docs (for example "
+                             f"…/api/product/GetProductList), not the bare domain.")
         base = seg
         is_file = base.lower().endswith((".csv", ".xlsx", ".xls", ".xlsm"))
         name = base if "." in base else base + (".xlsx" if "sheet" in ctype else ".csv")
@@ -4925,6 +4970,10 @@ def _feed_fetch_api(cfg: dict, progress=None):
 
                 for k, v in rec.items():
                     k = str(k)
+                    if k == "ListNextGenImages" and isinstance(v, str) and v.strip():
+                        # Coaster: "102888/102888.jpg,102888/102888_20.jpg" -> first, hosted
+                        out["ImageURL"] = ("https://assets.coastercenter.com/nextgenimages/"
+                                           + v.split(",")[0].strip())
                     if isinstance(v, (str, int, float, bool)) or v is None:
                         out[k] = v
                     elif isinstance(v, dict):

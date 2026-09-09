@@ -2576,7 +2576,7 @@ body.qc-open #whoAmI{display:none !important;}
     document.body.classList.add('qc-topmenu');
     var btn = document.createElement('button');
     btn.id = 'qcMenuBtn'; btn.type = 'button';
-    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v79</span>';
+    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v81</span>';
     btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
     btn.style.cssText = 'position:fixed;top:60px;left:18px;z-index:1200;background:#16213f;color:#fff;' +
       'border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:11px 18px;font-weight:800;' +
@@ -3057,7 +3057,7 @@ body.qc-open #whoAmI{display:none !important;}
      var amt=ds.reduce(function(a,l){return a+(parseFloat(String((l.content||{}).LineTotal||'').replace(/[^0-9.\-]/g,''))||0);},0);
      var qy=ds.reduce(function(a,l){return a+(parseInt((l.content||{}).OrderQuantity,10)||0);},0);
      var appr=String(f.RegionalApproval||'').trim();
-     return {order:k,docs:ds,vendor:f.Vendor||'',district:String(f.DistrictID||''),store:String(f.StoreNum||''),by:f.SubmittedBy||'',when:f.SubmittedOn||f.SubmitDate||f.OrderDate||'',lines:ds.length,qty:qy,amount:amt,po:f.PONum||'',appr:appr,approved:/^y/i.test(appr),firstAppr:(function(){var t='';ds.forEach(function(d){var cc=d.content||{};var v=cc.FirstApprovedAt||cc.ApprovedAt||'';if(v&&(!t||v<t))t=v;});return t;})(),apprBy:(function(){var b='';ds.forEach(function(d){var cc=d.content||{};if(cc.ApprovedBy&&!b)b=cc.ApprovedBy;});return b;})()};});
+     return {order:k,docs:ds,vendor:f.Vendor||'',district:String(f.DistrictID||''),store:String(f.StoreNum||''),by:f.SubmittedBy||'',when:f.SubmittedOn||f.SubmitDate||f.OrderDate||'',lines:ds.length,qty:qy,amount:amt,po:f.PONum||'',appr:appr,approved:/^y/i.test(appr),submitted:ds.some(function(l){return String((l.content||{}).Status||'')==='Submitted';}),firstAppr:(function(){var t='';ds.forEach(function(d){var cc=d.content||{};var v=cc.FirstApprovedAt||cc.ApprovedAt||'';if(v&&(!t||v<t))t=v;});return t;})(),apprBy:(function(){var b='';ds.forEach(function(d){var cc=d.content||{};if(cc.ApprovedBy&&!b)b=cc.ApprovedBy;});return b;})()};});
    if(window._userHasScope){out=out.filter(function(o){return (window._dmDistricts&&window._dmDistricts[o.district])||(window._myStores&&window._myStores[o.district+'|'+o.store]);});}
    try{out=out.sort(function(_a,_b){var _x=Date.parse(_a&&_a.when)||0,_y=Date.parse(_b&&_b.when)||0;if(_x!==_y)return _x-_y;return String((_a&&_a.order)||'').localeCompare(String((_b&&_b.order)||''));});}catch(_se){}
    return out;
@@ -3108,9 +3108,9 @@ body.qc-open #whoAmI{display:none !important;}
    var kind=window._approvalView?'dm':'pd';
    var rows=rowsFromOrders();
    var _qcAllRows=rows;
-   if(kind==='pd'){rows=rows.filter(function(o){return !(o.docs||[]).some(function(d){return String((d.content||{}).Status||'')==='Submitted';});});}
+   
    var canApprove=!/^(STORE|VENDOR|NONE)$/i.test(String(_meRole||''));
-   var waiting=rows.filter(function(o){return !o.approved;});
+   var waiting=rows.filter(function(o){return !o.approved&&!o.submitted;});var subd=rows.filter(function(o){return o.submitted;});var apprd=rows.filter(function(o){return o.approved&&!o.submitted;});
    var itemCt=rows.reduce(function(a,o){return a+(((o.docs||[]).length)||Number(o.lines)||0);},0);
    var unitCt=rows.reduce(function(a,o){return a+(Number(o.qty)||0);},0);
    var totAmt=rows.reduce(function(a,o){return a+o.amount;},0);
@@ -3123,7 +3123,7 @@ body.qc-open #whoAmI{display:none !important;}
     +'<div style="background:var(--qc-primary,#e0592a);color:#fff;padding:10px 16px;border-radius:8px;min-width:120px;"><div style="font-size:.7rem;opacity:.9;">TOTAL</div><div style="font-size:1.3rem;font-weight:700;">'+money(totAmt)+'</div></div>'
     +'<div style="background:#fff;border:1px solid #e8e9ef;padding:10px 16px;border-radius:8px;"><div style="font-size:.7rem;color:#666;">STORES</div><div style="font-size:1.3rem;font-weight:700;">'+Object.keys(stores).length+'</div></div></div>';
    var ctrl='<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">'
-    +'<select id="qcFilt'+kind+'" style="padding:7px;border:1px solid #ddd;border-radius:8px;"><option value="wait">Awaiting approval ('+waiting.length+' orders)</option><option value="all">All orders ('+rows.length+')</option><option value="done"'+(kind==='pd'?' selected':'')+'>Approved ('+(rows.length-waiting.length)+' orders)</option></select>'
+    +'<select id="qcFilt'+kind+'" style="padding:7px;border:1px solid #ddd;border-radius:8px;"><option value="wait">Awaiting approval ('+waiting.length+' orders)</option><option value="done"'+(kind==='pd'?' selected':'')+'>Approved ('+apprd.length+' orders)</option><option value="sub">Submitted ('+subd.length+' orders)</option><option value="all">All orders ('+rows.length+')</option></select>'
     +'<span id="qcAppMsg'+kind+'" style="font-weight:600;font-size:.85rem;"></span></div>';
    var head='<tr style="background:var(--qc-dark,#16213f);color:#fff;"><th style="padding:6px;text-align:left;">Order #</th><th style="padding:6px;text-align:left;">Vendor</th><th style="padding:6px;">Dist</th><th style="padding:6px;">Store</th><th style="padding:6px;text-align:left;">Submitted By</th><th style="padding:6px;">When</th><th style="padding:6px;">Lines</th><th style="padding:6px;">Qty</th><th style="padding:6px;">Total</th>'+(kind==='pd'?'<th style="padding:6px;">PO #</th>':'')+'<th style="padding:6px;">Approval</th></tr>';
    co.innerHTML='<h2 style="margin:0 0 2px;color:var(--qc-dark,#16213f);text-transform:none;font-size:1.5rem;font-weight:700;letter-spacing:0;">'+(kind==='dm'?'Approver':'Purchasing Admin')+'</h2>'
@@ -3132,10 +3132,10 @@ body.qc-open #whoAmI{display:none !important;}
     +'<div style="max-height:65vh;overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:.85rem;"><thead>'+head+'</thead><tbody id="qcBody'+kind+'"></tbody></table></div>';
    function draw(){
     var mode=(el('qcFilt'+kind)||{}).value||'wait';
-    var list=rows.filter(function(o){return mode==='all'?true:(mode==='done'?o.approved:!o.approved);});
+    var list=rows.filter(function(o){return mode==='all'?true:(mode==='sub'?o.submitted:(mode==='done'?(o.approved&&!o.submitted):(!o.approved&&!o.submitted)));});
     var tb=el('qcBody'+kind);if(!tb)return;tb.innerHTML='';
     if(!list.length){tb.innerHTML='<tr><td colspan="11" style="padding:14px;color:#888;">Nothing here.</td></tr>';return;}
-    list.slice(0,400).forEach(function(o){
+    list.slice(0,1000).forEach(function(o){
      var w='';try{w=new Date(o.when).toLocaleString([],{month:'numeric',day:'numeric',year:'2-digit',hour:'numeric',minute:'2-digit'});}catch(e){w=String(o.when).slice(0,16);}
      var tr=document.createElement('tr');tr.style.borderBottom='1px solid #eee';
      tr.innerHTML='<td style="padding:5px;"><b>'+esc(o.order)+'</b></td><td style="padding:5px;">'+esc(o.vendor)+'</td><td style="text-align:center;">'+esc(o.district)+'</td><td style="text-align:center;">'+esc(o.store)+'</td><td style="padding:5px;">'+esc(o.by)+'</td><td style="text-align:center;font-size:.78rem;">'+esc(w)+'</td><td style="text-align:center;">'+o.lines+'</td><td style="text-align:center;">'+o.qty+'</td><td style="text-align:right;padding-right:6px;">'+money(o.amount)+'</td>'+(kind==='pd'?'<td style="text-align:center;" data-po></td>':'')+'<td style="text-align:center;" data-app></td>';
@@ -3162,7 +3162,7 @@ body.qc-open #whoAmI{display:none !important;}
        b.onclick=async function(){await setApproval(o,true,b);paint();};cell.appendChild(b);
       }else{cell.textContent='—';}
      }
-     var _paint0=paint;paint=function(){_paint0();var ed=document.createElement('button');ed.type='button';ed.textContent='Review';ed.title='Review this order in the full line editor';ed.style.cssText='margin-left:6px;background:#16213f;color:#fff;border:none;border-radius:6px;padding:4px 10px;font-weight:700;cursor:pointer;font-size:.78rem;';ed.onclick=function(){window._approvalView=(kind==='dm');window._submittedView=false;setFilter(o.order);};cell.appendChild(ed);};
+     var _paint0=paint;paint=function(){_paint0();var ed=document.createElement('button');ed.type='button';ed.textContent='Review';ed.title='Review this order in the full line editor';ed.style.cssText='margin-left:6px;background:#16213f;color:#fff;border:none;border-radius:6px;padding:4px 10px;font-weight:700;cursor:pointer;font-size:.78rem;';ed.onclick=function(){window._approvalView=(kind==='dm');window._submittedView=!!o.submitted;setFilter(o.order);};cell.appendChild(ed);};
      paint();tb.appendChild(tr);
     });
    }
@@ -3352,7 +3352,7 @@ body.qc-topmenu #__dtabs{bottom:auto!important}
   +'<div id="stBody" style="display:none;">'
   +'<div style="background:#fff;border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,.12);display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">'
   +'<input id="stSearch" placeholder="Search order #, vendor, model, item..." style="flex:2 1 240px;padding:9px 12px;border:1px solid #d7dbe6;border-radius:9px;font-size:14px;">'
-  +'<select id="stStatus" style="padding:9px;border:1px solid #d7dbe6;border-radius:9px;font-size:13px;"><option value="sub">Submitted</option><option value="app">Approved</option><option value="all">All orders</option></select>'
+  +'<input type="hidden" id="stStatus" value="sub"><span title="Stats count submitted orders only" style="padding:9px 12px;border:1px solid #cfe6d2;border-radius:9px;font-size:13px;background:#eef8ee;color:#1b5e20;font-weight:700;white-space:nowrap;">Submitted orders</span>'
   +'<select id="stVendor" style="padding:9px;border:1px solid #d7dbe6;border-radius:9px;font-size:13px;max-width:200px;"><option value="">All Vendors</option></select>'
   +'<select id="stAp" style="padding:9px;border:1px solid #d7dbe6;border-radius:9px;font-size:13px;max-width:200px;"><option value="">All Approvers</option></select>'
   +'<select id="stLoc" style="padding:9px;border:1px solid #d7dbe6;border-radius:9px;font-size:13px;max-width:220px;"><option value="">All Locations</option></select>'
@@ -3510,7 +3510,7 @@ body.qc-topmenu #__dtabs{bottom:auto!important}
   var rows=list.map(function(x){
    var st=x.start?new Date(x.start+'T00:00:00'):null;
    var bought=0,dol=0;
-   (L||[]).forEach(function(r){if(r.m!==x.model)return;if(st&&(!r.when||r.when<st))return;bought+=r.qty;dol+=r.amt;});
+   (L||[]).forEach(function(r){if(r.status!=='Submitted')return;if(r.m!==x.model)return;if(st&&(!r.when||r.when<st))return;bought+=r.qty;dol+=r.amt;});
    var days=null;if(x.exp){var e=new Date(x.exp+'T00:00:00');if(!isNaN(e))days=Math.round((e-today)/86400000);}
    tq+=x.qty;tb+=bought;td+=dol;
    return {x:x,bought:bought,dol:dol,days:days};

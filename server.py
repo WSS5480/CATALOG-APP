@@ -131,7 +131,7 @@ def _require_config():
 
 
 SESSION_COOKIE = "catalog_session"
-APP_VERSION = "87"
+APP_VERSION = "88"
 try:                                   # install-to-home-screen (PWA) plumbing
     from pwa_catalog import router as _pwa_router, inject as _pwa_inject
     # The installed-app name lives in pwa_catalog.py, a file that is easy
@@ -609,6 +609,50 @@ def _edits_vendor_ok(who, vendor) -> bool:
     return (not vs) or (str(vendor or "").strip().upper() in vs)
 
 
+def _edit_stamp(who, content: dict, old: dict = None) -> dict:
+    """Who placed this vendor edit decides what it may carry.
+
+    FlagSource is stamped from the signed-in person — ADMIN for administrators
+    (the ADMINS list / admin people), VENDOR for everyone else — never from the
+    form. Vendors may raise a SPECIAL BUY (flag, expiration, and a suggested
+    quantity kept as VendorOfferQty); only administrators may set a real
+    quantity (SpecialBuyQty) or mark a COMMITTED BUY with its CommittedQty.
+    A vendor re-saving an item cannot disturb what an administrator set on it."""
+    is_admin = bool((who.get("scope") or {}).get("all")) or bool(who.get("admin"))
+    old = old or {}
+    content["FlagSource"] = "ADMIN" if is_admin else "VENDOR"
+    content["EditedByEmail"] = str(who.get("email") or "")
+    if not is_admin:
+        offer = str(content.get("SpecialBuyQty") or "").strip()
+        if offer:
+            content["VendorOfferQty"] = offer
+        # the administrator's fields survive a vendor's save untouched
+        for k in ("SpecialBuyQty", "CommittedBuy", "CommittedQty", "CommittedBy", "CommittedAt"):
+            if str(old.get(k) or "").strip():
+                content[k] = old[k]
+            else:
+                content[k] = ""
+        if str(old.get("FlagSource") or "") == "ADMIN" and str(old.get("SpecialBuy") or "") == "YES":
+            content["SpecialBuy"] = "YES"          # a vendor cannot cancel an admin's special buy,
+            content["FlagSource"] = "ADMIN"        # and it stays the administrator's flag
+    else:
+        cb = str(content.get("CommittedBuy") or "").strip().upper()
+        content["CommittedBuy"] = "YES" if cb in ("YES", "TRUE", "1") else ""
+        if content["CommittedBuy"] == "YES":
+            content["CommittedQty"] = str(content.get("CommittedQty") or "").strip()
+            if not str(old.get("CommittedAt") or "").strip() or str(old.get("CommittedBuy") or "") != "YES":
+                content["CommittedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                content["CommittedBy"] = str(who.get("email") or "")
+            else:
+                content["CommittedAt"] = old.get("CommittedAt", "")
+                content["CommittedBy"] = old.get("CommittedBy", "")
+        else:
+            content["CommittedQty"] = ""
+            content["CommittedAt"] = ""
+            content["CommittedBy"] = ""
+    return content
+
+
 @app.get("/api/app/collections/{coll}/documents/")
 async def orders_list(coll: str, request: Request):
     ready = await _orders_ready(request)
@@ -684,6 +728,7 @@ async def orders_create(coll: str, request: Request):
             raise HTTPException(403, "You do not have access to vendor edits.")
         if not _edits_vendor_ok(who, content.get("Vendor")):
             raise HTTPException(403, "That vendor is outside your access.")
+        content = _edit_stamp(who, content)
     else:
         if not (who.get("scope") or {}).get("perms", _PERM_DEFAULT).get("order", True):
             raise HTTPException(403, "You do not have access to the order form.")
@@ -729,6 +774,15 @@ async def orders_update(coll: str, doc_id: str, request: Request):
     if not isinstance(content, dict):
         content = payload if isinstance(payload, dict) else {}
     from sqlalchemy import text
+    if coll == "CatalogEdits":
+        with _builder_engine().connect() as c:
+            row0 = c.execute(text("select content from cat_orders where id=:i and coll=:o "
+                                  "and customer=:c"), {"i": doc_id, "o": coll, "c": cust}).first()
+        try:
+            old_e = json.loads(row0[0] or "{}") if row0 is not None else {}
+        except Exception:
+            old_e = {}
+        content = _edit_stamp(who, content, old_e)
     is_admin = bool((who.get("scope") or {}).get("all")) or bool(who.get("admin"))
     # An Approver may clear the over-budget flag too — that is the page's point.
     may_approve = is_admin or bool(((who.get("scope") or {}).get("perms") or {})
@@ -3390,19 +3444,23 @@ def _builder_do_build(eng, cust: str):
             prev2 = latest.get(key)
             if prev2 is None or str(d.get("EditedAt") or "") >= str(prev2.get("EditedAt") or ""):
                 latest[key] = d
-        sb = set()
+        sb, cb = set(), set()
         for key2, d in latest.items():
-            if str(d.get("SpecialBuy") or "").strip().upper() != "YES":
-                continue
             exp = str(d.get("ExpirationDate") or "").strip()
             if exp and exp[:10] < today:
                 continue
-            sb.add(key2)
-        if sb:
+            if str(d.get("CommittedBuy") or "").strip().upper() == "YES":
+                cb.add(key2)
+            elif str(d.get("SpecialBuy") or "").strip().upper() == "YES":
+                sb.add(key2)
+        if sb or cb:
             vu = allf["Vendor"].astype(str).str.strip().str.upper()
             mu = allf["ModelNum"].astype(str).str.strip().str.upper()
-            mask = pd.Series(list(zip(vu, mu)), index=allf.index).isin(sb)
-            allf.loc[mask, "DisplayOrder"] = "-1"
+            keys = pd.Series(list(zip(vu, mu)), index=allf.index)
+            if sb:
+                allf.loc[keys.isin(sb), "DisplayOrder"] = "-1"
+            if cb:                       # COMMITTED BUYS lead everything: -2
+                allf.loc[keys.isin(cb), "DisplayOrder"] = "-2"
     except Exception:
         pass
     table = f"built_{cust}"

@@ -2576,7 +2576,7 @@ body.qc-open #whoAmI{display:none !important;}
     document.body.classList.add('qc-topmenu');
     var btn = document.createElement('button');
     btn.id = 'qcMenuBtn'; btn.type = 'button';
-    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v87</span>';
+    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v88</span>';
     btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
     btn.style.cssText = 'position:fixed;top:60px;left:18px;z-index:1200;background:#16213f;color:#fff;' +
       'border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:11px 18px;font-weight:800;' +
@@ -3128,8 +3128,9 @@ body.qc-open #whoAmI{display:none !important;}
    var head='<tr style="background:var(--qc-dark,#16213f);color:#fff;"><th style="padding:6px;text-align:left;">Order #</th><th style="padding:6px;text-align:left;">Vendor</th><th style="padding:6px;">Dist</th><th style="padding:6px;">Store</th><th style="padding:6px;text-align:left;">Submitted By</th><th style="padding:6px;">When</th><th style="padding:6px;">Lines</th><th style="padding:6px;">Qty</th><th style="padding:6px;">Total</th>'+(kind==='pd'?'<th style="padding:6px;">PO #</th>':'')+'<th style="padding:6px;">Approval</th></tr>';
    co.innerHTML='<h2 style="margin:0 0 2px;color:var(--qc-dark,#16213f);text-transform:none;font-size:1.5rem;font-weight:700;letter-spacing:0;">'+(kind==='dm'?'Approver':'Purchasing Admin')+'</h2>'
     +'<div style="color:#666;font-size:.82rem;margin-bottom:12px;">'+(kind==='dm'?'Orders for your district(s).':'All orders across districts.')+'</div>'
-    +sum+ctrl+((kind==='pd')?pdSubSec(_qcAllRows):'')
+    +sum+ctrl+((kind==='pd')?pdSubSec(_qcAllRows)+'<div id="qcSBCommit"></div>':'')
     +'<div style="max-height:65vh;overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:.85rem;"><thead>'+head+'</thead><tbody id="qcBody'+kind+'"></tbody></table></div>';
+   if(kind==='pd'){try{qcSBCommitPanel();}catch(_sbe){}}
    function draw(){
     var mode=(el('qcFilt'+kind)||{}).value||'wait';
     var list=rows.filter(function(o){return mode==='all'?true:(mode==='done'?o.approved:!o.approved);});
@@ -3232,7 +3233,7 @@ body.qc-open #whoAmI{display:none !important;}
  }catch(_e){}},700);
 })();
 </script>
-<style id="qc-sbcss">.cat-card{position:relative}.qc-sb,.qc-dl,.qc-ql{position:absolute;right:0;color:#fff;font-weight:bold;font-size:.74rem;padding:4px 10px;letter-spacing:.5px;border-radius:0 0 0 6px;z-index:3;}.qc-sb{background:#1d4ed8;}.qc-dl{background:#a16207;}.qc-ql{background:#16213f;}</style>
+<style id="qc-sbcss">.cat-card{position:relative}.qc-sb,.qc-dl,.qc-ql{position:absolute;right:0;color:#fff;font-weight:bold;font-size:.74rem;padding:4px 10px;letter-spacing:.5px;border-radius:0 0 0 6px;z-index:3;}.qc-sb{background:#1d4ed8;}.qc-cb{background:#b45309;}.qc-dl{background:#a16207;}.qc-ql{background:#16213f;}</style>
 <script id="qc-editsapply">
 /* Vendor edits take precedence over the catalog until they expire or are
    deleted by the vendor: overlay CatalogEdits onto the live product list. */
@@ -3295,17 +3296,52 @@ body.qc-open #whoAmI{display:none !important;}
  window.__qcEditsTick=tick;
 })();
 </script>
+
+<script id="qc-sbcommit">
+// Purchasing Admin: vendor-raised special buys wait here until an administrator
+// commits them (with the real quantity) or declines them.
+window.qcSBCommitPanel=function(){var box=document.getElementById('qcSBCommit');if(!box)return;
+ box.innerHTML='<div style="color:#888;font-size:.85rem;margin:6px 0 12px;">Loading special buys…</div>';
+ fetch('/api/app/collections/CatalogEdits/documents/?limit=4000&_cb='+Date.now(),{credentials:'include'}).then(function(r){return r.ok?r.json():[];}).then(function(docs){
+  var latest={};(docs||[]).forEach(function(d){var c=d.content||{};var k=String(c.Vendor||'').trim().toUpperCase()+'||'+String(c.ModelNum||'').trim().toUpperCase();if(!String(c.ModelNum||'').trim())return;var cur=latest[k];if(!cur||String(c.EditedAt||'')>String((cur.content||{}).EditedAt||''))latest[k]=d;});
+  var today=new Date().toISOString().slice(0,10);
+  var wait=[],done=[];Object.keys(latest).forEach(function(k){var d=latest[k],c=d.content||{};var ex=String(c.ExpirationDate||'').slice(0,10);if(ex&&ex<today)return;
+   if(String(c.CommittedBuy||'')==='YES')done.push(d);else if(String(c.SpecialBuy||'')==='YES')wait.push(d);});
+  function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
+  function row(d,committed){var c=d.content||{};var who=String(c.EditedBy||c.EditedByEmail||'');var src=String(c.FlagSource||'')==='ADMIN'?'purchasing':'vendor';
+   return '<tr style="border-bottom:1px solid #eee;"><td style="padding:6px;">'+esc(c.Vendor)+'</td><td style="padding:6px;">'+esc(c.ModelNum)+'</td><td style="padding:6px;text-align:left;">'+esc(c.ItemName)+'</td>'
+    +'<td style="padding:6px;">'+esc(c.PromoCost||c.Price||'')+'</td><td style="padding:6px;">'+esc(c.ExpirationDate||'')+'</td>'
+    +'<td style="padding:6px;">'+(committed?('<b>'+esc(c.CommittedQty||'')+'</b> by '+esc(c.CommittedBy||'')):(esc(c.VendorOfferQty||c.SpecialBuyQty||'')+' <span style="color:#888;">('+src+': '+esc(who)+')</span>'))+'</td>'
+    +'<td style="padding:6px;white-space:nowrap;">'+(committed?'<button class="btn" data-act="uncommit" data-id="'+esc(d.id)+'" style="padding:4px 10px;font-size:.78rem;background:#eee;color:#333;">Un-commit</button>'
+      :'<button class="btn btn-primary" data-act="commit" data-id="'+esc(d.id)+'" style="padding:4px 10px;font-size:.78rem;">Commit</button> <button class="btn" data-act="decline" data-id="'+esc(d.id)+'" style="padding:4px 10px;font-size:.78rem;background:#eee;color:#333;">Decline</button>')+'</td></tr>';}
+  var head='<tr style="background:var(--qc-dark,#16213f);color:#fff;"><th style="padding:6px;">Vendor</th><th style="padding:6px;">Model #</th><th style="padding:6px;text-align:left;">Item</th><th style="padding:6px;">Promo</th><th style="padding:6px;">Expires</th><th style="padding:6px;">Qty</th><th style="padding:6px;"></th></tr>';
+  box.innerHTML='<div style="background:#fff;border:1px solid #e8e9ef;border-radius:10px;padding:12px 14px;margin:0 0 14px;">'
+   +'<div style="font-weight:700;color:var(--qc-dark,#16213f);margin-bottom:4px;">Special buys awaiting commitment <span style="background:#1d4ed8;color:#fff;border-radius:999px;padding:1px 8px;font-size:.75rem;">'+wait.length+'</span></div>'
+   +'<div style="color:#666;font-size:.8rem;margin-bottom:8px;">A vendor’s SPECIAL BUY is an offer. Commit it with the quantity we actually bought and it becomes a COMMITTED BUY on the storefront, leading the catalog with a live “qty left” count. Only administrators can commit or set quantities.</div>'
+   +(wait.length?'<table style="width:100%;border-collapse:collapse;font-size:.83rem;"><thead>'+head+'</thead><tbody>'+wait.map(function(d){return row(d,false);}).join('')+'</tbody></table>':'<div style="color:#888;font-size:.85rem;">Nothing waiting.</div>')
+   +(done.length?'<div style="font-weight:700;color:var(--qc-dark,#16213f);margin:14px 0 4px;">Committed buys <span style="background:#b45309;color:#fff;border-radius:999px;padding:1px 8px;font-size:.75rem;">'+done.length+'</span></div><table style="width:100%;border-collapse:collapse;font-size:.83rem;"><thead>'+head+'</thead><tbody>'+done.map(function(d){return row(d,true);}).join('')+'</tbody></table>':'')
+   +'</div>';
+  box.querySelectorAll('button[data-act]').forEach(function(b){b.onclick=function(){var id=b.getAttribute('data-id');var d=(docs||[]).filter(function(x){return x.id===id;})[0];if(!d)return;var c=Object.assign({},d.content||{});var act=b.getAttribute('data-act');
+   if(act==='commit'){var q=window.prompt('Committed quantity for '+(c.ModelNum||'')+' (the number we bought):',String(c.VendorOfferQty||c.SpecialBuyQty||''));if(q===null)return;c.CommittedBuy='YES';c.CommittedQty=String(q).trim();c.SpecialBuy='YES';}
+   else if(act==='decline'){if(!window.confirm('Decline this special buy? The vendor’s flag comes off the storefront.'))return;c.SpecialBuy='';c.SpecialBuyQty='';}
+   else if(act==='uncommit'){if(!window.confirm('Un-commit? It goes back to a plain SPECIAL BUY offer.'))return;c.CommittedBuy='';c.CommittedQty='';}
+   c.EditedAt=new Date().toISOString();b.disabled=true;b.textContent='…';
+   fetch('/api/app/collections/CatalogEdits/documents/'+encodeURIComponent(id),{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:c})}).then(function(r){if(!r.ok)throw new Error('answered '+r.status);window.qcSBCommitPanel();}).catch(function(e){b.disabled=false;b.textContent='Failed';alert('Could not save: '+e.message);});};});
+ }).catch(function(){box.innerHTML='';});};
+</script>
 <script id="qc-specialbuy">(function(){
 var MAP=null;
 function coll(){try{return (window.APP_CONFIG&&APP_CONFIG.collections&&APP_CONFIG.collections.edits)||"CatalogEdits";}catch(e){return "CatalogEdits";}}
 function load(){fetch("/api/app/collections/"+coll()+"/documents/?limit=4000",{credentials:"include"})
 .then(function(r){return r.ok?r.json():[];}).then(function(docs){var m={};
 (docs||[]).forEach(function(d){var c=d.content||{};var k=String(c.ModelNum||"").trim().toUpperCase();if(!k)return;
-var sb=(String(c.SpecialBuy||"")==="YES"),ex=String(c.ExpirationDate||"").trim();
-if(!sb&&!ex)return;var cur=m[k];var at=String(c.EditedAt||"");
-if(!cur||at>cur.at){m[k]={sb:sb,exp:ex,at:at,qty:String(c.SpecialBuyQty||''),start:String(c.SpecialBuyStart||'')};}});
+var sb=(String(c.SpecialBuy||"")==="YES"),cb=(String(c.CommittedBuy||"")==="YES"),ex=String(c.ExpirationDate||"").trim();
+if(!sb&&!cb&&!ex)return;var cur=m[k];var at=String(c.EditedAt||"");
+// the counted quantity: an administrator's committed qty, else an administrator-set special-buy qty; a vendor's suggestion never counts
+var q=cb?String(c.CommittedQty||''):((String(c.FlagSource||'')==='ADMIN')?String(c.SpecialBuyQty||''):'');
+if(!cur||at>cur.at){m[k]={sb:sb,cb:cb,exp:ex,at:at,qty:q,src:String(c.FlagSource||''),start:String(cb?(c.CommittedAt||c.SpecialBuyStart||''):(c.SpecialBuyStart||''))};}});
 MAP=m;window.QC_SBMAP=m;try{if(window.renderCatalog)window.renderCatalog();}catch(_rc){}
-try{var _need=false;Object.keys(m).forEach(function(_k4){if(m[_k4].sb&&m[_k4].qty)_need=true;});if(!_need)throw 0;var _on='OrderFormClaud';fetch('/api/app/collections/'+_on+'/documents/?limit=6000&_cb='+Date.now(),{credentials:'include'}).then(function(r){return r.ok?r.json():[];}).then(function(ods){var oc={};(ods||[]).forEach(function(d2){var c2=d2.content||{};if(c2._deleted||c2.DEL)return;var k2=String(c2.ModelNum||'').trim().toUpperCase();var e2=m[k2];if(!e2||!e2.sb)return;var st=String(e2.start||'');if(st&&String(c2.SubmittedOn||'')<st)return;oc[k2]=(oc[k2]||0)+(parseInt(c2.OrderQuantity,10)||0);});window.QC_SBORD=oc;}).catch(function(){});}catch(_of){}}).catch(function(){});}
+try{var _need=false;Object.keys(m).forEach(function(_k4){if((m[_k4].sb||m[_k4].cb)&&m[_k4].qty)_need=true;});if(!_need)throw 0;var _on='OrderFormClaud';fetch('/api/app/collections/'+_on+'/documents/?limit=6000&_cb='+Date.now(),{credentials:'include'}).then(function(r){return r.ok?r.json():[];}).then(function(ods){var oc={};(ods||[]).forEach(function(d2){var c2=d2.content||{};if(c2._deleted||c2.DEL)return;var k2=String(c2.ModelNum||'').trim().toUpperCase();var e2=m[k2];if(!e2||!(e2.sb||e2.cb))return;var st=String(e2.start||'');if(st&&String(c2.SubmittedOn||'')<st)return;oc[k2]=(oc[k2]||0)+(parseInt(c2.OrderQuantity,10)||0);});window.QC_SBORD=oc;}).catch(function(){});}catch(_of){}}).catch(function(){});}
 function days(ex){try{var d=new Date(ex+"T00:00:00");var n=new Date();n.setHours(0,0,0,0);
 return Math.round((d.getTime()-n.getTime())/86400000);}catch(e){return null;}}
 function deco(){try{if(!MAP)return;var keys=Object.keys(MAP);if(!keys.length)return;
@@ -3316,10 +3352,11 @@ var mt=String(meta.textContent||"").trim().toUpperCase();var hit=null;
 for(var j=0;j<keys.length;j++){var k=keys[j];
 var _ix=mt.lastIndexOf(" - "+k);if(mt===k||(_ix>-1&&_ix===(mt.length-k.length-3))){hit=MAP[k];break;}}
 if(!hit)continue;var top=0;
-if(hit.sb){var s=document.createElement("div");s.className="qc-sb";s.style.top=top+"px";s.textContent="SPECIAL BUY";card.appendChild(s);top+=25;}
+if(hit.cb){var s0=document.createElement("div");s0.className="qc-cb";s0.style.top=top+"px";s0.textContent="COMMITTED BUY";s0.title="Committed by purchasing";card.appendChild(s0);top+=25;}
+else if(hit.sb){var s=document.createElement("div");s.className="qc-sb";s.style.top=top+"px";s.textContent="SPECIAL BUY";s.title=(hit.src==='ADMIN')?"Placed by purchasing":"Offered by the vendor";card.appendChild(s);top+=25;}
 if(hit.exp){var n=days(hit.exp);if(n!==null&&n>=0){var d2=document.createElement("div");d2.className="qc-dl";d2.style.top=top+"px";
 d2.textContent=(n===0)?"LAST DAY":(n+" DAY"+(n===1?"":"S")+" LEFT");card.appendChild(d2);top+=25;}}
-if(hit.sb&&hit.qty){var tq=parseInt(hit.qty,10);if(!isNaN(tq)){var od=(window.QC_SBORD||{})[k]||0;var rm=tq-od;if(rm<0)rm=0;var d3=document.createElement("div");d3.className="qc-ql";d3.style.top=top+"px";d3.textContent=(rm===0)?"SOLD OUT":(rm+" QTY LEFT");card.appendChild(d3);}}
+if((hit.sb||hit.cb)&&hit.qty){var tq=parseInt(hit.qty,10);if(!isNaN(tq)){var od=(window.QC_SBORD||{})[k]||0;var rm=tq-od;if(rm<0)rm=0;var d3=document.createElement("div");d3.className="qc-ql";d3.style.top=top+"px";d3.textContent=(rm===0)?"SOLD OUT":(rm+" QTY LEFT");card.appendChild(d3);}}
 }}catch(e){}}
 load();setInterval(load,600000);setInterval(deco,1500);
 })();</script>

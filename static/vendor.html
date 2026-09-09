@@ -162,8 +162,7 @@ body{background:var(--bg)!important;color:var(--ink)!important;font-family:-appl
         </div>
         <div id="fieldBlocks"></div>
         <div class="editor-line" style="margin-top:8px"><label>Expiration Date</label><input type="date" id="expDate"></div>
-        <div class="editor-line" style="margin-top:6px"><label>Special Buy</label><label style="display:flex;align-items:center;gap:8px;font-weight:400;"><input type="checkbox" id="edSB" style="width:auto;"> Show SPECIAL BUY banner <input id="edSBQty" type="number" min="0" placeholder="QTY" title="Quantity — a vendor's number is a suggestion for purchasing; only an administrator's number shows as QTY LEFT" style="width:80px;margin-left:10px;padding:4px 6px;border:1px solid #ccc;border-radius:4px"> <span id="edSBQtyHint" style="font-size:11px;color:#888;">suggested qty</span></label></div>
-        <div class="editor-line" id="edCBRow" style="margin-top:6px;display:none"><label>Committed Buy</label><label style="display:flex;align-items:center;gap:8px;font-weight:400;"><input type="checkbox" id="edCB" style="width:auto;"> <b style="color:#b45309">COMMITTED BUY</b> — we bought it; leads the catalog with a live count <input id="edCBQty" type="number" min="0" placeholder="QTY" title="Committed quantity" style="width:80px;margin-left:10px;padding:4px 6px;border:1px solid #ccc;border-radius:4px"></label></div>
+        <div class="editor-line" style="margin-top:6px"><label>Special Buy</label><label style="display:flex;align-items:center;gap:8px;font-weight:400;"><input type="checkbox" id="edSB" style="width:auto;"> Show SPECIAL BUY banner <input id="edSBQty" type="number" min="0" placeholder="QTY" title="Special Buy quantity available" style="width:80px;margin-left:10px;padding:4px 6px;border:1px solid #ccc;border-radius:4px"></label></div>
         <div style="font-size:.72rem;color:#888;margin:-2px 0 6px 0">Optional — this edit auto-deletes at 12:00 AM on the selected date.</div>
       </div>
       <div class="modal-msg" id="modalMsg"></div>
@@ -367,8 +366,7 @@ function openModalFor(p, existingContent){
   var _ed=$('expDate'); if(_ed) _ed.value = (existingContent && existingContent.ExpirationDate) ? existingContent.ExpirationDate : '';
   var _sb=$('edSB'); if(_sb) _sb.checked = !!(existingContent && existingContent.SpecialBuy==='YES');
   window.__qcPrevExp=String((existingContent&&existingContent.ExpirationDate)||'');window.__qcPrevSB=!!(existingContent&&existingContent.SpecialBuy==='YES');
-  var _sq=$('edSBQty'); if(_sq)_sq.value=String((existingContent&&(existingContent.SpecialBuyQty||existingContent.VendorOfferQty))||'');
-  try{var _cb=$('edCB'),_cq=$('edCBQty');if(_cb)_cb.checked=!!(existingContent&&existingContent.CommittedBuy==='YES');if(_cq)_cq.value=String((existingContent&&existingContent.CommittedQty)||'');}catch(_e){}
+  var _sq=$('edSBQty'); if(_sq)_sq.value=String((existingContent&&existingContent.SpecialBuyQty)||'');
   window.__qcPrevSBQ=String((existingContent&&existingContent.SpecialBuyQty)||'');window.__qcPrevSBStart=String((existingContent&&existingContent.SpecialBuyStart)||'');
 
   var html = FIELDS.map(function(f){
@@ -430,8 +428,6 @@ async function saveEdit(){
   c.ExpirationDate = (($('expDate')||{}).value || '').trim();
   c.SpecialBuy = (($('edSB')||{}).checked) ? 'YES' : '';
   c.SpecialBuyQty=(($('edSBQty')||{}).value||'').trim();
-  c.CommittedBuy=(($('edCB')||{}).checked)?'YES':'';
-  c.CommittedQty=(($('edCBQty')||{}).value||'').trim();
   if(c.SpecialBuy==='YES'&&(!window.__qcPrevSB||String(window.__qcPrevSBQ||'')!==c.SpecialBuyQty||!window.__qcPrevSBStart)){c.SpecialBuyStart=new Date().toISOString();}else{c.SpecialBuyStart=window.__qcPrevSBStart||'';}
   c.EditType = writingNew ? 'ADD' : 'MODIFY';
 
@@ -714,7 +710,7 @@ function P(){return (typeof products!=='undefined'&&products&&products.length)?p
 function vendors(){var s={};P().forEach(function(p){if(p&&p.Vendor)s[String(p.Vendor).trim()]=1;});return Object.keys(s).sort();}
 function fmt(n){return isNaN(n)?'':('$'+Number(n).toFixed(2));}
 function sumReg(){var t=0;comps.forEach(function(c){var r=parseFloat(String(c.p.RegularCost).replace(/[^0-9.\-]/g,''));if(!isNaN(r))t+=r*c.qty;});return t;}
-function suggestSku(){if(!comps.length)return '';return 'PKG-'+String(comps[0].p.ModelNum).replace(/\s+/g,'')+'-'+comps.reduce(function(a,c){return a+c.qty;},0);}
+function suggestSku(){if(!comps.length)return '';var main=String(comps[0].p.ModelNum||'').replace(/\s+/g,'');var cut=main.lastIndexOf('-');var pre=cut>0?main.slice(0,cut):'';var out=main;for(var i=1;i<comps.length;i++){var m=String(comps[i].p.ModelNum||'').replace(/\s+/g,'');if(!m)continue;var k=m.lastIndexOf('-');var part=(pre&&k>0&&m.slice(0,k)===pre)?m.slice(k+1):m;for(var q=0;q<Math.max(1,comps[i].qty|0);q++)out+='-'+part;}return out;}
 function suggestName(){return comps.map(function(c){return (c.qty>1?(c.qty+'x '):'')+String(c.p.ItemName||c.p.ModelNum);}).join(' + ');}
 function build(){
  if(el('pkgView'))return;
@@ -742,8 +738,7 @@ function build(){
  +'<div><label style="font-size:11px;font-weight:700;display:block;">DISPLAY ORDER</label><input id="pkgOrd" type="number" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #e8e9ef;border-radius:8px;"></div>'
  +'<div><label style="font-size:11px;font-weight:700;display:block;">QTY AVAILABLE</label><input id="pkgQty" type="number" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #e8e9ef;border-radius:8px;"></div>'
  +'<div style="grid-column:span 2;"><label style="font-size:11px;font-weight:700;display:block;">PHOTO IMAGE URL (defaults to first model)</label><input id="pkgImg" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #e8e9ef;border-radius:8px;"></div>'
- +'<div><label style="font-size:11px;font-weight:700;display:block;">EXPIRATION DATE (optional)</label><input id="pkgExp" type="date" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #e8e9ef;border-radius:8px;"></div><div><label style="font-size:11px;font-weight:700;display:block;">SPECIAL BUY</label><label style="display:flex;align-items:center;gap:8px;padding:9px 0;font-size:13px;"><input id="pkgSB" type="checkbox"> Show SPECIAL BUY banner <input id="pkgSBQty" type="number" min="0" placeholder="QTY" title="A vendor\'s number is a suggestion; only an administrator\'s shows as QTY LEFT" style="width:80px;margin-left:10px;padding:4px 6px;border:1px solid #e8e9ef;border-radius:8px"></label>'
- +'<label class="qc-adminonly" style="display:none;align-items:center;gap:8px;padding:4px 0 9px;font-size:13px;"><input id="pkgCB" type="checkbox"> <b style="color:#b45309">COMMITTED BUY</b> <input id="pkgCBQty" type="number" min="0" placeholder="QTY" style="width:80px;margin-left:10px;padding:4px 6px;border:1px solid #e8e9ef;border-radius:8px"></label></div>'
+ +'<div><label style="font-size:11px;font-weight:700;display:block;">EXPIRATION DATE (optional)</label><input id="pkgExp" type="date" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #e8e9ef;border-radius:8px;"></div><div><label style="font-size:11px;font-weight:700;display:block;">SPECIAL BUY</label><label style="display:flex;align-items:center;gap:8px;padding:9px 0;font-size:13px;"><input id="pkgSB" type="checkbox"> Show SPECIAL BUY banner <input id="pkgSBQty" type="number" min="0" placeholder="QTY" style="width:80px;margin-left:10px;padding:4px 6px;border:1px solid #e8e9ef;border-radius:8px"></label></div>'
  +'</div>'
  +'<div style="margin-top:12px;display:flex;gap:10px;align-items:center;">'
  +'<button id="pkgSave" type="button" style="background:#e0592a;color:#fff;border:none;border-radius:8px;padding:10px 22px;font-weight:700;cursor:pointer;">Save Package</button>'
@@ -856,8 +851,6 @@ async function save(){
   SpecialBuy:(el('pkgSB')&&el('pkgSB').checked)?'YES':'',
   SpecialBuyQty:(el('pkgSBQty')?String(el('pkgSBQty').value||'').trim():''),
   SpecialBuyStart:(el('pkgSB')&&el('pkgSB').checked)?new Date().toISOString():'',
-  CommittedBuy:(el('pkgCB')&&el('pkgCB').checked)?'YES':'',
-  CommittedQty:(el('pkgCBQty')?String(el('pkgCBQty').value||'').trim():''),
   EditType:'ADD'};
  msg.style.color='#555';msg.textContent='Saving...';
  el('pkgSave').disabled=true;
@@ -874,8 +867,7 @@ var iv=setInterval(function(){try{build();var vs=el('pkgVendor');if(vs&&vs.optio
 <style id="qc-edited-css">.card{position:relative;}.edited-badge{position:absolute;top:8px;right:8px;background:#f5a623;color:#16213f;font-size:.62rem;font-weight:800;padding:2px 7px;border-radius:10px;z-index:3;box-shadow:0 1px 3px rgba(0,0,0,.25);}</style>
 <script id="qc-whoami">
 (function(){
- try{fetch('/api/auth/me',{credentials:'include'}).then(function(r){return r.ok?r.json():null;}).then(function(j){if(j){window._ME_NAME=(j.userName||j.userEmail||j.email||'').trim();window._ME_ADMIN=!!(j.admin||(j.scope&&j.scope.all));
-   if(window._ME_ADMIN){try{var _r=document.getElementById('edCBRow');if(_r)_r.style.display='';var _h=document.getElementById('edSBQtyHint');if(_h)_h.textContent='qty (shows as QTY LEFT)';setInterval(function(){document.querySelectorAll('.qc-adminonly').forEach(function(x){x.style.display='flex';});},1000);}catch(_ae){}}try{var en=document.getElementById('editorName');if(en&&(!en.value||en.value==='unknown')){en.value=window._ME_NAME;}}catch(e){}}});}catch(e){}
+ try{fetch('/api/auth/me',{credentials:'include'}).then(function(r){return r.ok?r.json():null;}).then(function(j){if(j){window._ME_NAME=(j.userName||j.userEmail||j.email||'').trim();try{var en=document.getElementById('editorName');if(en&&(!en.value||en.value==='unknown')){en.value=window._ME_NAME;}}catch(e){}}});}catch(e){}
  try{var orig=window.currentUser;if(typeof orig==='function'){window.currentUser=function(){var v='';try{v=String(orig()||'').trim();}catch(e){}if(v&&v.toLowerCase()!=='unknown')return v;return window._ME_NAME||'';};}}catch(e){}
  function loadEdited(){try{fetch('/api/app/collections/CatalogEdits/documents?_cb='+Date.now(),{credentials:'include'}).then(function(r){return r.ok?r.json():null;}).then(function(docs){if(!docs)return;var map={};(docs||[]).forEach(function(d){var c=d.content||{};if(c.Vendor&&c.ModelNum){map[String(c.Vendor).trim().toUpperCase()+'||'+String(c.ModelNum).trim().toUpperCase()]=1;}});window._qcEdited=map;try{if(typeof renderGrid==='function')renderGrid();}catch(e){}});}catch(e){}}
  loadEdited();setInterval(loadEdited,60000);

@@ -208,6 +208,9 @@ var editingDocId = null; // when editing an existing log entry var editingColl =
 
 /* ---------- helpers ---------- */
 function $(id){ return document.getElementById(id); }
+/* one edit line per item: find an item's existing (open, MODIFY) edit line so EDIT re-opens it instead of adding another */
+function _qcItemKey(v,m){ return String(v==null?'':v).trim().toUpperCase()+'||'+String(m==null?'':m).trim().toUpperCase(); }
+window._qcEditedDoc = function(p){ try{ var k=_qcItemKey(p&&p.Vendor, p&&p.ModelNum); var d=(window._qcEditedDocs||{})[k]; if(d&&d.id&&d.content&&!isExpired(d.content)) return d; }catch(_e){} return null; };
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function num(x){ if(x==null) return NaN; var n=parseFloat(String(x).replace(/[^0-9.\-]/g,'')); return isNaN(n)?NaN:n; }
 function money(x){ var n=num(x); return isNaN(n)?'' : '$'+n.toFixed(2); }
@@ -339,12 +342,22 @@ function renderGrid(){
 function openEdit(i){
   var p = ($('grid')._slice || [])[i];
   if(!p) return;
-  editingDocId = null; addMode = false; editingColl = null;
+  editingDocId = null; addMode = false; editingColl = null; window.__qcReuseLine = false; window.__qcEditingAdd = false;
+  /* one edit line per item: when this item already has an edit, re-open THAT line (saved with PUT) instead of adding another */
+  var ex = null; try{ ex = window._qcEditedDoc ? window._qcEditedDoc(p) : null; }catch(_xe){ ex = null; }
+  if(ex && ex.id){
+    var xc = ex.content || {};
+    editingDocId = ex.id; editingColl = null; window.__qcReuseLine = true;
+    openModalFor(p, xc);
+    try{ $('modalTitle').textContent = 'Edit Item'; $('editorName').value = currentUser() || xc.EditedBy || ''; }catch(_te){}
+    try{ var _w = xc.EditedAt ? new Date(xc.EditedAt).toLocaleString() : ''; $('modalMsg').className = 'modal-msg'; $('modalMsg').textContent = 'This item already has an edit' + (xc.EditedBy ? ' by ' + xc.EditedBy : '') + (_w ? ' (' + _w + ')' : '') + ' \u2014 your changes update that line; no new line is added.'; }catch(_me){}
+    return;
+  }
   openModalFor(p, null);
 }
 function openAdd(){
   addMode = true;
-  editingDocId = null; editingColl = null;
+  editingDocId = null; editingColl = null; window.__qcEditingAdd = false; window.__qcReuseLine = false;
   var blank = {};
   FIELDS.forEach(function(f){ blank[f.key] = ""; });
   openModalFor(blank, null);
@@ -392,7 +405,7 @@ function openModalFor(p, existingContent){
   $('editOverlay').classList.add('open');
 }
 
-function closeModal(){ $('editOverlay').classList.remove('open'); current = null; editingDocId = null; addMode = false; } editingColl = null;
+function closeModal(){ $('editOverlay').classList.remove('open'); current = null; editingDocId = null; addMode = false; window.__qcReuseLine = false; window.__qcEditingAdd = false; } editingColl = null;
 
 function collectInputs(){
   var inputs = $("fieldBlocks").querySelectorAll("[data-key]");
@@ -422,7 +435,7 @@ async function saveEdit(){
     $('modalMsg').textContent = 'Enter a new value in at least one box before saving.';
     return;
   }
-  var writingNew = (addMode || editingColl === COLL_NEW_BASE); var c = res.content; if(writingNew){ Object.keys(c).forEach(function(k){ if(k.indexOf("_orig")===0) delete c[k]; }); }
+  var writingNew = (addMode || (editingColl === COLL_NEW_BASE && COLL_NEW_BASE !== COLL_BASE) || window.__qcEditingAdd === true); /* one edit line per item: re-saving an existing MODIFY line keeps it a MODIFY line (with both collections the same it used to be re-flagged ADD and lose its _orig values) */ var c = res.content; if(writingNew){ Object.keys(c).forEach(function(k){ if(k.indexOf("_orig")===0) delete c[k]; }); }
   c.EditedBy = ($('editorName').value || '').trim() || currentUser() || 'unknown';
   c.EditedAt = new Date().toISOString();
   c.ExpirationDate = (($('expDate')||{}).value || '').trim();
@@ -444,7 +457,10 @@ async function saveEdit(){
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: c })
     });
+    /* one edit line per item: if the line that was re-opened has been deleted meanwhile, save a fresh line instead of failing */
+    if(!r.ok && method === "PUT" && window.__qcReuseLine && (r.status === 404 || r.status === 400)){ r = await fetch(COLL_BASE, { method: "POST", credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: c }) }); editingDocId = null; }
     if(r.ok){
+      try{ var _rj = null; try{ _rj = await r.clone().json(); }catch(_je){ _rj = null; } var _nid = editingDocId || (_rj && (_rj.id || (_rj.document && _rj.document.id))) || null; if(_nid && !writingNew && c.IsPackage !== 'YES'){ window._qcEditedDocs = window._qcEditedDocs || {}; window._qcEditedDocs[_qcItemKey(c._origVendor != null ? c._origVendor : c.Vendor, c._origModelNum != null ? c._origModelNum : c.ModelNum)] = { id: _nid, content: c }; } }catch(_ce){}
       $('modalMsg').className = 'modal-msg ok';
       $('modalMsg').textContent = 'Saved.';
       setTimeout(function(){ closeModal(); if(!$('logView').classList.contains('hide')) loadLog(); }, 700);
@@ -539,7 +555,7 @@ function editLog(idx){
   // reconstruct an "item" using the original values so the modal shows Current = originals
   var item = {};
   FIELDS.forEach(function(f){ item[f.key] = (c['_orig'+f.key] != null) ? c['_orig'+f.key] : c[f.key]; });
-  editingDocId = d.id; editingColl = d._isNew ? COLL_NEW_BASE : COLL_BASE;
+  editingDocId = d.id; editingColl = d._isNew ? COLL_NEW_BASE : COLL_BASE; window.__qcEditingAdd = (String(c.EditType||'')==='ADD' || !(('_origModelNum' in c) || ('_origVendor' in c))); window.__qcReuseLine = false;
   showView('catalog'); // ensure modal layer not under log scroll
   $('catalogView').classList.remove('hide');
   openModalFor(item, c);
@@ -869,7 +885,7 @@ var iv=setInterval(function(){try{build();var vs=el('pkgVendor');if(vs&&vs.optio
 (function(){
  try{fetch('/api/auth/me',{credentials:'include'}).then(function(r){return r.ok?r.json():null;}).then(function(j){if(j){window._ME_NAME=(j.userName||j.userEmail||j.email||'').trim();try{var en=document.getElementById('editorName');if(en&&(!en.value||en.value==='unknown')){en.value=window._ME_NAME;}}catch(e){}}});}catch(e){}
  try{var orig=window.currentUser;if(typeof orig==='function'){window.currentUser=function(){var v='';try{v=String(orig()||'').trim();}catch(e){}if(v&&v.toLowerCase()!=='unknown')return v;return window._ME_NAME||'';};}}catch(e){}
- function loadEdited(){try{fetch('/api/app/collections/CatalogEdits/documents?_cb='+Date.now(),{credentials:'include'}).then(function(r){return r.ok?r.json():null;}).then(function(docs){if(!docs)return;var map={};(docs||[]).forEach(function(d){var c=d.content||{};if(c.Vendor&&c.ModelNum){map[String(c.Vendor).trim().toUpperCase()+'||'+String(c.ModelNum).trim().toUpperCase()]=1;}});window._qcEdited=map;try{if(typeof renderGrid==='function')renderGrid();}catch(e){}});}catch(e){}}
+ function loadEdited(){try{fetch('/api/app/collections/CatalogEdits/documents/?_cb='+Date.now(),{credentials:'include'}).then(function(r){return r.ok?r.json():null;}).then(function(docs){if(!docs)return;var map={};var best={};(docs||[]).forEach(function(d){var c=d.content||{};if(c.Vendor&&c.ModelNum){map[String(c.Vendor).trim().toUpperCase()+'||'+String(c.ModelNum).trim().toUpperCase()]=1;}/* one edit line per item: remember the newest open MODIFY line of each item so EDIT re-opens it */try{if(c._deleted||c.DEL||c.IsPackage==='YES')return;var isMod=(c.EditType==='MODIFY')||('_origModelNum' in c)||('_origVendor' in c);if(!isMod||c.EditType==='ADD')return;if(typeof isExpired==='function'&&isExpired(c))return;var k2=_qcItemKey(c._origVendor!=null?c._origVendor:c.Vendor,c._origModelNum!=null?c._origModelNum:c.ModelNum);if(k2==='||')return;var b=best[k2];var ka=String(c.EditedAt||'')+'\u0000'+String(d.id||'');if(!b||ka>b.__ka){best[k2]={id:d.id,content:c,__ka:ka};}}catch(_be){}});window._qcEdited=map;window._qcEditedDocs=best;try{if(typeof renderGrid==='function')renderGrid();}catch(e){}});}catch(e){}}
  loadEdited();setInterval(loadEdited,60000);
  var wasOpen=false;setInterval(function(){try{var o=document.getElementById('editOverlay');var open=o&&getComputedStyle(o).display!=='none';if(wasOpen&&!open){setTimeout(loadEdited,1500);}wasOpen=open;}catch(e){}},800);
 })();
@@ -899,14 +915,14 @@ setInterval(build,900);})();
 <script id="qc-vendorlock">(function(){function lv(){try{if(window.__CAT_LOCKVENDOR)return String(window.__CAT_LOCKVENDOR).trim();return (new URLSearchParams(location.search).get("lockVendor")||"").trim();}catch(e){return "";}}var V=lv();if(!V)return;var list=V.split("||").map(function(s){return s.trim();}).filter(Boolean);if(!list.length)return;var UP=list.map(function(s){return s.toUpperCase();});function apply(){try{["vendorFilter","pkgVendor"].forEach(function(id){var s=document.getElementById(id);if(!s)return;var before=String(s.value||"");[].slice.call(s.options).forEach(function(o){var v=String(o.value||"").trim();if(v===""){if(list.length===1)o.parentNode.removeChild(o);return;}if(UP.indexOf(v.toUpperCase())===-1)o.parentNode.removeChild(o);});if(list.length===1){var have=[].slice.call(s.options).some(function(o){return String(o.value).trim().toUpperCase()===UP[0];});if(!have){var op=document.createElement("option");op.value=list[0];op.textContent=list[0];s.appendChild(op);}if(String(s.value).trim().toUpperCase()!==UP[0])s.value=list[0];if(s.getAttribute("data-locked")!=="1"){s.setAttribute("data-locked","1");s.style.pointerEvents="none";s.style.background="#eee";}}if(String(s.value||"")!==before){try{s.dispatchEvent(new Event("change",{bubbles:true}));}catch(e2){}}});}catch(e){}}if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",apply);else apply();setInterval(apply,2500);})();</script>
 
 <script id="qc-sbmap">(function(){
-function load(){fetch('/api/app/collections/CatalogEdits/documents?limit=4000&_cb='+Date.now(),{credentials:'include'})
+function load(){fetch('/api/app/collections/CatalogEdits/documents/?limit=4000&_cb='+Date.now(),{credentials:'include'})
 .then(function(r){return r.ok?r.json():[];}).then(function(docs){var m={};
 (docs||[]).forEach(function(d){var c=d.content||{};var k=String(c.ModelNum||'').trim().toUpperCase();if(!k)return;
 var sb=(String(c.SpecialBuy||'')==='YES'),ex=String(c.ExpirationDate||'').trim();
 if(!sb&&!ex)return;var cur=m[k];var at=String(c.EditedAt||'');
 if(!cur||at>cur.at){m[k]={sb:sb,exp:ex,at:at,qty:String(c.SpecialBuyQty||''),start:String(c.SpecialBuyStart||'')};}});
 var had=!!window.__sbMap;window.__sbMap=m;
-try{var _names=['OrderFormClaud','DemoOrders'];(function _lo(ni){if(ni>=_names.length)return;fetch('/api/app/collections/'+_names[ni]+'/documents?limit=6000&_cb='+Date.now(),{credentials:'include'}).then(function(r){if(!r.ok){_lo(ni+1);return null;}return r.json();}).then(function(ods){if(!ods)return;var oc={};ods.forEach(function(d){var c2=d.content||{};if(c2._deleted||c2.DEL)return;var k2=String(c2.ModelNum||'').trim().toUpperCase();var e2=m[k2];if(!e2||!e2.sb)return;var st=String(e2.start||'');if(st&&String(c2.SubmittedOn||'')<st)return;oc[k2]=(oc[k2]||0)+(parseInt(c2.OrderQuantity,10)||0);});window.__sbOrdered=oc;try{if(typeof renderGrid==='function')renderGrid();}catch(_rg){}}).catch(function(){});})(0);}catch(_of){}
+try{var _names=['OrderFormClaud','DemoOrders'];(function _lo(ni){if(ni>=_names.length)return;fetch('/api/app/collections/'+_names[ni]+'/documents/?limit=6000&_cb='+Date.now(),{credentials:'include'}).then(function(r){if(!r.ok){_lo(ni+1);return null;}return r.json();}).then(function(ods){if(!ods)return;var oc={};ods.forEach(function(d){var c2=d.content||{};if(c2._deleted||c2.DEL)return;var k2=String(c2.ModelNum||'').trim().toUpperCase();var e2=m[k2];if(!e2||!e2.sb)return;var st=String(e2.start||'');if(st&&String(c2.SubmittedOn||'')<st)return;oc[k2]=(oc[k2]||0)+(parseInt(c2.OrderQuantity,10)||0);});window.__sbOrdered=oc;try{if(typeof renderGrid==='function')renderGrid();}catch(_rg){}}).catch(function(){});})(0);}catch(_of){}
 if(!had){try{if(typeof render==='function')render();}catch(_e){}try{if(window.__catalogRefresh)window.__catalogRefresh();}catch(_e2){}}
 }).catch(function(){});}
 load();setInterval(load,600000);
@@ -915,7 +931,7 @@ load();setInterval(load,600000);
  var HERE='vendor';
  var host=document.querySelector('.topbar')||document.querySelector('.top')||document.body;
  var wrap=document.createElement('div'); wrap.style.cssText='position:relative;display:inline-flex;flex:none;';
- var btn=document.createElement('button'); btn.type='button'; btn.innerHTML='<span style="font-size:14px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span>';
+ var btn=document.createElement('button'); btn.type='button'; btn.innerHTML='<span style="font-size:14px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v84</span>';
  btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
  btn.style.cssText='background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:9px 16px;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;letter-spacing:.3px;display:inline-flex;align-items:center;gap:8px;line-height:1;';
  var dd=document.createElement('div');

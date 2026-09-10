@@ -1190,6 +1190,9 @@ window.loadPendingOrders = async function () {
 
   // ── Cart ───────────────────────────────────────────────────
   window.setSelectedItem=function(p){ try{ selectedItem=p; }catch(e){} };
+  /* sale price in the cart: the effective unit cost is the lower of Regular and Promo when both are set - the same number the catalog card and the Unit Price box show */
+  function effPrice(p){ var rc=parseFloat(p&&p.RegularCost), pc=parseFloat(p&&p.PromoCost), pr=parseFloat(p&&p.Price); rc=isNaN(rc)?0:rc; pc=isNaN(pc)?0:pc; pr=isNaN(pr)?0:pr; if(rc>0&&pc>0) return Math.min(rc,pc); if(pc>0) return pc; if(rc>0) return rc; return pr; }
+  window.__effPrice=effPrice;
   window.addToCart = function () {
     // Require a complete order number (Vendor, District, Store) before adding to cart
     var _ordV = getText('vendor'), _ordD = getText('district'), _ordS = getText('store');
@@ -1208,7 +1211,7 @@ window.loadPendingOrders = async function () {
     const qtyEl  = document.getElementById('quantity');
     const commEl = document.getElementById('comment');
     const qty    = Math.max(1, parseInt((qtyEl ? qtyEl.value : '1') || '1', 10) || 1);
-    const price  = parseFloat(selectedItem.RegularCost) || parseFloat(selectedItem.Price) || 0;
+    const price  = effPrice(selectedItem);
     cart.push({ item: selectedItem, qty, price, comment: commEl ? commEl.value || '' : '' , ponum: (document.getElementById('ponum')||{value:''}).value });
     window.refreshModelSearch();
     if (qtyEl)  qtyEl.value  = '1';
@@ -1405,7 +1408,7 @@ function renderCart() {
       if(cart && cart.length){ var cv=String((cart[0].item&&cart[0].item.Vendor)||'').trim(); if(cv) vendors[cv]=1; }
       var distinct=Object.keys(vendors);
       if(distinct.length>1){ alert('An order can only contain one vendor. These are mixed: '+distinct.join(', ')+'. Please select items from a single vendor.'); return; }
-      picks.forEach(function(x){ var price=parseFloat(x.p.RegularCost)||parseFloat(x.p.Price)||0; cart.push({item:x.p,qty:x.qty,price:price,comment:'',ponum:(document.getElementById('ponum')||{value:''}).value}); });
+      picks.forEach(function(x){ var price=effPrice(x.p); cart.push({item:x.p,qty:x.qty,price:price,comment:'',ponum:(document.getElementById('ponum')||{value:''}).value}); });
       if(typeof renderCart==='function') renderCart(); if(typeof saveCart==='function') saveCart();
       var box=document.getElementById('multiResults'); if(box){ box.innerHTML=''; box.style.display='none'; }
       var s=document.getElementById('multiSearch'); if(s) s.value=''; mmCount();
@@ -1554,7 +1557,7 @@ function renderCart() {
       const match = products.find(p => String(p.ModelNum || '').toLowerCase() === mStr);
       if (match) {
         selectedItem = match;
-        const price  = parseFloat(match.Price) || parseFloat(match.RegularCost) || 0;
+        const price  = effPrice(match);
         setValue('modelSearch',  match.ModelNum    || '');
         setValue('itemName',     match.ItemName    || '');
         setValue('category',     match.Category    || '');
@@ -2576,7 +2579,7 @@ body.qc-open #whoAmI{display:none !important;}
     document.body.classList.add('qc-topmenu');
     var btn = document.createElement('button');
     btn.id = 'qcMenuBtn'; btn.type = 'button';
-    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v83</span>';
+    btn.innerHTML = '<span style="font-size:15px;line-height:1;display:block;">&#9776;</span><span style="line-height:1;display:block;">Menu</span><span style="opacity:.65;font-size:11px;font-weight:700;line-height:1;display:block;" title="build version">v84</span>';
     btn.setAttribute('aria-haspopup','true'); btn.setAttribute('aria-expanded','false');
     btn.style.cssText = 'position:fixed;top:60px;left:18px;z-index:1200;background:#16213f;color:#fff;' +
       'border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:11px 18px;font-weight:800;' +
@@ -3261,7 +3264,7 @@ body.qc-open #whoAmI{display:none !important;}
    var c=map[k];
    if(!c){
     // the edit is gone (deleted or expired): put back what it had overridden
-    if(p.__qcO){for(var f in p.__qcO){p[f]=p.__qcO[f];}delete p.__qcO;changed=true;}
+    if(p.__qcO){for(var f in p.__qcO){p[f]=p.__qcO[f];}delete p.__qcO;changed=true;try{if(window.__effPrice)p.Price=window.__effPrice(p);}catch(_pe2){}}
     if(p.__qcNew){p.__qcDrop=1;changed=true;}
     return;
    }
@@ -3272,6 +3275,7 @@ body.qc-open #whoAmI{display:none !important;}
      if(!(f in p.__qcO))p.__qcO[f]=(p[f]==null?'':p[f]);
      p[f]=c[f];changed=true;}
    });
+   try{if(window.__effPrice)p.Price=window.__effPrice(p);}catch(_pe){}
   });
   for(var i=prods.length-1;i>=0;i--){if(prods[i].__qcDrop)prods.splice(i,1);}
   Object.keys(map).forEach(function(k){
